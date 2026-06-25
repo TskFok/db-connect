@@ -133,9 +133,58 @@ body,
 }
 
 /* ========== 表单区域 ========== */
+.connection-form-page {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+}
+
 .connection-form-wrapper {
+  width: 100%;
   max-width: 640px;
+  height: 100%;
+  min-height: 0;
   margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.connection-form-header {
+  flex-shrink: 0;
+  margin-bottom: 24px;
+}
+
+.connection-form-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.connection-form-card > .ant-card-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+
+.connection-form-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+  padding-bottom: 16px;
+}
+
+.connection-form-actions {
+  flex-shrink: 0;
+  margin: 0 -24px;
+  padding: 16px 24px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  z-index: 1;
 }
 
 /* ========== 全局加载条 ========== */

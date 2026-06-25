@@ -91,4 +91,19 @@ describe("ConnectionForm database type defaults", () => {
       );
     });
   });
+
+  it("连接表单操作按钮固定在独立底部区域，不放入滚动内容", () => {
+    const { container } = render(<ConnectionForm />);
+
+    const scrollArea = container.querySelector(".connection-form-scroll");
+    const actions = container.querySelector(".connection-form-actions");
+    const saveAndConnectButton = screen.getByRole("button", {
+      name: /保存并连接/,
+    });
+
+    expect(scrollArea).toBeInTheDocument();
+    expect(actions).toBeInTheDocument();
+    expect(actions).toContainElement(saveAndConnectButton);
+    expect(scrollArea).not.toContainElement(saveAndConnectButton);
+  });
 });

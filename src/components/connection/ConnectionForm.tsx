@@ -526,10 +526,10 @@ export function ConnectionForm() {
   return (
     <div className="connection-form-wrapper">
       <div
+        className="connection-form-header"
         style={{
           display: "flex",
           alignItems: "center",
-          marginBottom: 24,
           gap: 12,
         }}
       >
@@ -543,98 +543,99 @@ export function ConnectionForm() {
         </Title>
       </div>
 
-      <Card>
-        <Tabs
-          activeKey={connectionType}
-          onChange={(key) => setConnectionType(key as ConnectionType)}
-          items={[
-            { key: "direct", label: "直接连接" },
-            { key: "ssh", label: "SSH 隧道" },
-          ]}
-        />
-
-        <Form
-          form={form}
-          layout="vertical"
-          initialValues={
-            editingConnection
-              ? {
-                  databaseType: normalizeDatabaseType(
-                    editingConnection.database_type
-                  ),
-                  name: editingConnection.name,
-                  host: editingConnection.host,
-                  port: editingConnection.port,
-                  username: editingConnection.username,
-                  password: editingConnection.password,
-                  database: editingConnection.database,
-                  sslMode:
-                    editingConnection.ssl_mode &&
-                    editingConnection.ssl_mode.trim() !== "" &&
-                    editingConnection.ssl_mode !== "disabled"
-                      ? editingConnection.ssl_mode
-                      : "disabled",
-                  sslCaPath: editingConnection.ssl_ca_path,
-                  sslPkcs12Path: editingConnection.ssl_pkcs12_path,
-                  sslPkcs12Password: editingConnection.ssl_pkcs12_password,
-                  sslTlsHostname: editingConnection.ssl_tls_hostname,
-                  clientCharset: editingConnection.client_charset,
-                  sessionInitLines:
-                    editingConnection.session_init_commands?.join("\n"),
-                  readOnlyConn: editingConnection.read_only === true,
-                  skipDangerousSql:
-                    editingConnection.skip_dangerous_sql_confirm === true,
-                }
-              : {
-                  databaseType: "mysql",
-                  port: defaultPortForDatabaseType("mysql"),
-                  sslMode: "disabled",
-                  readOnlyConn: false,
-                  skipDangerousSql: false,
-                }
-          }
-        >
-          {mysqlFields}
-        </Form>
-
-        {connectionType === "ssh" && sshFields}
-
-        {/* 测试结果 */}
-        {testResult && (
-          <Alert
-            type={testResult.success ? "success" : "error"}
-            message={testResult.message}
-            showIcon
-            closable
-            onClose={() => setTestResult(null)}
-            style={{ marginBottom: 16 }}
+      <Card className="connection-form-card">
+        <div className="connection-form-scroll">
+          <Tabs
+            activeKey={connectionType}
+            onChange={(key) => setConnectionType(key as ConnectionType)}
+            items={[
+              { key: "direct", label: "直接连接" },
+              { key: "ssh", label: "SSH 隧道" },
+            ]}
           />
-        )}
 
-        {/* 操作按钮 */}
-        <Divider />
-        <Space>
-          <Spin spinning={testing}>
-            <Button icon={<ApiOutlined />} onClick={handleTest}>
-              测试连接
+          <Form
+            form={form}
+            layout="vertical"
+            initialValues={
+              editingConnection
+                ? {
+                    databaseType: normalizeDatabaseType(
+                      editingConnection.database_type
+                    ),
+                    name: editingConnection.name,
+                    host: editingConnection.host,
+                    port: editingConnection.port,
+                    username: editingConnection.username,
+                    password: editingConnection.password,
+                    database: editingConnection.database,
+                    sslMode:
+                      editingConnection.ssl_mode &&
+                      editingConnection.ssl_mode.trim() !== "" &&
+                      editingConnection.ssl_mode !== "disabled"
+                        ? editingConnection.ssl_mode
+                        : "disabled",
+                    sslCaPath: editingConnection.ssl_ca_path,
+                    sslPkcs12Path: editingConnection.ssl_pkcs12_path,
+                    sslPkcs12Password: editingConnection.ssl_pkcs12_password,
+                    sslTlsHostname: editingConnection.ssl_tls_hostname,
+                    clientCharset: editingConnection.client_charset,
+                    sessionInitLines:
+                      editingConnection.session_init_commands?.join("\n"),
+                    readOnlyConn: editingConnection.read_only === true,
+                    skipDangerousSql:
+                      editingConnection.skip_dangerous_sql_confirm === true,
+                  }
+                : {
+                    databaseType: "mysql",
+                    port: defaultPortForDatabaseType("mysql"),
+                    sslMode: "disabled",
+                    readOnlyConn: false,
+                    skipDangerousSql: false,
+                  }
+            }
+          >
+            {mysqlFields}
+          </Form>
+
+          {connectionType === "ssh" && sshFields}
+        </div>
+
+        <div className="connection-form-actions">
+          {testResult && (
+            <Alert
+              type={testResult.success ? "success" : "error"}
+              message={testResult.message}
+              showIcon
+              closable
+              onClose={() => setTestResult(null)}
+              style={{ marginBottom: 12 }}
+            />
+          )}
+
+          <Space wrap>
+            <Spin spinning={testing}>
+              <Button icon={<ApiOutlined />} onClick={handleTest}>
+                测试连接
+              </Button>
+            </Spin>
+            <Button
+              icon={<SaveOutlined />}
+              onClick={handleSave}
+              loading={loading}
+            >
+              保存
             </Button>
-          </Spin>
-          <Button
-            icon={<SaveOutlined />}
-            onClick={handleSave}
-            loading={loading}
-          >
-            保存
-          </Button>
-          <Button
-            type="primary"
-            icon={<ThunderboltOutlined />}
-            onClick={handleSaveAndConnect}
-            loading={loading}
-          >
-            保存并连接
-          </Button>
-        </Space>
+            <Button
+              type="primary"
+              icon={<ThunderboltOutlined />}
+              onClick={handleSaveAndConnect}
+              loading={loading}
+            >
+              保存并连接
+            </Button>
+          </Space>
+        </div>
       </Card>
     </div>
   );

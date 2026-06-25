@@ -236,7 +236,7 @@ function AppInner() {
           }}
         >
           {showConnectionForm ? (
-            <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+            <div className="connection-form-page">
               <ConnectionForm />
             </div>
           ) : activeConnection ? (
