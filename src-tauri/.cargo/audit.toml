@@ -1,0 +1,5 @@
+[advisories]
+ignore = [
+  # russh 0.60.3 still pulls rsa through internal-russh-forked-ssh-key; RustSec has no fixed upgrade yet.
+  "RUSTSEC-2023-0071",
+]

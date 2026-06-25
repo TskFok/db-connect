@@ -1,0 +1,429 @@
+/* ========== 全局输入框: 禁用 WebKit/macOS 自动文本处理 ========== */
+input,
+textarea {
+  -webkit-text-size-adjust: none;
+  text-transform: none !important;
+}
+
+/* ========== CSS 变量: 主题系统 ========== */
+
+/* 暗色主题 (默认) */
+:root,
+[data-theme="dark"] {
+  --bg-primary: #1a1a1a;
+  --bg-secondary: #141414;
+  --bg-elevated: #1f1f1f;
+  --bg-hover: #262626;
+  --bg-active: #1a3a5c;
+  --border-color: #303030;
+  --text-primary: #d9d9d9;
+  --text-secondary: #888;
+  --text-muted: #555;
+  --text-placeholder: #666;
+  --scrollbar-thumb: #404040;
+  --scrollbar-thumb-hover: #555;
+  --status-connected: #52c41a;
+  --color-primary: #1677ff;
+  --monaco-theme: vs-dark;
+}
+
+/* 浅色主题 */
+[data-theme="light"] {
+  --bg-primary: #ffffff;
+  --bg-secondary: #fafafa;
+  --bg-elevated: #f5f5f5;
+  --bg-hover: #f0f0f0;
+  --bg-active: #e6f4ff;
+  --border-color: #e0e0e0;
+  --text-primary: #1f1f1f;
+  --text-secondary: #666;
+  --text-muted: #999;
+  --text-placeholder: #bbb;
+  --scrollbar-thumb: #c0c0c0;
+  --scrollbar-thumb-hover: #999;
+  --status-connected: #52c41a;
+  --color-primary: #1677ff;
+  --monaco-theme: light;
+}
+
+/* ========== 全局样式重置 ========== */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+}
+
+/* 隐藏滚动条但保留滚动功能 (macOS 风格) */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* Ant Design 布局微调 */
+.ant-layout-sider {
+  transition: none !important;
+}
+
+/* 可调整宽度的侧边栏 */
+.app-resizable-sider {
+  transition: none !important;
+}
+
+.app-sider-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  flex-shrink: 0;
+  z-index: 1;
+}
+
+.app-sider-resize-handle:hover,
+.app-sider-resize-handle:active {
+  background: var(--color-primary);
+  opacity: 0.15;
+}
+
+/* 数据库树表节点：确保标题区域可伸缩，表名过长时截断 */
+.ant-tree .ant-tree-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* ========== 连接列表项 ========== */
+.connection-item {
+  cursor: pointer;
+  transition: background-color 0.2s;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 2px 8px;
+}
+
+.connection-item:hover {
+  background-color: var(--bg-hover);
+}
+
+.connection-item.active {
+  background-color: var(--bg-active);
+}
+
+/* ========== 表单区域 ========== */
+.connection-form-wrapper {
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+/* ========== 全局加载条 ========== */
+.global-loading-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  z-index: 9999;
+  pointer-events: none;
+}
+
+.global-loading-bar .ant-spin-dot {
+  display: none;
+}
+
+.global-loading-bar-inner {
+  height: 100%;
+  background: linear-gradient(90deg, transparent, var(--color-primary), transparent);
+  animation: loading-slide 1.5s ease-in-out infinite;
+}
+
+@keyframes loading-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* ========== ErrorBoundary 样式 ========== */
+.error-boundary-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  padding: 40px;
+  text-align: center;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.error-boundary-container h2 {
+  margin-bottom: 16px;
+  font-size: 24px;
+  font-weight: 400;
+}
+
+.error-boundary-container pre {
+  max-width: 600px;
+  max-height: 200px;
+  overflow: auto;
+  padding: 16px;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  color: #ff4d4f;
+  font-size: 12px;
+  text-align: left;
+  margin-top: 16px;
+}
+
+/* ========== Tabs 全高布局 ========== */
+.full-height-tabs {
+  display: flex;
+  flex-direction: column;
+}
+.full-height-tabs > .ant-tabs-content-holder {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.full-height-tabs .ant-tabs-content {
+  height: 100%;
+}
+.full-height-tabs .ant-tabs-tabpane {
+  height: 100%;
+  /* 由内部组件（如 VirtualDataTable、Card body）自行滚动，避免与外层 flex 高度叠加后出现滚动条闪烁与整体布局弹跳 */
+  overflow: hidden;
+}
+.full-height-tabs .ant-tabs-tabpane-hidden {
+  display: none;
+}
+
+/* ========== VirtualDataTable: 行+列虚拟化表格 ==========
+ * 颜色全部由 VirtualDataTable 通过 antd token 写入 --vdt-* 变量后驱动，
+ * 此处仅维护 hover / 斑马纹 / 选中 / resize 手柄等交互态。
+ * 注意：不要在容器或 header 上加 contain: paint —— 会破坏 position: sticky。 */
+.virtual-data-table-container {
+  /* 表头/单元格内的文字默认不可选，以免拖动列宽或选行时误触发选择。
+     用户进入"编辑"态的输入框由 antd Input 自带 user-select 重置覆盖。 */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 表头不透明背景：linear-gradient(fill, fill) 把半透明 fillAlter 铺成单色 mask，
+   再叠加在 colorBgContainer 实色底上，等价于"实色底 + fillAlter 叠加"的视觉，
+   避免横向滚动时表头露出下层 cell。 */
+.virtual-data-table-header {
+  user-select: none;
+  -webkit-user-select: none;
+  background-color: var(--vdt-bg);
+  background-image: linear-gradient(
+    var(--vdt-header-fill),
+    var(--vdt-header-fill)
+  );
+}
+
+/* 每个 header cell 是绝对定位，自身需要复合背景才能不透明。 */
+.virtual-data-table-header-cell {
+  background-color: var(--vdt-bg);
+  background-image: linear-gradient(
+    var(--vdt-header-fill),
+    var(--vdt-header-fill)
+  );
+  transition: background-color 0.15s ease;
+}
+
+.virtual-data-table-row {
+  transition: background-color 0.12s ease;
+}
+
+/* 斑马纹：偶数行使用更淡的 token (colorFillQuaternary)，奇数行透明（沿用容器底色） */
+.virtual-data-table-row--odd {
+  background: var(--vdt-row-zebra);
+}
+.virtual-data-table-row--even {
+  background: transparent;
+}
+
+/* 选中：奇偶都覆盖到 controlItemBgActive */
+.virtual-data-table-row--selected,
+.virtual-data-table-row--selected.virtual-data-table-row--odd,
+.virtual-data-table-row--selected.virtual-data-table-row--even {
+  background: var(--vdt-row-selected);
+}
+
+/* hover：未选中时使用 controlItemBgHover；已选中时叠加更深的 hover 色 */
+.virtual-data-table-row:not(.virtual-data-table-row--selected):hover {
+  background: var(--vdt-row-hover);
+}
+.virtual-data-table-row--selected:hover {
+  background: var(--vdt-row-selected-hover);
+}
+
+/* 数据表格高度调节条：位于表格底部，拖拽上下改变表格高度，双击重置为自动撑满 */
+.table-data-resize-bar {
+  height: 6px;
+  flex: 0 0 6px;
+  cursor: row-resize;
+  user-select: none;
+  -webkit-user-select: none;
+  background: transparent;
+  border-top: 1px solid transparent;
+  border-bottom: 1px solid transparent;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.table-data-resize-bar:hover,
+.table-data-resize-bar.is-active {
+  background: var(--vdt-row-hover, var(--bg-hover));
+  border-top-color: var(--vdt-resize-handle-hover, var(--color-primary));
+  border-bottom-color: var(--vdt-resize-handle-hover, var(--color-primary));
+}
+
+/* 工具栏筛选徽标：避免被 button/tooltip 的 overflow 裁切 */
+.table-data-filter-badge.ant-badge {
+  overflow: visible;
+}
+.table-data-filter-badge .ant-badge-count {
+  box-shadow: 0 0 0 1px var(--vdt-bg, var(--bg-primary));
+  pointer-events: none;
+}
+
+/* 列宽调节手柄：右侧竖线 + 悬停高亮（与原 antd 表头视觉一致）。
+   悬停 / 拖动态使用加宽的 border 替代背景渐变，避免依赖 color-mix。 */
+.virtual-data-table-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 12px;
+  cursor: col-resize;
+  z-index: 2;
+  pointer-events: auto;
+  touch-action: none;
+  border-right: 2px solid var(--vdt-cell-split, var(--border-color));
+  transition: border-color 0.15s ease, border-right-width 0.15s ease;
+}
+.virtual-data-table-resize-handle:hover,
+.virtual-data-table-resize-handle:active {
+  border-right-width: 3px;
+  border-right-color: var(--vdt-resize-handle-hover, var(--color-primary));
+}
+
+/* ========== antd 表头可调节列宽（数据库表列表等） ========== */
+.resizable-table-header,
+.resizable-table-header * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+.ant-table-thead .resizable-table-header.ant-table-cell {
+  overflow: visible !important;
+}
+
+.resizable-table-header-content {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  position: relative;
+}
+
+.resizable-table-header-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.resizable-table-header-drag {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-right: 4px;
+  cursor: grab;
+  color: var(--text-secondary, rgba(0, 0, 0, 0.45));
+  touch-action: none;
+}
+
+.resizable-table-header-drag:active {
+  cursor: grabbing;
+}
+
+.resizable-table-header-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 12px;
+  cursor: col-resize;
+  z-index: 2;
+  pointer-events: auto;
+  touch-action: none;
+  border-right: 2px solid var(--vdt-cell-split, var(--border-color));
+  transition: border-color 0.15s ease, border-right-width 0.15s ease;
+}
+
+.resizable-table-header-handle:hover,
+.resizable-table-header-handle:active {
+  border-right-width: 3px;
+  border-right-color: var(--vdt-resize-handle-hover, var(--color-primary));
+}
+
+/* ========== 快捷键帮助弹窗 ========== */
+.shortcut-key {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  font-family: "SF Mono", "Monaco", "Menlo", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  min-width: 24px;
+  text-align: center;
+}
+
+/* 外键页：关系图区域可收缩并在展开时内部滚动，避免遮挡下方列表 */
+.foreign-key-diagram-section {
+  flex: 0 1 auto;
+  min-height: 0;
+  margin-bottom: 12px;
+}
+.foreign-key-diagram-section--expanded {
+  max-height: min(280px, 42vh);
+  overflow: auto;
+}
+
+/* Mermaid 外键关系图：自适应容器宽度 */
+.mermaid-block__svg-host svg {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}

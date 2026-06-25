@@ -1,0 +1,14 @@
+title = "db-connect gitleaks"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "单元测试与脱敏逻辑中的假凭据"
+paths = [
+  '''(?i)src/__tests__/''',
+  '''(?i)src-tauri/src/commands/connection\.rs''',
+  '''(?i)src-tauri/src/models/types\.rs''',
+  '''(?i)src-tauri/src/util/secure_fs\.rs''',
+  '''(?i)\.env\.example$''',
+]

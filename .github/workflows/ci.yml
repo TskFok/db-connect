@@ -1,0 +1,104 @@
+# 前端单测 + Tauri 完整构建（ubuntu / macOS / Windows 矩阵）。
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  tauri:
+    needs: secrets
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux dependencies (Tauri / WebKitGTK)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Cache Vite / Vitest transform
+        uses: actions/cache@v4
+        with:
+          path: node_modules/.vite
+          key: vite-vitest-${{ runner.os }}-${{ hashFiles('package-lock.json', 'vitest.config.ts', 'vite.config.ts') }}
+          restore-keys: |
+            vite-vitest-${{ runner.os }}-
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: tauri-ci-${{ matrix.os }}
+
+      - name: Lint frontend (ESLint)
+        run: npm run lint
+
+      - name: Run frontend unit tests
+        run: npm test
+
+      - name: Check Rust formatting
+        run: npm run fmt:rust
+
+      - name: Run Rust clippy (deny warnings)
+        run: npm run lint:rust
+
+      - name: Run Rust unit tests
+        run: npm run test:rust
+
+      - name: Tauri build
+        run: npm run tauri build
+        env:
+          # Fork 后可在仓库 Variables 中覆盖，用于崩溃上报默认仓库
+          VITE_GITHUB_ISSUE_REPO: ${{ vars.VITE_GITHUB_ISSUE_REPO }}

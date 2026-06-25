@@ -1,0 +1,69 @@
+name-template: "DB Connect v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+tag-prefix: "v"
+
+change-template: "- $TITLE (#$NUMBER) @$AUTHOR"
+change-title-escapes: '\*_&`'
+
+template: |
+  $CHANGES
+
+  ## 安装包
+
+  多平台安装包见本 Release 附件。
+
+categories:
+  - title: "Features"
+    when:
+      label: "feat"
+    semver-increment: minor
+  - title: "Bug Fixes"
+    when:
+      label: "fix"
+  - title: "Refactors"
+    when:
+      label: "refactor"
+  - title: "Documentation"
+    when:
+      label: "docs"
+  - title: "Tests"
+    when:
+      label: "test"
+  - title: "Build System"
+    when:
+      label: "build"
+  - title: "Continuous Integration"
+    when:
+      label: "ci"
+  - title: "Miscellaneous"
+    when:
+      label: "chore"
+  - type: "pre-exclude"
+    when:
+      label: "skip-changelog"
+
+autolabeler:
+  - label: "feat"
+    title:
+      - '/^feat(\([^)]+\))?!?:/'
+  - label: "fix"
+    title:
+      - '/^fix(\([^)]+\))?!?:/'
+  - label: "refactor"
+    title:
+      - '/^refactor(\([^)]+\))?!?:/'
+  - label: "chore"
+    title:
+      - '/^chore(\([^)]+\))?!?:/'
+  - label: "ci"
+    title:
+      - '/^ci(\([^)]+\))?!?:/'
+  - label: "build"
+    title:
+      - '/^build(\([^)]+\))?!?:/'
+  - label: "docs"
+    title:
+      - '/^docs(\([^)]+\))?!?:/'
+  - label: "test"
+    title:
+      - '/^test(\([^)]+\))?!?:/'

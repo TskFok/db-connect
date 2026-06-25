@@ -1,0 +1,377 @@
+import { useState, useCallback, useRef, useEffect } from "react";
+import {
+  Button,
+  Modal,
+  Space,
+  Tooltip,
+  Checkbox,
+  InputNumber,
+  Typography,
+  Progress,
+  Spin,
+} from "antd";
+import { ImportOutlined, ExportOutlined } from "@ant-design/icons";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import * as api from "../../services/tauriCommands";
+import { useDatabaseStore } from "../../stores/databaseStore";
+import { useConnectionStore } from "../../stores/connectionStore";
+import {
+  buildImportFailureDetailsText,
+  buildImportSqlConfirmText,
+  isConnectionGloballyReadOnly,
+} from "../../utils/sqlFileIoUi";
+import {
+  type SqlIoProgressPayload,
+  sqlIoProgressPercent,
+} from "../../utils/sqlIoProgress";
+
+const { Text } = Typography;
+
+export interface DatabaseSqlFileActionsProps {
+  connId: string;
+  database: string;
+  disabled?: boolean;
+}
+
+export function DatabaseSqlFileActions({
+  connId,
+  database,
+  disabled = false,
+}: DatabaseSqlFileActionsProps) {
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportIncludeData, setExportIncludeData] = useState(false);
+  const [exportMaxRows, setExportMaxRows] = useState(100_000);
+  const [importing, setImporting] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const activeConnection = useConnectionStore((s) => s.activeConnection);
+  const databaseType = activeConnection?.config.database_type;
+  const [importProgress, setImportProgress] = useState<SqlIoProgressPayload | null>(
+    null
+  );
+  const [exportProgress, setExportProgress] = useState<SqlIoProgressPayload | null>(
+    null
+  );
+  const importUnlistenRef = useRef<UnlistenFn | null>(null);
+  const exportUnlistenRef = useRef<UnlistenFn | null>(null);
+
+  const cleanupImportListener = useCallback(() => {
+    importUnlistenRef.current?.();
+    importUnlistenRef.current = null;
+  }, []);
+
+  const cleanupExportListener = useCallback(() => {
+    exportUnlistenRef.current?.();
+    exportUnlistenRef.current = null;
+  }, []);
+
+  useEffect(
+    () => () => {
+      cleanupImportListener();
+      cleanupExportListener();
+    },
+    [cleanupImportListener, cleanupExportListener]
+  );
+
+  const handleImportSqlFile = useCallback(async () => {
+    if (disabled || !connId) return;
+
+    if (await isConnectionGloballyReadOnly(connId, database, databaseType)) {
+      Modal.warning({
+        title: "无法导入",
+        content:
+          databaseType === "postgres"
+            ? "当前 PostgreSQL 会话处于只读模式，无法执行写入类导入。请切换到可写连接或调整事务只读设置。"
+            : "实例处于只读（read_only / super_read_only），无法执行写入类导入。请在可写副本或主库上操作。",
+      });
+      return;
+    }
+
+    const chosen = await open({
+      multiple: false,
+      directory: false,
+      filters: [{ name: "SQL", extensions: ["sql"] }],
+    });
+    const filePath = Array.isArray(chosen) ? chosen[0] : chosen;
+    if (!filePath || typeof filePath !== "string") return;
+
+    Modal.confirm({
+      title: "确认导入 SQL 文件",
+      content: buildImportSqlConfirmText(),
+      okText: "开始导入",
+      okType: "danger",
+      width: 480,
+      onOk: async () => {
+        cleanupImportListener();
+        setImportProgress(null);
+        try {
+          importUnlistenRef.current = await listen<SqlIoProgressPayload>(
+            "sql-import-progress",
+            (e) => {
+              setImportProgress({
+                current: e.payload.current,
+                total: e.payload.total,
+              });
+            }
+          );
+        } catch {
+          // 监听失败时仍继续导入
+        }
+
+        setImporting(true);
+        try {
+          const r = await api.importSqlFile(connId, database, filePath);
+          const store = useDatabaseStore.getState();
+          try {
+            await store.loadTables(connId, database);
+          } catch (err) {
+            console.error("导入后刷新表列表失败:", err);
+          }
+          try {
+            await store.refresh(connId);
+          } catch (err) {
+            console.error("导入后刷新连接视图失败:", err);
+          }
+          const base = `共 ${r.statements_total} 条，成功 ${r.statements_ok}，失败 ${r.statements_failed}，耗时 ${r.elapsed_ms}ms`;
+          if (r.statements_failed === 0) {
+            Modal.success({ content: `导入完成：${base}` });
+          } else if (r.statements_ok === 0) {
+            Modal.error({
+              title: "导入失败",
+              content: (
+                <div style={{ whiteSpace: "pre-wrap", maxHeight: 360, overflow: "auto" }}>
+                  {base}
+                  {"\n\n"}
+                  {buildImportFailureDetailsText(r)}
+                </div>
+              ),
+            });
+          } else {
+            Modal.warning({
+              title: "导入完成（部分失败）",
+              width: 560,
+              content: (
+                <div style={{ whiteSpace: "pre-wrap", maxHeight: 360, overflow: "auto" }}>
+                  {base}
+                  {"\n\n"}
+                  {buildImportFailureDetailsText(r)}
+                </div>
+              ),
+            });
+          }
+        } catch (e) {
+          Modal.error({ content: String(e) });
+        } finally {
+          setImporting(false);
+          setImportProgress(null);
+          cleanupImportListener();
+        }
+      },
+    });
+  }, [connId, database, databaseType, disabled, cleanupImportListener]);
+
+  const handleOpenExportModal = useCallback(() => {
+    if (disabled || !connId) return;
+    setExportModalOpen(true);
+  }, [connId, disabled]);
+
+  const handleExportConfirm = useCallback(async () => {
+    if (disabled || !connId) return;
+    const defaultPath = `${database}_export.sql`;
+    const outPath = await save({
+      defaultPath,
+      filters: [{ name: "SQL", extensions: ["sql"] }],
+    });
+    if (!outPath || typeof outPath !== "string") return;
+
+    setExportModalOpen(false);
+    cleanupExportListener();
+    setExportProgress(null);
+    try {
+      exportUnlistenRef.current = await listen<SqlIoProgressPayload>(
+        "sql-export-progress",
+        (e) => {
+          setExportProgress({
+            current: e.payload.current,
+            total: e.payload.total,
+          });
+        }
+      );
+    } catch {
+      // 无进度时仍可导出
+    }
+
+    setExporting(true);
+    try {
+      const r = await api.exportDatabaseToFile(
+        connId,
+        database,
+        outPath,
+        exportIncludeData,
+        exportMaxRows
+      );
+      Modal.success({
+        content: `已导出：表 ${r.tables_exported}、视图 ${r.views_exported}、触发器 ${r.triggers_exported}、事件 ${r.events_exported}，INSERT 行数约 ${r.insert_rows}，耗时 ${r.elapsed_ms}ms`,
+      });
+    } catch (e) {
+      Modal.error({
+        title: "导出失败",
+        content: String(e),
+      });
+    } finally {
+      setExporting(false);
+      setExportProgress(null);
+      cleanupExportListener();
+    }
+  }, [
+    connId,
+    database,
+    disabled,
+    exportIncludeData,
+    exportMaxRows,
+    cleanupExportListener,
+  ]);
+
+  const importBlocked = disabled || !connId;
+  const importPct = sqlIoProgressPercent(importProgress);
+  const importParsing =
+    importing && importProgress !== null && importProgress.total === 0;
+  const importExecuting =
+    importing && importProgress !== null && importProgress.total > 0;
+
+  const exportPct = sqlIoProgressPercent(exportProgress);
+
+  return (
+    <>
+      <Space size={4}>
+        <Tooltip
+          title={
+            importBlocked
+              ? "请先连接数据库"
+              : "导入 .sql 文件并执行（当前库上下文）"
+          }
+        >
+          <Button
+            type="default"
+            size="small"
+            icon={<ImportOutlined />}
+            disabled={importBlocked}
+            onClick={() => void handleImportSqlFile()}
+          />
+        </Tooltip>
+        <Tooltip
+          title={
+            importBlocked
+              ? "请先连接数据库"
+              : "导出当前数据库为 .sql"
+          }
+        >
+          <Button
+            type="default"
+            size="small"
+            icon={<ExportOutlined />}
+            loading={exporting}
+            disabled={importBlocked}
+            onClick={handleOpenExportModal}
+          />
+        </Tooltip>
+      </Space>
+
+      <Modal
+        title="正在导入 SQL"
+        open={importing}
+        footer={null}
+        closable={false}
+        maskClosable={false}
+        destroyOnHidden
+      >
+        <Text type="secondary" style={{ display: "block", marginBottom: 12 }}>
+          大文件解析与执行可能需较长时间，请勿关闭应用。
+        </Text>
+        {importParsing ? (
+          <>
+            <Progress percent={0} status="active" showInfo={false} />
+            <Text type="secondary" style={{ fontSize: 12, marginTop: 8, display: "block" }}>
+              正在解析 SQL 文件…
+            </Text>
+          </>
+        ) : importExecuting && importPct !== undefined ? (
+          <>
+            <Progress percent={importPct} status="active" />
+            <Text type="secondary" style={{ fontSize: 12, marginTop: 8, display: "block" }}>
+              已执行 {importProgress!.current} / {importProgress!.total} 条语句
+            </Text>
+          </>
+        ) : (
+          <div style={{ textAlign: "center", padding: 16 }}>
+            <Spin tip="连接并准备…" />
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        title="正在导出 SQL"
+        open={exporting}
+        footer={null}
+        closable={false}
+        maskClosable={false}
+        destroyOnHidden
+      >
+        <Text type="secondary" style={{ display: "block", marginBottom: 12 }}>
+          正在导出表 / 视图 / 数据 / 触发器等对象，请勿关闭应用。
+        </Text>
+        {exportPct !== undefined ? (
+          <>
+            <Progress percent={exportPct} status="active" />
+            {exportProgress && exportProgress.total > 0 ? (
+              <Text
+                type="secondary"
+                style={{ fontSize: 12, marginTop: 8, display: "block" }}
+              >
+                进度 {exportProgress.current} / {exportProgress.total}（按表、视图和对象分步；
+                大表写入较慢时数字会暂时停留）
+              </Text>
+            ) : null}
+          </>
+        ) : (
+          <div style={{ textAlign: "center", padding: 16 }}>
+            <Spin tip="准备导出…" />
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        title={`导出数据库「${database}」`}
+        open={exportModalOpen}
+        okText="选择保存路径"
+        onOk={() => void handleExportConfirm()}
+        onCancel={() => setExportModalOpen(false)}
+        destroyOnHidden
+      >
+        <Space direction="vertical" style={{ width: "100%" }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {databaseType === "postgres"
+              ? "将生成当前 schema 的 CREATE SCHEMA、表、视图、索引、外键、触发器、函数/过程定义，及可选 INSERT；导入时可先选中目标 schema 或修改导出文件中的 search_path。"
+              : "将生成表/视图的 CREATE、触发器与事件定义，及可选的 INSERT；语句使用当前默认库（无 USE 源库名、INSERT 不带库前缀），导入时在左侧选中目标库即可迁入其它库名。非 mysqldump。"}
+          </Text>
+          <Checkbox
+            checked={exportIncludeData}
+            onChange={(e) => setExportIncludeData(e.target.checked)}
+          >
+            同时导出表数据（INSERT）
+          </Checkbox>
+          <div>
+            <Text style={{ marginRight: 8 }}>每表最多行数</Text>
+            <InputNumber
+              min={1}
+              max={1_000_000}
+              value={exportMaxRows}
+              onChange={(v) => setExportMaxRows(v ?? 100_000)}
+              disabled={!exportIncludeData}
+            />
+          </div>
+        </Space>
+      </Modal>
+    </>
+  );
+}
