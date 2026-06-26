@@ -50,6 +50,9 @@ pub async fn list_foreign_keys(
             DatabasePoolHandle::Postgres(handle) => {
                 return postgres_objects::list_foreign_keys(&handle.pool, &database, &table).await;
             }
+            DatabasePoolHandle::Sqlite(_) => {
+                return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            }
         }
     };
 
@@ -295,6 +298,9 @@ pub async fn add_foreign_key(
                 )
                 .await;
             }
+            DatabasePoolHandle::Sqlite(_) => {
+                return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            }
         }
     };
 
@@ -331,6 +337,9 @@ pub async fn drop_foreign_key(
                     &constraint_name,
                 )
                 .await;
+            }
+            DatabasePoolHandle::Sqlite(_) => {
+                return Err(DatabasePoolHandle::sqlite_unsupported_error());
             }
         }
     };

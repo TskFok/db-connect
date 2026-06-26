@@ -1,5 +1,6 @@
 use crate::models::types::DatabaseType;
 use deadpool_postgres::Pool as PgPool;
+use deadpool_sqlite::Pool as SqlitePool;
 use mysql_async::Pool;
 
 pub trait DatabaseAdapter {
@@ -12,6 +13,10 @@ pub struct MySqlDatabaseAdapter {
 
 pub struct PostgresDatabaseAdapter {
     pool: PgPool,
+}
+
+pub struct SqliteDatabaseAdapter {
+    pool: SqlitePool,
 }
 
 impl MySqlDatabaseAdapter {
@@ -51,5 +56,25 @@ impl PostgresDatabaseAdapter {
 impl DatabaseAdapter for PostgresDatabaseAdapter {
     fn database_type(&self) -> DatabaseType {
         DatabaseType::Postgres
+    }
+}
+
+impl SqliteDatabaseAdapter {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub fn pool_clone(&self) -> SqlitePool {
+        self.pool.clone()
+    }
+
+    pub fn close(&self) {
+        self.pool.close();
+    }
+}
+
+impl DatabaseAdapter for SqliteDatabaseAdapter {
+    fn database_type(&self) -> DatabaseType {
+        DatabaseType::Sqlite
     }
 }

@@ -20,6 +20,8 @@ mysql_async = { version = "0.37", default-features = false, features = ["minimal
 deadpool-postgres = "0.14.1"
 tokio-postgres = "0.7.18"
 postgres-native-tls = "0.5.3"
+deadpool-sqlite = { version = "0.13", features = ["rt_tokio_1"] }
+rusqlite = { version = "0.38", features = ["bundled"] }
 native-tls = "0.2"
 tokio = { version = "1", features = ["full"] }
 uuid = { version = "1", features = ["v4"] }

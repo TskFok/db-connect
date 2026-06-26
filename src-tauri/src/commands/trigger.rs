@@ -22,6 +22,9 @@ pub async fn list_triggers(
                 return postgres_objects::list_triggers(&handle.pool, &database, table.as_deref())
                     .await;
             }
+            DatabasePoolHandle::Sqlite(_) => {
+                return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            }
         }
     };
 
@@ -99,6 +102,9 @@ pub async fn get_trigger_definition(
                 )
                 .await;
             }
+            DatabasePoolHandle::Sqlite(_) => {
+                return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            }
         }
     };
 
@@ -143,6 +149,9 @@ pub async fn create_trigger(
                 return postgres_objects::create_trigger(&handle.pool, &database, &table, &request)
                     .await;
             }
+            DatabasePoolHandle::Sqlite(_) => {
+                return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            }
         }
     };
 
@@ -186,6 +195,9 @@ pub async fn drop_trigger(
                     &trigger_name,
                 )
                 .await;
+            }
+            DatabasePoolHandle::Sqlite(_) => {
+                return Err(DatabasePoolHandle::sqlite_unsupported_error());
             }
         }
     };

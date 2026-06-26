@@ -23,7 +23,11 @@ import {
   ArrowLeftOutlined,
 } from "@ant-design/icons";
 import { useConnectionStore } from "../../stores/connectionStore";
-import type { ConnectionConfig, ConnectionType, DatabaseType } from "../../types";
+import type {
+  ConnectionConfig,
+  ConnectionType,
+  DatabaseType,
+} from "../../types";
 import {
   defaultPortForDatabaseType,
   normalizeDatabaseType,
@@ -38,6 +42,7 @@ const DATABASE_TYPE_OPTIONS: Array<{
 }> = [
   { value: "mysql", label: "MySQL" },
   { value: "postgres", label: "PostgreSQL" },
+  { value: "sqlite", label: "SQLite" },
 ];
 
 const SSL_MODE_OPTIONS = [
@@ -79,11 +84,16 @@ export function ConnectionForm() {
   const [testing, setTesting] = useState(false);
 
   const isEditing = !!editingConnection;
+  const watchedDatabaseType = Form.useWatch("databaseType", form);
   const currentDatabaseType = normalizeDatabaseType(
-    Form.useWatch("databaseType", form)
+    watchedDatabaseType ?? editingConnection?.database_type
   );
   const databaseBrand =
-    currentDatabaseType === "postgres" ? "PostgreSQL" : "MySQL";
+    currentDatabaseType === "postgres"
+      ? "PostgreSQL"
+      : currentDatabaseType === "sqlite"
+        ? "SQLite"
+        : "MySQL";
 
   // editingConnection 变化时同步表单值（解决：先点新建再点编辑时配置不显示的问题）
   useEffect(() => {
@@ -103,6 +113,7 @@ export function ConnectionForm() {
         username: editingConnection.username,
         password: editingConnection.password,
         database: editingConnection.database,
+        sqlitePath: editingConnection.sqlite_path,
         sslMode,
         sslCaPath: editingConnection.ssl_ca_path,
         sslPkcs12Path: editingConnection.ssl_pkcs12_path,
@@ -132,6 +143,7 @@ export function ConnectionForm() {
         username: undefined,
         password: undefined,
         database: undefined,
+        sqlitePath: undefined,
         sslMode: "disabled",
         sslCaPath: undefined,
         sslPkcs12Path: undefined,
@@ -157,6 +169,22 @@ export function ConnectionForm() {
   const buildConfig = (): ConnectionConfig => {
     const values = form.getFieldsValue();
     const databaseType = normalizeDatabaseType(values.databaseType);
+    if (databaseType === "sqlite") {
+      return {
+        id: editingConnection?.id,
+        database_type: "sqlite",
+        name: values.name,
+        host: "",
+        port: 0,
+        username: "",
+        password: undefined,
+        database: undefined,
+        sqlite_path: values.sqlitePath?.trim(),
+        read_only: values.readOnlyConn === true,
+        skip_dangerous_sql_confirm: values.skipDangerousSql === true,
+      };
+    }
+
     const config: ConnectionConfig = {
       id: editingConnection?.id,
       database_type: databaseType,
@@ -225,7 +253,7 @@ export function ConnectionForm() {
   const handleTest = async () => {
     try {
       await form.validateFields();
-      if (connectionType === "ssh") {
+      if (connectionType === "ssh" && currentDatabaseType !== "sqlite") {
         await sshForm.validateFields();
       }
     } catch {
@@ -245,7 +273,7 @@ export function ConnectionForm() {
   const handleSave = async () => {
     try {
       await form.validateFields();
-      if (connectionType === "ssh") {
+      if (connectionType === "ssh" && currentDatabaseType !== "sqlite") {
         await sshForm.validateFields();
       }
     } catch {
@@ -260,7 +288,7 @@ export function ConnectionForm() {
   const handleSaveAndConnect = async () => {
     try {
       await form.validateFields();
-      if (connectionType === "ssh") {
+      if (connectionType === "ssh" && currentDatabaseType !== "sqlite") {
         await sshForm.validateFields();
       }
     } catch {
@@ -271,6 +299,27 @@ export function ConnectionForm() {
     await saveConnection(config);
     await connect(config);
   };
+
+  const safetyFields = (
+    <>
+      <Form.Item name="readOnlyConn" valuePropName="checked" label="只读连接">
+        <Checkbox aria-label="只读连接">
+          禁止写操作（表结构编辑、导入、SQL 编辑器的 DML/DDL 等；仅允许查询与
+          USE）
+        </Checkbox>
+      </Form.Item>
+      <Form.Item
+        name="skipDangerousSql"
+        valuePropName="checked"
+        label="高危 SQL"
+        tooltip="未勾选时：在 SQL 编辑器执行批量语句前，若含 TRUNCATE、DROP DATABASE / SCHEMA，将弹出二次确认。勾选后跳过该确认（生产环境不推荐）"
+      >
+        <Checkbox aria-label="高危 SQL">
+          跳过 TRUNCATE / DROP DATABASE 等二次确认
+        </Checkbox>
+      </Form.Item>
+    </>
+  );
 
   // MySQL 连接表单字段
   const mysqlFields = (
@@ -283,6 +332,9 @@ export function ConnectionForm() {
         <Select
           options={DATABASE_TYPE_OPTIONS}
           onChange={(value: DatabaseType) => {
+            if (value === "sqlite") {
+              setConnectionType("direct");
+            }
             if (!isEditing) {
               form.setFieldValue("port", defaultPortForDatabaseType(value));
             }
@@ -298,168 +350,177 @@ export function ConnectionForm() {
         <SafeInput placeholder="例如: 本地开发数据库" />
       </Form.Item>
 
-      <Form.Item
-        name="host"
-        label="主机地址"
-        rules={[{ required: true, message: "请输入主机地址" }]}
-      >
-        <SafeInput placeholder="localhost 或 IP 地址" />
-      </Form.Item>
+      {currentDatabaseType === "sqlite" ? (
+        <>
+          <Form.Item
+            name="sqlitePath"
+            label="SQLite 文件"
+            rules={[{ required: true, message: "请选择 SQLite 数据库文件" }]}
+          >
+            <SafeInput placeholder="/path/to/database.sqlite" />
+          </Form.Item>
+          {safetyFields}
+        </>
+      ) : (
+        <>
+          <Form.Item
+            name="host"
+            label="主机地址"
+            rules={[{ required: true, message: "请输入主机地址" }]}
+          >
+            <SafeInput placeholder="localhost 或 IP 地址" />
+          </Form.Item>
 
-      <Form.Item
-        name="port"
-        label="端口"
-        rules={[{ required: true, message: "请输入端口" }]}
-      >
-        <InputNumber
-          min={1}
-          max={65535}
-          style={{ width: "100%" }}
-          placeholder={String(defaultPortForDatabaseType(currentDatabaseType))}
-        />
-      </Form.Item>
-
-      <Form.Item
-        name="username"
-        label="用户名"
-        rules={[{ required: true, message: "请输入用户名" }]}
-      >
-        <SafeInput
-          placeholder={currentDatabaseType === "postgres" ? "postgres" : "root"}
-        />
-      </Form.Item>
-
-      <Form.Item name="password" label="密码">
-        <SafeInputPassword placeholder="数据库密码 (可选)" />
-      </Form.Item>
-
-      <Form.Item
-        name="database"
-        label={currentDatabaseType === "postgres" ? "数据库" : "默认数据库"}
-      >
-        <SafeInput
-          placeholder={
-            currentDatabaseType === "postgres"
-              ? "PostgreSQL 物理 database，例如 postgres"
-              : "可选，连接后自动选择的数据库"
-          }
-        />
-      </Form.Item>
-
-      <Divider orientation="left" style={{ fontSize: 13 }}>
-        SSL / TLS（{databaseBrand}）
-      </Divider>
-
-      <Form.Item name="sslMode" label="SSL 模式" initialValue="disabled">
-        <Select options={SSL_MODE_OPTIONS} />
-      </Form.Item>
-
-      <Form.Item
-        noStyle
-        shouldUpdate={(prev, cur) => prev.sslMode !== cur.sslMode}
-      >
-        {({ getFieldValue }) =>
-          getFieldValue("sslMode") === "required_insecure" ? (
-            <Alert
-              type="warning"
-              showIcon
-              message="当前模式不校验服务端证书，仅建议在可信内网调试。"
-              style={{ marginBottom: 16 }}
+          <Form.Item
+            name="port"
+            label="端口"
+            rules={[{ required: true, message: "请输入端口" }]}
+          >
+            <InputNumber
+              min={1}
+              max={65535}
+              style={{ width: "100%" }}
+              placeholder={String(
+                defaultPortForDatabaseType(currentDatabaseType)
+              )}
             />
-          ) : null
-        }
-      </Form.Item>
+          </Form.Item>
 
-      <Form.Item
-        name="sslCaPath"
-        label="CA 证书路径（PEM）"
-        rules={[
-          ({ getFieldValue }) => ({
-            validator(_, value) {
-              const m = getFieldValue("sslMode");
-              if (
-                (m === "verify_ca" || m === "verify_identity") &&
-                !(value && String(value).trim())
-              ) {
-                return Promise.reject(
-                  new Error("VERIFY_CA / VERIFY_IDENTITY 模式下请填写 CA 证书路径")
-                );
+          <Form.Item
+            name="username"
+            label="用户名"
+            rules={[{ required: true, message: "请输入用户名" }]}
+          >
+            <SafeInput
+              placeholder={
+                currentDatabaseType === "postgres" ? "postgres" : "root"
               }
-              return Promise.resolve();
+            />
+          </Form.Item>
+
+          <Form.Item name="password" label="密码">
+            <SafeInputPassword placeholder="数据库密码 (可选)" />
+          </Form.Item>
+
+          <Form.Item
+            name="database"
+            label={currentDatabaseType === "postgres" ? "数据库" : "默认数据库"}
+          >
+            <SafeInput
+              placeholder={
+                currentDatabaseType === "postgres"
+                  ? "PostgreSQL 物理 database，例如 postgres"
+                  : "可选，连接后自动选择的数据库"
+              }
+            />
+          </Form.Item>
+
+          <Divider orientation="left" style={{ fontSize: 13 }}>
+            SSL / TLS（{databaseBrand}）
+          </Divider>
+
+          <Form.Item name="sslMode" label="SSL 模式" initialValue="disabled">
+            <Select options={SSL_MODE_OPTIONS} />
+          </Form.Item>
+
+          <Form.Item
+            noStyle
+            shouldUpdate={(prev, cur) => prev.sslMode !== cur.sslMode}
+          >
+            {({ getFieldValue }) =>
+              getFieldValue("sslMode") === "required_insecure" ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="当前模式不校验服务端证书，仅建议在可信内网调试。"
+                  style={{ marginBottom: 16 }}
+                />
+              ) : null
+            }
+          </Form.Item>
+
+          <Form.Item
+            name="sslCaPath"
+            label="CA 证书路径（PEM）"
+            rules={[
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  const m = getFieldValue("sslMode");
+                  if (
+                    (m === "verify_ca" || m === "verify_identity") &&
+                    !(value && String(value).trim())
+                  ) {
+                    return Promise.reject(
+                      new Error(
+                        "VERIFY_CA / VERIFY_IDENTITY 模式下请填写 CA 证书路径"
+                      )
+                    );
+                  }
+                  return Promise.resolve();
+                },
+              }),
+            ]}
+          >
+            <SafeInput placeholder="/path/to/ca.pem（verify_ca / verify_identity 必填）" />
+          </Form.Item>
+
+          <Form.Item name="sslPkcs12Path" label="客户端 PKCS#12 路径（可选）">
+            <SafeInput placeholder="双向 TLS 时的 .p12 / .pfx 文件" />
+          </Form.Item>
+
+          <Form.Item name="sslPkcs12Password" label="PKCS#12 密码（可选）">
+            <SafeInputPassword placeholder="若归档有密码请填写" />
+          </Form.Item>
+
+          <Form.Item name="sslTlsHostname" label="TLS 校验主机名（可选）">
+            <SafeInput placeholder="经 SSH 连接时填 RDS 等在证书上的主机名" />
+          </Form.Item>
+        </>
+      )}
+
+      {currentDatabaseType !== "sqlite" && (
+        <Collapse
+          bordered={false}
+          style={{ marginBottom: 8 }}
+          items={[
+            {
+              key: "advanced",
+              label:
+                currentDatabaseType !== "mysql"
+                  ? "高级：只读与安全"
+                  : "高级：字符集 / 会话 SQL / 只读与安全",
+              children: (
+                <>
+                  {currentDatabaseType === "mysql" && (
+                    <>
+                      <Form.Item
+                        name="clientCharset"
+                        label="客户端字符集（SET NAMES）"
+                        tooltip="留空时后端默认 utf8mb4；仅允许字母、数字、下划线与连字符"
+                      >
+                        <SafeInput placeholder="例如 utf8mb4" />
+                      </Form.Item>
+                      <Form.Item
+                        name="sessionInitLines"
+                        label="连接后执行的会话 SQL"
+                        tooltip="每行一条，例如 SET SESSION max_execution_time = 30000"
+                      >
+                        <Input.TextArea
+                          rows={4}
+                          placeholder={
+                            "每行一条 SQL\nSET SESSION max_execution_time = 30000"
+                          }
+                        />
+                      </Form.Item>
+                    </>
+                  )}
+                  {safetyFields}
+                </>
+              ),
             },
-          }),
-        ]}
-      >
-        <SafeInput placeholder="/path/to/ca.pem（verify_ca / verify_identity 必填）" />
-      </Form.Item>
-
-      <Form.Item name="sslPkcs12Path" label="客户端 PKCS#12 路径（可选）">
-        <SafeInput placeholder="双向 TLS 时的 .p12 / .pfx 文件" />
-      </Form.Item>
-
-      <Form.Item name="sslPkcs12Password" label="PKCS#12 密码（可选）">
-        <SafeInputPassword placeholder="若归档有密码请填写" />
-      </Form.Item>
-
-      <Form.Item name="sslTlsHostname" label="TLS 校验主机名（可选）">
-        <SafeInput placeholder="经 SSH 连接时填 RDS 等在证书上的主机名" />
-      </Form.Item>
-
-      <Collapse
-        bordered={false}
-        style={{ marginBottom: 8 }}
-        items={[
-          {
-            key: "advanced",
-            label:
-              currentDatabaseType === "postgres"
-                ? "高级：只读与安全"
-                : "高级：字符集 / 会话 SQL / 只读与安全",
-            children: (
-              <>
-                {currentDatabaseType === "mysql" && (
-                  <>
-                    <Form.Item
-                      name="clientCharset"
-                      label="客户端字符集（SET NAMES）"
-                      tooltip="留空时后端默认 utf8mb4；仅允许字母、数字、下划线与连字符"
-                    >
-                      <SafeInput placeholder="例如 utf8mb4" />
-                    </Form.Item>
-                    <Form.Item
-                      name="sessionInitLines"
-                      label="连接后执行的会话 SQL"
-                      tooltip="每行一条，例如 SET SESSION max_execution_time = 30000"
-                    >
-                      <Input.TextArea
-                        rows={4}
-                        placeholder={"每行一条 SQL\nSET SESSION max_execution_time = 30000"}
-                      />
-                    </Form.Item>
-                  </>
-                )}
-                <Form.Item
-                  name="readOnlyConn"
-                  valuePropName="checked"
-                  label="只读连接"
-                >
-                  <Checkbox>
-                    禁止写操作（表结构编辑、导入、SQL 编辑器的 DML/DDL 等；仅允许查询与 USE）
-                  </Checkbox>
-                </Form.Item>
-                <Form.Item
-                  name="skipDangerousSql"
-                  valuePropName="checked"
-                  label="高危 SQL"
-                  tooltip="未勾选时：在 SQL 编辑器执行批量语句前，若含 TRUNCATE、DROP DATABASE / SCHEMA，将弹出二次确认。勾选后跳过该确认（生产环境不推荐）"
-                >
-                  <Checkbox>跳过 TRUNCATE / DROP DATABASE 等二次确认</Checkbox>
-                </Form.Item>
-              </>
-            ),
-          },
-        ]}
-      />
+          ]}
+        />
+      )}
     </>
   );
 
@@ -545,14 +606,16 @@ export function ConnectionForm() {
 
       <Card className="connection-form-card">
         <div className="connection-form-scroll">
-          <Tabs
-            activeKey={connectionType}
-            onChange={(key) => setConnectionType(key as ConnectionType)}
-            items={[
-              { key: "direct", label: "直接连接" },
-              { key: "ssh", label: "SSH 隧道" },
-            ]}
-          />
+          {currentDatabaseType !== "sqlite" && (
+            <Tabs
+              activeKey={connectionType}
+              onChange={(key) => setConnectionType(key as ConnectionType)}
+              items={[
+                { key: "direct", label: "直接连接" },
+                { key: "ssh", label: "SSH 隧道" },
+              ]}
+            />
+          )}
 
           <Form
             form={form}
@@ -569,6 +632,7 @@ export function ConnectionForm() {
                     username: editingConnection.username,
                     password: editingConnection.password,
                     database: editingConnection.database,
+                    sqlitePath: editingConnection.sqlite_path,
                     sslMode:
                       editingConnection.ssl_mode &&
                       editingConnection.ssl_mode.trim() !== "" &&
@@ -589,6 +653,7 @@ export function ConnectionForm() {
                 : {
                     databaseType: "mysql",
                     port: defaultPortForDatabaseType("mysql"),
+                    sqlitePath: undefined,
                     sslMode: "disabled",
                     readOnlyConn: false,
                     skipDangerousSql: false,
@@ -598,7 +663,9 @@ export function ConnectionForm() {
             {mysqlFields}
           </Form>
 
-          {connectionType === "ssh" && sshFields}
+          {connectionType === "ssh" &&
+            currentDatabaseType !== "sqlite" &&
+            sshFields}
         </div>
 
         <div className="connection-form-actions">

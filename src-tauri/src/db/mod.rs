@@ -6,4 +6,5 @@ pub mod postgres_ddl;
 pub mod postgres_objects;
 pub mod sql_script;
 pub mod sql_utils;
+pub mod sqlite;
 pub mod ssh_tunnel;

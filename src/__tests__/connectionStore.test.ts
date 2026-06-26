@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useConnectionStore } from "../stores/connectionStore";
+import {
+  defaultPortForDatabaseType,
+  normalizeDatabaseType,
+} from "../utils/connectionConfig";
 
 // Mock Tauri API
 vi.mock("@tauri-apps/api/core", () => ({
@@ -107,6 +111,14 @@ describe("connectionStore", () => {
       editingConnection: null,
     });
     vi.clearAllMocks();
+  });
+
+  describe("database type utilities", () => {
+    it("应该识别 SQLite 并保留未知类型回退到 MySQL", () => {
+      expect(normalizeDatabaseType("sqlite")).toBe("sqlite");
+      expect(normalizeDatabaseType("unknown")).toBe("mysql");
+      expect(defaultPortForDatabaseType("sqlite")).toBe(0);
+    });
   });
 
   describe("初始状态", () => {
@@ -353,6 +365,82 @@ describe("connectionStore", () => {
       const state = useConnectionStore.getState();
       expect(state.activeConnection).toBeNull();
       expect(state.error).toBe("连接失败");
+    });
+
+    it("SQLite 路径和安全选项一致时应该复用已有连接", async () => {
+      const existing = {
+        connId: "sqlite-conn",
+        config: {
+          database_type: "sqlite" as const,
+          name: "Local",
+          host: "",
+          port: 0,
+          username: "",
+          sqlite_path: "/tmp/app.db",
+          read_only: true,
+          skip_dangerous_sql_confirm: false,
+        },
+        sessionGrantWriteCapable: true,
+      };
+      useConnectionStore.setState({
+        activeConnections: { "sqlite-conn": existing },
+        activeConnId: "sqlite-conn",
+        activeConnection: existing,
+      });
+
+      await useConnectionStore.getState().connect({
+        database_type: "sqlite",
+        name: "Local Copy",
+        host: "",
+        port: 0,
+        username: "",
+        sqlite_path: "/tmp/app.db",
+        read_only: true,
+        skip_dangerous_sql_confirm: false,
+      });
+
+      expect(mockApi.connect).not.toHaveBeenCalled();
+      expect(useConnectionStore.getState().activeConnId).toBe("sqlite-conn");
+      expect(mockSwitchToConnection).toHaveBeenCalledWith("sqlite-conn");
+    });
+
+    it("SQLite 路径不同时应该建立新连接", async () => {
+      const existing = {
+        connId: "sqlite-conn",
+        config: {
+          database_type: "sqlite" as const,
+          name: "Local",
+          host: "",
+          port: 0,
+          username: "",
+          sqlite_path: "/tmp/app.db",
+          read_only: false,
+          skip_dangerous_sql_confirm: false,
+        },
+        sessionGrantWriteCapable: true,
+      };
+      useConnectionStore.setState({
+        activeConnections: { "sqlite-conn": existing },
+        activeConnId: "sqlite-conn",
+        activeConnection: existing,
+      });
+      mockApi.connect.mockResolvedValue("sqlite-conn-2");
+
+      await useConnectionStore.getState().connect({
+        database_type: "sqlite",
+        name: "Other",
+        host: "",
+        port: 0,
+        username: "",
+        sqlite_path: "/tmp/other.db",
+        read_only: false,
+        skip_dangerous_sql_confirm: false,
+      });
+
+      expect(mockApi.connect).toHaveBeenCalledWith(
+        expect.objectContaining({ sqlite_path: "/tmp/other.db" })
+      );
+      expect(useConnectionStore.getState().activeConnId).toBe("sqlite-conn-2");
     });
   });
 

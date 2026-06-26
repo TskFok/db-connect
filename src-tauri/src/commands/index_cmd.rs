@@ -22,6 +22,9 @@ pub async fn list_indexes(
             DatabasePoolHandle::Postgres(handle) => {
                 return postgres_objects::list_indexes(&handle.pool, &database, &table).await;
             }
+            DatabasePoolHandle::Sqlite(_) => {
+                return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            }
         }
     };
 
@@ -121,6 +124,9 @@ pub async fn create_index(
                 return postgres_objects::create_index(&handle.pool, &database, &table, &request)
                     .await;
             }
+            DatabasePoolHandle::Sqlite(_) => {
+                return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            }
         }
     };
 
@@ -188,6 +194,9 @@ pub async fn delete_index(
             DatabasePoolHandle::Postgres(handle) => {
                 return postgres_objects::drop_index(&handle.pool, &database, &table, &index_name)
                     .await;
+            }
+            DatabasePoolHandle::Sqlite(_) => {
+                return Err(DatabasePoolHandle::sqlite_unsupported_error());
             }
         }
     };

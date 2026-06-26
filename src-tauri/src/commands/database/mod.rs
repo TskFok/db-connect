@@ -32,6 +32,9 @@ pub async fn list_databases(
     let pool = match pool_handle {
         DatabasePoolHandle::MySql(pool) => pool,
         DatabasePoolHandle::Postgres(handle) => return postgres::list_schemas(&handle.pool).await,
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -60,6 +63,9 @@ pub async fn list_tables(
         DatabasePoolHandle::MySql(pool) => pool,
         DatabasePoolHandle::Postgres(handle) => {
             return postgres::list_tables(&handle.pool, &database).await;
+        }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
         }
     };
 
@@ -122,6 +128,9 @@ pub async fn get_table_structure(
         DatabasePoolHandle::MySql(pool) => pool,
         DatabasePoolHandle::Postgres(handle) => {
             return postgres::get_table_structure(&handle.pool, &database, &table).await;
+        }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
         }
     };
 
@@ -315,6 +324,7 @@ pub async fn get_sql_completion_metadata(
                 columns,
             })
         }
+        DatabasePoolHandle::Sqlite(_) => Err(DatabasePoolHandle::sqlite_unsupported_error()),
     }
 }
 
@@ -335,6 +345,9 @@ pub async fn get_table_definition(
         DatabasePoolHandle::MySql(pool) => pool,
         DatabasePoolHandle::Postgres(handle) => {
             return postgres_ddl::get_table_definition(&handle.pool, &database, &table).await;
+        }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
         }
     };
 
@@ -385,6 +398,9 @@ pub async fn get_database_info(
                 character_set: String::new(),
                 collation: String::new(),
             });
+        }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
         }
     };
 
@@ -443,6 +459,9 @@ pub async fn alter_database_charset(
                     .to_string(),
             );
         }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -494,6 +513,9 @@ pub async fn drop_database(
         DatabasePoolHandle::Postgres(handle) => {
             return postgres_ddl::drop_schema(&handle.pool, &database).await;
         }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        }
     };
 
     validate_drop_database_name(&database)?;
@@ -527,6 +549,9 @@ pub async fn create_database(
         DatabasePoolHandle::Postgres(handle) => {
             // PostgreSQL 下 `name` 实际为 schema 名；忽略 charset/collation。
             return postgres_ddl::create_schema(&handle.pool, &name).await;
+        }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
         }
     };
 
@@ -590,6 +615,9 @@ pub async fn rename_database(
         DatabasePoolHandle::Postgres(handle) => {
             // PostgreSQL 重命名 schema 是原子 DDL，无需逐表迁移；忽略 charset/collation。
             return postgres_ddl::rename_schema(&handle.pool, &old_name, &new_name).await;
+        }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
         }
     };
 
@@ -657,6 +685,9 @@ pub async fn rename_table(
         DatabasePoolHandle::Postgres(handle) => {
             return postgres_ddl::rename_table(&handle.pool, &database, &old_name, &new_name).await;
         }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -694,6 +725,9 @@ pub async fn alter_table_engine(
         DatabasePoolHandle::MySql(pool) => pool,
         DatabasePoolHandle::Postgres(_handle) => {
             return Err("PostgreSQL 不支持修改存储引擎".to_string());
+        }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
         }
     };
 
@@ -733,6 +767,9 @@ pub async fn get_primary_keys(
         DatabasePoolHandle::Postgres(handle) => {
             return postgres::fetch_primary_keys(&handle.pool, &database, &table).await;
         }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -771,6 +808,9 @@ pub async fn drop_table(
         DatabasePoolHandle::Postgres(handle) => {
             return postgres_ddl::drop_table(&handle.pool, &database, &table).await;
         }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -801,6 +841,9 @@ pub async fn truncate_table(
         DatabasePoolHandle::MySql(pool) => pool,
         DatabasePoolHandle::Postgres(handle) => {
             return postgres_ddl::truncate_table(&handle.pool, &database, &table).await;
+        }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
         }
     };
 
@@ -840,6 +883,9 @@ pub async fn create_table(
         DatabasePoolHandle::MySql(pool) => pool,
         DatabasePoolHandle::Postgres(handle) => {
             return postgres_ddl::create_table(&handle.pool, &database, &request).await;
+        }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
         }
     };
 

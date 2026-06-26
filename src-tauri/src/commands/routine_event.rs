@@ -30,6 +30,9 @@ pub async fn list_routines(
                 )
                 .await;
             }
+            DatabasePoolHandle::Sqlite(_) => {
+                return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            }
         }
     };
 
@@ -142,6 +145,9 @@ pub async fn get_routine_definition(
                 )
                 .await;
             }
+            DatabasePoolHandle::Sqlite(_) => {
+                return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            }
         }
     };
 
@@ -209,6 +215,9 @@ pub async fn drop_routine(
                     identity_arguments.as_deref(),
                 )
                 .await;
+            }
+            DatabasePoolHandle::Sqlite(_) => {
+                return Err(DatabasePoolHandle::sqlite_unsupported_error());
             }
         }
     };

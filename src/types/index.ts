@@ -13,7 +13,7 @@ export interface SshConfig {
 }
 
 /** 数据库类型 */
-export type DatabaseType = "mysql" | "postgres";
+export type DatabaseType = "mysql" | "postgres" | "sqlite";
 
 /** 数据库连接配置 */
 export interface ConnectionConfig {
@@ -33,6 +33,8 @@ export interface ConnectionConfig {
   password?: string;
   /** 默认数据库 (可选) */
   database?: string;
+  /** SQLite 数据库文件路径 */
+  sqlite_path?: string;
   /** SSH 隧道配置 (undefined 表示直连) */
   ssh?: SshConfig;
   /** SSL：disabled | required | verify_ca | verify_identity | required_insecure（缺省等同 disabled） */

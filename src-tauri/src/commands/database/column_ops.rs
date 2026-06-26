@@ -74,6 +74,9 @@ pub async fn alter_column(
             }
             return postgres_ddl::alter_column(&handle.pool, &database, &table, &request).await;
         }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -217,6 +220,9 @@ pub async fn add_column(
             // PostgreSQL 总是末尾添加列；`after_column` 在 PG 下不生效，提前丢弃避免误导。
             return postgres_ddl::add_column(&handle.pool, &database, &table, &request).await;
         }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -268,6 +274,9 @@ pub async fn drop_column(
         DatabasePoolHandle::MySql(pool) => pool,
         DatabasePoolHandle::Postgres(handle) => {
             return postgres_ddl::drop_column(&handle.pool, &database, &table, &column_name).await;
+        }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
         }
     };
 

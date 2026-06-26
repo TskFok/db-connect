@@ -485,6 +485,9 @@ pub async fn query_table_count(
             return postgres::query_table_count(&handle.pool, &database, &table, where_clause)
                 .await;
         }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        }
     };
 
     let where_sql = match &where_clause {
@@ -589,6 +592,9 @@ pub async fn query_table_data(
                 skip_count,
             )
             .await;
+        }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
         }
     };
 
@@ -723,6 +729,9 @@ pub async fn insert_row(
         DatabasePoolHandle::MySql(pool) => pool,
         DatabasePoolHandle::Postgres(handle) => {
             return postgres::insert_row(&handle.pool, &database, &table, values).await;
+        }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
         }
     };
 
@@ -885,6 +894,9 @@ pub async fn update_row(
             return postgres::update_row(&handle.pool, &database, &table, primary_keys, updates)
                 .await;
         }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        }
     };
 
     if updates.is_empty() {
@@ -940,6 +952,9 @@ pub async fn batch_update_rows(
                 })
                 .collect();
             return postgres::batch_update_rows(&handle.pool, &database, &table, pg_rows).await;
+        }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
         }
     };
 
@@ -1001,6 +1016,9 @@ pub async fn delete_rows(
         DatabasePoolHandle::Postgres(handle) => {
             return postgres::delete_rows(&handle.pool, &database, &table, primary_keys).await;
         }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        }
     };
 
     let rows = map_primary_key_rows(&primary_keys)?;
@@ -1041,6 +1059,9 @@ pub async fn query_full_rows(
                 primary_key_values,
             )
             .await;
+        }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
         }
     };
 
@@ -1220,6 +1241,7 @@ pub async fn execute_sql(
 
             result
         }
+        DatabasePoolHandle::Sqlite(_) => Err(DatabasePoolHandle::sqlite_unsupported_error()),
     }
 }
 
@@ -1248,7 +1270,7 @@ pub async fn cancel_query(
                 let mut manager = state.connection_manager.lock().await;
                 match manager.get_database_pool_and_touch(&conn_id)? {
                     DatabasePoolHandle::MySql(pool) => pool,
-                    DatabasePoolHandle::Postgres(_) => {
+                    DatabasePoolHandle::Postgres(_) | DatabasePoolHandle::Sqlite(_) => {
                         return Err("当前运行中查询不是 MySQL 查询".to_string());
                     }
                 }
@@ -1313,6 +1335,30 @@ pub async fn get_session_info(
                 database: row.get::<_, Option<String>>(4),
                 connection_id: if pid >= 0 { pid as u64 } else { 0 },
                 grant_write_capable,
+            });
+        }
+        DatabasePoolHandle::Sqlite(handle) => {
+            let conn = handle
+                .pool
+                .get()
+                .await
+                .map_err(|e| format!("读取 SQLite 会话信息失败: {}", e))?;
+            let version = conn
+                .interact(|conn| {
+                    conn.query_row("SELECT sqlite_version()", [], |row| row.get::<_, String>(0))
+                        .map_err(|e| format!("读取 SQLite 版本失败: {}", e))
+                })
+                .await
+                .map_err(|e| format!("SQLite 会话信息任务失败: {}", e))??;
+            return Ok(SessionInfo {
+                version: format!("SQLite {}", version),
+                hostname: "local".to_string(),
+                server_read_only: false,
+                max_execution_time_ms: 0,
+                time_zone: String::new(),
+                database: None,
+                connection_id: 0,
+                grant_write_capable: true,
             });
         }
     };
@@ -1389,6 +1435,9 @@ pub async fn explain_sql(
             postgres::set_search_path_if_set(&client, &database).await?;
             let start = Instant::now();
             return postgres::run_sql_on_client(&client, &explain_stmt, false, start).await;
+        }
+        DatabasePoolHandle::Sqlite(_) => {
+            return Err(DatabasePoolHandle::sqlite_unsupported_error());
         }
     };
 

@@ -32,6 +32,7 @@ pub enum DatabaseType {
     #[default]
     MySql,
     Postgres,
+    Sqlite,
 }
 
 /// 数据库连接配置
@@ -54,6 +55,9 @@ pub struct ConnectionConfig {
     pub password: Option<String>,
     /// 默认数据库 (可选)
     pub database: Option<String>,
+    /// SQLite 数据库文件路径
+    #[serde(default)]
+    pub sqlite_path: Option<String>,
     /// SSH 隧道配置 (None 表示直连)
     pub ssh: Option<SshConfig>,
     /// SSL 模式: `disabled` / `required` / `verify_ca` / `verify_identity` / `required_insecure`（可选，缺省等同 disabled）
@@ -141,6 +145,7 @@ impl fmt::Debug for ConnectionConfig {
                 &self.password.as_ref().map(|_| PASSWORD_REDACTED),
             )
             .field("database", &self.database)
+            .field("sqlite_path", &self.sqlite_path)
             .field("ssh", &self.ssh)
             .field("ssl_mode", &self.ssl_mode)
             .field("ssl_ca_path", &self.ssl_ca_path)
@@ -640,6 +645,7 @@ mod tests {
             username: "root".to_string(),
             password: Some("password".to_string()),
             database: Some("testdb".to_string()),
+            sqlite_path: None,
             ssh: None,
             ssl_mode: None,
             ssl_ca_path: None,
@@ -674,6 +680,7 @@ mod tests {
             username: "u".to_string(),
             password: Some("real-db-pass".to_string()),
             database: None,
+            sqlite_path: None,
             ssh: Some(SshConfig {
                 host: "ssh".to_string(),
                 port: 22,
@@ -711,6 +718,7 @@ mod tests {
             username: "root".to_string(),
             password: Some("dbpass".to_string()),
             database: None,
+            sqlite_path: None,
             ssh: Some(SshConfig {
                 host: "ssh.example.com".to_string(),
                 port: 22,
@@ -760,6 +768,7 @@ mod tests {
             username: "root".to_string(),
             password: None,
             database: None,
+            sqlite_path: None,
             ssh: None,
             ssl_mode: None,
             ssl_ca_path: None,
@@ -777,6 +786,14 @@ mod tests {
         assert!(json.contains("\"database_type\":\"mysql\""));
         let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.database_type, DatabaseType::MySql);
+    }
+
+    #[test]
+    fn test_connection_config_serializes_sqlite_type_and_path() {
+        let json = r#"{"database_type":"sqlite","name":"Local","host":"","port":0,"username":"","password":null,"database":null,"sqlite_path":"/tmp/app.db","ssh":null}"#;
+        let c: ConnectionConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(c.database_type, DatabaseType::Sqlite);
+        assert_eq!(c.sqlite_path.as_deref(), Some("/tmp/app.db"));
     }
 
     #[test]

@@ -15,15 +15,25 @@ import {
 
 /** 判断两个配置是否表示同一连接（用于连接复用） */
 function configMatches(a: ConnectionConfig, b: ConnectionConfig): boolean {
-  if (a.id && b.id) return a.id === b.id;
   const typeA = normalizeDatabaseType(a.database_type);
   const typeB = normalizeDatabaseType(b.database_type);
+  if (typeA !== typeB) return false;
+  if (typeA === "sqlite") {
+    const idsMatch = !a.id || !b.id || a.id === b.id;
+    return (
+      idsMatch &&
+      (a.sqlite_path ?? "").trim() === (b.sqlite_path ?? "").trim() &&
+      (a.read_only === true) === (b.read_only === true) &&
+      (a.skip_dangerous_sql_confirm === true) ===
+        (b.skip_dangerous_sql_confirm === true)
+    );
+  }
+  if (a.id && b.id) return a.id === b.id;
   const sslA = `${a.ssl_mode ?? ""}|${a.ssl_ca_path ?? ""}|${a.ssl_pkcs12_path ?? ""}|${a.ssl_tls_hostname ?? ""}`;
   const sslB = `${b.ssl_mode ?? ""}|${b.ssl_ca_path ?? ""}|${b.ssl_pkcs12_path ?? ""}|${b.ssl_tls_hostname ?? ""}`;
   const advA = `${a.client_charset ?? ""}|${JSON.stringify(a.session_init_commands ?? [])}|${a.read_only === true}|${a.skip_dangerous_sql_confirm === true}`;
   const advB = `${b.client_charset ?? ""}|${JSON.stringify(b.session_init_commands ?? [])}|${b.read_only === true}|${b.skip_dangerous_sql_confirm === true}`;
   return (
-    typeA === typeB &&
     a.host === b.host &&
     a.port === b.port &&
     a.username === b.username &&

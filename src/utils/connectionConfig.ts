@@ -5,7 +5,9 @@ export const DEFAULT_DATABASE_TYPE: DatabaseType = "mysql";
 export function normalizeDatabaseType(
   value: DatabaseType | string | null | undefined
 ): DatabaseType {
-  return value === "postgres" ? "postgres" : DEFAULT_DATABASE_TYPE;
+  if (value === "postgres") return "postgres";
+  if (value === "sqlite") return "sqlite";
+  return DEFAULT_DATABASE_TYPE;
 }
 
 export function normalizeConnectionConfig<T extends ConnectionConfig>(
@@ -18,5 +20,7 @@ export function normalizeConnectionConfig<T extends ConnectionConfig>(
 }
 
 export function defaultPortForDatabaseType(type: DatabaseType): number {
-  return type === "postgres" ? 5432 : 3306;
+  if (type === "postgres") return 5432;
+  if (type === "sqlite") return 0;
+  return 3306;
 }

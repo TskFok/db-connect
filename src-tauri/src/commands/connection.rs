@@ -1,6 +1,6 @@
 use crate::crypto;
 use crate::db::connection::{ConnectionManager, DatabasePoolHandle};
-use crate::db::postgres;
+use crate::db::{postgres, sqlite};
 use crate::models::types::{
     redact_connection_secrets, ConnectionConfig, ConnectionGroup, TestResult, PASSWORD_REDACTED,
 };
@@ -529,6 +529,7 @@ pub async fn ping_connection(state: State<'_, AppState>, conn_id: String) -> Res
     match pool {
         Some(DatabasePoolHandle::MySql(pool)) => Ok(ConnectionManager::ping_pool(&pool).await),
         Some(DatabasePoolHandle::Postgres(handle)) => Ok(postgres::ping_pool(&handle.pool).await),
+        Some(DatabasePoolHandle::Sqlite(handle)) => Ok(sqlite::ping_pool(&handle.pool).await),
         None => Ok(false),
     }
 }
@@ -770,6 +771,7 @@ mod tests {
             username: "root".to_string(),
             password: Some("secret123".to_string()),
             database: None,
+            sqlite_path: None,
             ssh: Some(SshConfig {
                 host: "sshhost".to_string(),
                 port: 22,
@@ -813,6 +815,7 @@ mod tests {
             username: "root".to_string(),
             password: None,
             database: None,
+            sqlite_path: None,
             ssh: None,
             ssl_mode: None,
             ssl_ca_path: None,
@@ -868,6 +871,7 @@ mod tests {
                 username: "root".to_string(),
                 password: None,
                 database: None,
+                sqlite_path: None,
                 ssh: None,
                 ssl_mode: None,
                 ssl_ca_path: None,
@@ -962,6 +966,7 @@ mod tests {
                 username: "root".to_string(),
                 password: Some("secret".to_string()),
                 database: None,
+                sqlite_path: None,
                 ssh: None,
                 ssl_mode: None,
                 ssl_ca_path: None,
@@ -1001,6 +1006,7 @@ mod tests {
                 username: "root".to_string(),
                 password: Some("secret".to_string()),
                 database: None,
+                sqlite_path: None,
                 ssh: None,
                 ssl_mode: None,
                 ssl_ca_path: None,
@@ -1047,6 +1053,7 @@ mod tests {
                 username: "root".to_string(),
                 password: Some("secret".to_string()),
                 database: None,
+                sqlite_path: None,
                 ssh: None,
                 ssl_mode: None,
                 ssl_ca_path: None,
@@ -1099,6 +1106,7 @@ mod tests {
                 username: "root".to_string(),
                 password: None,
                 database: None,
+                sqlite_path: None,
                 ssh: None,
                 ssl_mode: None,
                 ssl_ca_path: None,
@@ -1127,6 +1135,7 @@ mod tests {
                 username: "root".to_string(),
                 password: Some("secret".to_string()),
                 database: None,
+                sqlite_path: None,
                 ssh: None,
                 ssl_mode: None,
                 ssl_ca_path: None,
@@ -1175,6 +1184,7 @@ mod tests {
                 username: "root".to_string(),
                 password: Some("secret".to_string()),
                 database: None,
+                sqlite_path: None,
                 ssh: None,
                 ssl_mode: None,
                 ssl_ca_path: None,
@@ -1224,6 +1234,7 @@ mod tests {
                 username: "root".to_string(),
                 password: None,
                 database: None,
+                sqlite_path: None,
                 ssh: None,
                 ssl_mode: None,
                 ssl_ca_path: None,

@@ -1,5 +1,8 @@
-use crate::db::adapter::{DatabaseAdapter, MySqlDatabaseAdapter, PostgresDatabaseAdapter};
+use crate::db::adapter::{
+    DatabaseAdapter, MySqlDatabaseAdapter, PostgresDatabaseAdapter, SqliteDatabaseAdapter,
+};
 use crate::db::postgres::{self, PostgresCancelTls, PostgresPoolHandle};
+use crate::db::sqlite;
 use crate::db::ssh_tunnel::SshTunnel;
 use crate::models::types::{ConnectionConfig, DatabaseType};
 use mysql_async::prelude::*;
@@ -149,16 +152,28 @@ pub struct PostgresActiveConnection {
     pub cancel_tls: PostgresCancelTls,
 }
 
+pub struct SqliteActiveConnection {
+    pub adapter: SqliteDatabaseAdapter,
+}
+
 #[derive(Clone)]
 pub enum DatabasePoolHandle {
     MySql(Pool),
     Postgres(PostgresPoolHandle),
+    Sqlite(sqlite::SqlitePoolHandle),
+}
+
+impl DatabasePoolHandle {
+    pub fn sqlite_unsupported_error() -> String {
+        "SQLite 阶段 1 仅支持连接测试和连接生命周期，暂不支持库表浏览或数据操作".to_string()
+    }
 }
 
 /// 活跃连接的数据库类型分发结构。
 pub enum ActiveDatabaseConnection {
     MySql(MySqlActiveConnection),
     Postgres(PostgresActiveConnection),
+    Sqlite(SqliteActiveConnection),
 }
 
 pub struct ActiveConnection {
@@ -172,7 +187,7 @@ impl ActiveDatabaseConnection {
     fn mysql_pool(&self) -> Result<Pool, String> {
         match self {
             ActiveDatabaseConnection::MySql(conn) => Ok(conn.adapter.pool_clone()),
-            ActiveDatabaseConnection::Postgres(_) => {
+            ActiveDatabaseConnection::Postgres(_) | ActiveDatabaseConnection::Sqlite(_) => {
                 Err("当前连接不是 MySQL，不支持该操作".to_string())
             }
         }
@@ -189,6 +204,11 @@ impl ActiveDatabaseConnection {
                     cancel_tls: conn.cancel_tls.clone(),
                 })
             }
+            ActiveDatabaseConnection::Sqlite(conn) => {
+                DatabasePoolHandle::Sqlite(sqlite::SqlitePoolHandle {
+                    pool: conn.adapter.pool_clone(),
+                })
+            }
         }
     }
 
@@ -196,6 +216,7 @@ impl ActiveDatabaseConnection {
         match self {
             ActiveDatabaseConnection::MySql(conn) => conn.adapter.database_type(),
             ActiveDatabaseConnection::Postgres(conn) => conn.adapter.database_type(),
+            ActiveDatabaseConnection::Sqlite(conn) => conn.adapter.database_type(),
         }
     }
 
@@ -218,6 +239,10 @@ impl ActiveDatabaseConnection {
                 conn.adapter.close();
                 Ok(())
             }
+            ActiveDatabaseConnection::Sqlite(conn) => {
+                conn.adapter.close();
+                Ok(())
+            }
         }
     }
 
@@ -237,6 +262,9 @@ impl ActiveDatabaseConnection {
                 if let Some(tunnel) = conn.ssh_tunnel.take() {
                     tunnel.close();
                 }
+                conn.adapter.close();
+            }
+            ActiveDatabaseConnection::Sqlite(conn) => {
                 conn.adapter.close();
             }
         }
@@ -275,6 +303,7 @@ impl ConnectionManager {
         match config.database_type {
             DatabaseType::MySql => Self::prepare_mysql_connection(config).await,
             DatabaseType::Postgres => Self::prepare_postgres_connection(config).await,
+            DatabaseType::Sqlite => Self::prepare_sqlite_connection(config).await,
         }
     }
 
@@ -371,6 +400,31 @@ impl ConnectionManager {
         Ok((conn_id, active))
     }
 
+    async fn prepare_sqlite_connection(
+        config: ConnectionConfig,
+    ) -> Result<(String, ActiveConnection), String> {
+        if config.ssh.is_some() {
+            return Err("SQLite 连接不支持 SSH 隧道".to_string());
+        }
+
+        let conn_id = uuid::Uuid::new_v4().to_string();
+        let handle = sqlite::build_sqlite_pool(&config)?;
+        if let Err(e) = sqlite::test_pool(&handle.pool).await {
+            handle.pool.close();
+            return Err(format!("连接 SQLite 失败: {}", e));
+        }
+
+        let active = ActiveConnection {
+            database: ActiveDatabaseConnection::Sqlite(SqliteActiveConnection {
+                adapter: SqliteDatabaseAdapter::new(handle.pool),
+            }),
+            config,
+            last_activity: Instant::now(),
+        };
+
+        Ok((conn_id, active))
+    }
+
     /// 注册一个已建立好的连接（仅写入 HashMap，调用方只需短暂持锁）。
     pub fn register(&mut self, conn_id: String, active: ActiveConnection) {
         self.connections.insert(conn_id, active);
@@ -409,6 +463,7 @@ impl ConnectionManager {
         match self.pool_for_ping(conn_id) {
             Some(DatabasePoolHandle::MySql(pool)) => Self::ping_pool(&pool).await,
             Some(DatabasePoolHandle::Postgres(handle)) => postgres::ping_pool(&handle.pool).await,
+            Some(DatabasePoolHandle::Sqlite(handle)) => sqlite::ping_pool(&handle.pool).await,
             None => false,
         }
     }
@@ -542,6 +597,7 @@ impl ConnectionManager {
         match config.database_type {
             DatabaseType::MySql => Self::test_mysql_connection(config).await,
             DatabaseType::Postgres => Self::test_postgres_connection(config).await,
+            DatabaseType::Sqlite => Self::test_sqlite_connection(config).await,
         }
     }
 
@@ -607,6 +663,19 @@ impl ConnectionManager {
         }
         result?;
 
+        Ok(start.elapsed().as_millis() as u64)
+    }
+
+    async fn test_sqlite_connection(config: &ConnectionConfig) -> Result<u64, String> {
+        if config.ssh.is_some() {
+            return Err("SQLite 连接不支持 SSH 隧道".to_string());
+        }
+
+        let start = Instant::now();
+        let handle = sqlite::build_sqlite_pool(config)?;
+        let result = sqlite::test_pool(&handle.pool).await;
+        handle.pool.close();
+        result?;
         Ok(start.elapsed().as_millis() as u64)
     }
 
@@ -717,6 +786,32 @@ mod tests {
         assert_eq!(active.database.adapter_database_type(), DatabaseType::MySql);
     }
 
+    #[test]
+    fn test_active_database_connection_exposes_sqlite_adapter_type() {
+        let mut config = sample_config();
+        config.database_type = DatabaseType::Sqlite;
+        config.host = String::new();
+        config.port = 0;
+        config.username = String::new();
+        config.sqlite_path = Some(":memory:".to_string());
+        let sqlite_config = deadpool_sqlite::Config::new(":memory:");
+        let pool = sqlite_config
+            .create_pool(deadpool_sqlite::Runtime::Tokio1)
+            .unwrap();
+        let active = ActiveConnection {
+            database: ActiveDatabaseConnection::Sqlite(SqliteActiveConnection {
+                adapter: SqliteDatabaseAdapter::new(pool),
+            }),
+            config,
+            last_activity: Instant::now(),
+        };
+
+        assert_eq!(
+            active.database.adapter_database_type(),
+            DatabaseType::Sqlite
+        );
+    }
+
     fn sample_config() -> ConnectionConfig {
         ConnectionConfig {
             id: None,
@@ -727,6 +822,7 @@ mod tests {
             username: "u".into(),
             password: None,
             database: None,
+            sqlite_path: None,
             ssh: None,
             ssl_mode: None,
             ssl_ca_path: None,
