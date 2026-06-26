@@ -48,7 +48,7 @@ function escapeIdentifierForDialect(
   name: string,
   dialect: WhereSqlDialect = "mysql"
 ): string {
-  if (dialect === "postgres") {
+  if (dialect === "postgres" || dialect === "sqlite") {
     return `"${name.replace(/"/g, '""')}"`;
   }
   return escapeIdentifier(name);
@@ -58,7 +58,7 @@ function escapeStringForDialect(
   value: string,
   dialect: WhereSqlDialect = "mysql"
 ): string {
-  if (dialect === "postgres") {
+  if (dialect === "postgres" || dialect === "sqlite") {
     return value.replace(/'/g, "''");
   }
   return escapeSqlString(value);

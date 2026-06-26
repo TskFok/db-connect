@@ -86,10 +86,10 @@ const POSTGRES_CAPABILITIES: DatabaseCapabilities = {
   databaseObjectNoun: "schema",
 };
 
-const SQLITE_PHASE_1_CAPABILITIES: DatabaseCapabilities = {
+const SQLITE_CAPABILITIES: DatabaseCapabilities = {
   sqlEditor: false,
   databaseManagement: false,
-  tableBrowsing: false,
+  tableBrowsing: true,
   tableDataEditing: false,
   schemaManagement: false,
   routineManagement: false,
@@ -103,7 +103,7 @@ const SQLITE_PHASE_1_CAPABILITIES: DatabaseCapabilities = {
   charsetAndCollation: false,
   storageEngine: false,
   columnReordering: false,
-  databaseObjectNoun: "SQLite 文件",
+  databaseObjectNoun: "database",
 };
 
 export function getDatabaseCapabilities(
@@ -111,6 +111,6 @@ export function getDatabaseCapabilities(
 ): DatabaseCapabilities {
   const normalized = normalizeDatabaseType(databaseType);
   if (normalized === "postgres") return POSTGRES_CAPABILITIES;
-  if (normalized === "sqlite") return SQLITE_PHASE_1_CAPABILITIES;
+  if (normalized === "sqlite") return SQLITE_CAPABILITIES;
   return MYSQL_CAPABILITIES;
 }

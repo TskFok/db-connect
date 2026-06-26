@@ -3,7 +3,7 @@ pub mod column_ops;
 pub use column_ops::build_column_definition;
 
 use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
-use crate::db::postgres;
+use crate::db::{postgres, sqlite};
 use crate::db::postgres_ddl;
 use crate::db::sql_utils::{
     esc_id, esc_str, validate_column_extra, validate_column_type, validate_engine_name,
@@ -32,9 +32,7 @@ pub async fn list_databases(
     let pool = match pool_handle {
         DatabasePoolHandle::MySql(pool) => pool,
         DatabasePoolHandle::Postgres(handle) => return postgres::list_schemas(&handle.pool).await,
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
-        }
+        DatabasePoolHandle::Sqlite(handle) => return sqlite::list_databases(&handle.pool).await,
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -64,8 +62,8 @@ pub async fn list_tables(
         DatabasePoolHandle::Postgres(handle) => {
             return postgres::list_tables(&handle.pool, &database).await;
         }
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        DatabasePoolHandle::Sqlite(handle) => {
+            return sqlite::list_tables(&handle.pool, &database).await;
         }
     };
 
@@ -129,8 +127,8 @@ pub async fn get_table_structure(
         DatabasePoolHandle::Postgres(handle) => {
             return postgres::get_table_structure(&handle.pool, &database, &table).await;
         }
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        DatabasePoolHandle::Sqlite(handle) => {
+            return sqlite::get_table_structure(&handle.pool, &database, &table).await;
         }
     };
 
@@ -460,7 +458,7 @@ pub async fn alter_database_charset(
             );
         }
         DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
         }
     };
 
@@ -514,7 +512,7 @@ pub async fn drop_database(
             return postgres_ddl::drop_schema(&handle.pool, &database).await;
         }
         DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
         }
     };
 
@@ -551,7 +549,7 @@ pub async fn create_database(
             return postgres_ddl::create_schema(&handle.pool, &name).await;
         }
         DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
         }
     };
 
@@ -617,7 +615,7 @@ pub async fn rename_database(
             return postgres_ddl::rename_schema(&handle.pool, &old_name, &new_name).await;
         }
         DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
         }
     };
 
@@ -686,7 +684,7 @@ pub async fn rename_table(
             return postgres_ddl::rename_table(&handle.pool, &database, &old_name, &new_name).await;
         }
         DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
         }
     };
 
@@ -727,7 +725,7 @@ pub async fn alter_table_engine(
             return Err("PostgreSQL 不支持修改存储引擎".to_string());
         }
         DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
         }
     };
 
@@ -809,7 +807,7 @@ pub async fn drop_table(
             return postgres_ddl::drop_table(&handle.pool, &database, &table).await;
         }
         DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
         }
     };
 
@@ -843,7 +841,7 @@ pub async fn truncate_table(
             return postgres_ddl::truncate_table(&handle.pool, &database, &table).await;
         }
         DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
         }
     };
 
@@ -885,7 +883,7 @@ pub async fn create_table(
             return postgres_ddl::create_table(&handle.pool, &database, &request).await;
         }
         DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
         }
     };
 

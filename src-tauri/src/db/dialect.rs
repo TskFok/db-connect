@@ -4,6 +4,9 @@ pub struct MySqlDialect;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PostgresDialect;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SqliteDialect;
+
 impl MySqlDialect {
     pub fn identifier(&self, name: &str) -> String {
         format!("`{}`", name.replace('`', "``"))
@@ -154,6 +157,52 @@ impl PostgresDialect {
 
 pub const POSTGRES_DIALECT: PostgresDialect = PostgresDialect;
 
+impl SqliteDialect {
+    pub fn identifier(&self, name: &str) -> String {
+        format!("\"{}\"", name.replace('"', "\"\""))
+    }
+
+    pub fn string_literal(&self, value: &str) -> String {
+        format!("'{}'", value.replace('\'', "''"))
+    }
+
+    pub fn table_ref(&self, schema: &str, table: &str) -> String {
+        format!("{}.{}", self.identifier(schema), self.identifier(table))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn paginated_select(
+        &self,
+        columns_sql: &str,
+        schema: &str,
+        table: &str,
+        where_sql: &str,
+        order_sql: &str,
+        limit: u64,
+        offset: u64,
+    ) -> String {
+        format!(
+            "SELECT {} FROM {}{}{} LIMIT {} OFFSET {}",
+            columns_sql,
+            self.table_ref(schema, table),
+            where_sql,
+            order_sql,
+            limit,
+            offset
+        )
+    }
+
+    pub fn count_query(&self, schema: &str, table: &str, where_sql: &str) -> String {
+        format!(
+            "SELECT COUNT(*) as cnt FROM {}{}",
+            self.table_ref(schema, table),
+            where_sql
+        )
+    }
+}
+
+pub const SQLITE_DIALECT: SqliteDialect = SqliteDialect;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,6 +248,44 @@ mod tests {
         assert_eq!(
             POSTGRES_DIALECT.count_query("sales", "orders", " WHERE status = 'paid'"),
             "SELECT COUNT(*) as cnt FROM \"sales\".\"orders\" WHERE status = 'paid'"
+        );
+    }
+
+    #[test]
+    fn sqlite_identifier_uses_double_quotes_and_escapes_quotes() {
+        assert_eq!(SQLITE_DIALECT.identifier("user"), "\"user\"");
+        assert_eq!(SQLITE_DIALECT.identifier("a\"b"), "\"a\"\"b\"");
+    }
+
+    #[test]
+    fn sqlite_table_ref_uses_schema_and_table() {
+        assert_eq!(
+            SQLITE_DIALECT.table_ref("main", "users"),
+            "\"main\".\"users\""
+        );
+    }
+
+    #[test]
+    fn sqlite_paginated_select_uses_limit_offset() {
+        assert_eq!(
+            SQLITE_DIALECT.paginated_select(
+                "\"id\", \"name\"",
+                "main",
+                "users",
+                " WHERE \"active\" = 1",
+                " ORDER BY \"id\" DESC",
+                20,
+                40,
+            ),
+            "SELECT \"id\", \"name\" FROM \"main\".\"users\" WHERE \"active\" = 1 ORDER BY \"id\" DESC LIMIT 20 OFFSET 40"
+        );
+    }
+
+    #[test]
+    fn sqlite_count_query_counts_schema_table_with_where() {
+        assert_eq!(
+            SQLITE_DIALECT.count_query("main", "users", " WHERE \"name\" = 'Alice'"),
+            "SELECT COUNT(*) as cnt FROM \"main\".\"users\" WHERE \"name\" = 'Alice'"
         );
     }
 

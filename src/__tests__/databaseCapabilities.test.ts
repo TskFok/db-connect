@@ -51,17 +51,17 @@ describe("getDatabaseCapabilities", () => {
     expect(caps.databaseObjectNoun).toBe("数据库");
   });
 
-  it("SQLite 阶段一仅开放连接生命周期，不开放对象浏览和 SQL 工作区入口", () => {
+  it("SQLite 阶段二开放只读对象浏览，不开放 SQL 工作区和数据编辑", () => {
     const caps = getDatabaseCapabilities("sqlite");
 
-    expect(caps.tableBrowsing).toBe(false);
+    expect(caps.tableBrowsing).toBe(true);
     expect(caps.sqlEditor).toBe(false);
     expect(caps.databaseManagement).toBe(false);
     expect(caps.tableDataEditing).toBe(false);
     expect(caps.sqlFileImportExport).toBe(false);
     expect(caps.favoriteTables).toBe(false);
     expect(caps.savedSql).toBe(false);
-    expect(caps.databaseObjectNoun).toBe("SQLite 文件");
+    expect(caps.databaseObjectNoun).toBe("database");
   });
 
   it("未知类型回退到 MySQL 能力集，避免静默禁用所有功能", () => {

@@ -220,6 +220,16 @@ describe("whereFilterUtils", () => {
       );
       expect(clause).toBe("\"name\" LIKE '%\\\"quoted%'");
     });
+
+    it("SQLite 方言应使用双引号标识符和单引号字符串转义", () => {
+      const clause = buildWhereClause(
+        { column: "name", operator: "=", value: "O'Brien" },
+        allowedColumns,
+        columnTypes,
+        "sqlite"
+      );
+      expect(clause).toBe("\"name\" = 'O''Brien'");
+    });
   });
 
   describe("buildWhereClauseFromFilters (OR 分组)", () => {
@@ -248,6 +258,19 @@ describe("whereFilterUtils", () => {
       expect(clause).toBe(
         "(`status` = 1 AND `id` > 10) OR (`name` LIKE '%Alice%')"
       );
+    });
+
+    it("SQLite 分组筛选应使用双引号标识符", () => {
+      const clause = buildWhereClauseFromFilters(
+        [
+          { column: "status", operator: "=", value: "1", group: "1" },
+          { column: "name", operator: "LIKE", value: "%Alice%", group: "2" },
+        ],
+        allowedColumns,
+        columnTypes,
+        "sqlite"
+      );
+      expect(clause).toBe("(\"status\" = 1) OR (\"name\" LIKE '%Alice%')");
     });
 
     it("禁用条件不参与分组与构建", () => {

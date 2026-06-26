@@ -165,7 +165,11 @@ pub enum DatabasePoolHandle {
 
 impl DatabasePoolHandle {
     pub fn sqlite_unsupported_error() -> String {
-        "SQLite 阶段 1 仅支持连接测试和连接生命周期，暂不支持库表浏览或数据操作".to_string()
+        "SQLite 暂不支持该操作".to_string()
+    }
+
+    pub fn sqlite_write_unsupported_error() -> String {
+        "SQLite 暂不支持该写操作".to_string()
     }
 }
 

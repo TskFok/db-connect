@@ -1,5 +1,5 @@
 use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
-use crate::db::postgres;
+use crate::db::{postgres, sqlite};
 use crate::db::sql_utils::{
     esc_id, esc_str, mysql_count_query, mysql_paginated_select,
     mysql_sql_editor_allowed_on_read_only_connection, validate_where_clause,
@@ -485,8 +485,8 @@ pub async fn query_table_count(
             return postgres::query_table_count(&handle.pool, &database, &table, where_clause)
                 .await;
         }
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        DatabasePoolHandle::Sqlite(handle) => {
+            return sqlite::query_table_count(&handle.pool, &database, &table, where_clause).await;
         }
     };
 
@@ -552,6 +552,17 @@ fn build_postgres_order_by_sql(sort_fields: &Option<Vec<TableSortField>>) -> Str
     postgres::build_order_by_sql(&borrowed)
 }
 
+fn build_sqlite_order_by_sql(sort_fields: &Option<Vec<TableSortField>>) -> String {
+    let Some(fields) = sort_fields else {
+        return String::new();
+    };
+    let borrowed: Vec<(&str, &str)> = fields
+        .iter()
+        .map(|f| (f.column.as_str(), f.order.as_str()))
+        .collect();
+    sqlite::build_order_by_sql(&borrowed)
+}
+
 /// 查询表数据 (分页)
 ///
 /// `select_columns`: 可选的列列表。传入时仅查询指定列（自动合并主键列以保证删除/修改功能正常）；
@@ -593,8 +604,20 @@ pub async fn query_table_data(
             )
             .await;
         }
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        DatabasePoolHandle::Sqlite(handle) => {
+            let order_sql = build_sqlite_order_by_sql(&sort_fields);
+            return sqlite::query_table_data(
+                &handle.pool,
+                &database,
+                &table,
+                page,
+                page_size,
+                order_sql,
+                where_clause,
+                select_columns,
+                skip_count,
+            )
+            .await;
         }
     };
 
@@ -731,7 +754,7 @@ pub async fn insert_row(
             return postgres::insert_row(&handle.pool, &database, &table, values).await;
         }
         DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
         }
     };
 
@@ -895,7 +918,7 @@ pub async fn update_row(
                 .await;
         }
         DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
         }
     };
 
@@ -954,7 +977,7 @@ pub async fn batch_update_rows(
             return postgres::batch_update_rows(&handle.pool, &database, &table, pg_rows).await;
         }
         DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
         }
     };
 
@@ -1017,7 +1040,7 @@ pub async fn delete_rows(
             return postgres::delete_rows(&handle.pool, &database, &table, primary_keys).await;
         }
         DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
         }
     };
 

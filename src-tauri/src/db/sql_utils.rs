@@ -1,4 +1,4 @@
-use crate::db::dialect::{MYSQL_DIALECT, POSTGRES_DIALECT};
+use crate::db::dialect::{MYSQL_DIALECT, POSTGRES_DIALECT, SQLITE_DIALECT};
 
 /// Escape a MySQL identifier by doubling internal backticks and wrapping in backticks.
 /// Prevents SQL injection through identifier names (database, table, column, index, trigger).
@@ -77,6 +77,38 @@ pub fn postgres_count_query(schema: &str, table: &str, where_sql: &str) -> Strin
 
 pub fn postgres_sql_editor_allowed_on_read_only_connection(sql: &str) -> bool {
     POSTGRES_DIALECT.sql_editor_allowed_on_read_only_connection(sql)
+}
+
+pub fn sqlite_id(name: &str) -> String {
+    SQLITE_DIALECT.identifier(name)
+}
+
+pub fn sqlite_str(value: &str) -> String {
+    SQLITE_DIALECT.string_literal(value)
+}
+
+pub fn sqlite_paginated_select(
+    columns_sql: &str,
+    schema: &str,
+    table: &str,
+    where_sql: &str,
+    order_sql: &str,
+    limit: u64,
+    offset: u64,
+) -> String {
+    SQLITE_DIALECT.paginated_select(
+        columns_sql,
+        schema,
+        table,
+        where_sql,
+        order_sql,
+        limit,
+        offset,
+    )
+}
+
+pub fn sqlite_count_query(schema: &str, table: &str, where_sql: &str) -> String {
+    SQLITE_DIALECT.count_query(schema, table, where_sql)
 }
 
 /// 去掉 DDL 中 `` `schema_name`. `` 形式的库名限定，便于导入到任意目标库（由客户端先 `USE` 或导入时指定库）。
