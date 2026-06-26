@@ -121,7 +121,17 @@ export const MYSQL_KEYWORDS = [
 export const POSTGRES_KEYWORDS = [
   ...MYSQL_KEYWORDS.filter(
     // 去掉 MySQL 专属关键词，避免在 PostgreSQL 下误导
-    (kw) => !["ENGINE", "CHARSET", "AUTO_INCREMENT", "MODIFY", "CHANGE", "DESCRIBE", "USE", "SHOW"].includes(kw)
+    (kw) =>
+      ![
+        "ENGINE",
+        "CHARSET",
+        "AUTO_INCREMENT",
+        "MODIFY",
+        "CHANGE",
+        "DESCRIBE",
+        "USE",
+        "SHOW",
+      ].includes(kw)
   ),
   // PostgreSQL 专属/常用
   "RETURNING",
@@ -154,8 +164,34 @@ export const POSTGRES_KEYWORDS = [
   "DO UPDATE",
 ];
 
+/** SQLite 常用关键词（用于补全） */
+export const SQLITE_KEYWORDS = [
+  "SELECT",
+  "FROM",
+  "WHERE",
+  "INSERT",
+  "UPDATE",
+  "DELETE",
+  "CREATE",
+  "ALTER",
+  "DROP",
+  "TABLE",
+  "VIEW",
+  "INDEX",
+  "TRIGGER",
+  "PRAGMA",
+  "EXPLAIN",
+  "QUERY PLAN",
+  "WITH",
+  "RETURNING",
+  "ON CONFLICT",
+  "VACUUM",
+  "ATTACH",
+  "DETACH",
+];
+
 /** SQL 方言：决定标识符引用方式与关键词集合 */
-export type SqlDialect = "mysql" | "postgres";
+export type SqlDialect = "mysql" | "postgres" | "sqlite";
 
 export interface SqlCompletionOptions {
   /** 数据库方言，默认 mysql */
@@ -164,12 +200,17 @@ export interface SqlCompletionOptions {
 
 /** 按方言返回关键词列表 */
 export function getSqlKeywords(dialect: SqlDialect = "mysql"): string[] {
-  return dialect === "postgres" ? POSTGRES_KEYWORDS : MYSQL_KEYWORDS;
+  if (dialect === "postgres") return POSTGRES_KEYWORDS;
+  if (dialect === "sqlite") return SQLITE_KEYWORDS;
+  return MYSQL_KEYWORDS;
 }
 
 /** 按方言对标识符加引号：MySQL 反引号、PostgreSQL 双引号 */
-export function quoteIdentifier(name: string, dialect: SqlDialect = "mysql"): string {
-  if (dialect === "postgres") {
+export function quoteIdentifier(
+  name: string,
+  dialect: SqlDialect = "mysql"
+): string {
+  if (dialect === "postgres" || dialect === "sqlite") {
     return '"' + name.replace(/"/g, '""') + '"';
   }
   return "`" + name.replace(/`/g, "``") + "`";
@@ -201,14 +242,23 @@ export function buildSqlSuggestions(
   const keywords = getSqlKeywords(dialect);
   const upperPrefix = (prefix || "").toUpperCase();
   const lowerPrefix = (prefix || "").toLowerCase();
-  const keywordDetail = dialect === "postgres" ? "PostgreSQL 关键词" : "MySQL 关键词";
+  const keywordDetail =
+    dialect === "postgres"
+      ? "PostgreSQL 关键词"
+      : dialect === "sqlite"
+        ? "SQLite 关键词"
+        : "MySQL 关键词";
   const dbDetail = dialect === "postgres" ? "schema" : "数据库";
 
   const suggestions: Monaco.languages.CompletionItem[] = [];
 
   // 1. 关键词
   for (const kw of keywords) {
-    if (!upperPrefix || kw.startsWith(upperPrefix) || kw.includes(upperPrefix)) {
+    if (
+      !upperPrefix ||
+      kw.startsWith(upperPrefix) ||
+      kw.includes(upperPrefix)
+    ) {
       suggestions.push({
         label: kw,
         kind: monaco.languages.CompletionItemKind.Keyword,

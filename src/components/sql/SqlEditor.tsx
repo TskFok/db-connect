@@ -82,27 +82,32 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
   const themeMode = useThemeStore((s) => s.mode);
   const { add: addSavedSql, getAll: getSavedSqlList } = useSavedSqlStore();
 
-  const [currentDb, setCurrentDb] = useState<string | null>(
-    selectedDatabase
-  );
+  const [currentDb, setCurrentDb] = useState<string | null>(selectedDatabase);
   const [executing, setExecuting] = useState(false);
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [saveModalName, setSaveModalName] = useState("");
   /** 批量已执行 SQL 折叠面板展开的 key（antd Collapse） */
-  const [bulkExecutedPanelKeys, setBulkExecutedPanelKeys] = useState<string[]>([]);
+  const [bulkExecutedPanelKeys, setBulkExecutedPanelKeys] = useState<string[]>(
+    []
+  );
   const [sessionDrawerOpen, setSessionDrawerOpen] = useState(false);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [sessionInfo, setSessionInfo] = useState<SessionInfo | null>(null);
   /** 连接或库切换时预取，用于禁用不兼容的 EXPLAIN ANALYZE */
-  const [prefetchedVersion, setPrefetchedVersion] = useState<string | null>(null);
+  const [prefetchedVersion, setPrefetchedVersion] = useState<string | null>(
+    null
+  );
   /** 已完成版本探测的 connId+db key；不一致时视为仍在探测 */
-  const [prefetchedVersionReadyKey, setPrefetchedVersionReadyKey] = useState("");
+  const [prefetchedVersionReadyKey, setPrefetchedVersionReadyKey] =
+    useState("");
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   /** 当前正在执行语句的取消令牌（用于「停止」按钮取消运行中的查询） */
   const currentExecutionIdRef = useRef<string | null>(null);
 
   const connId = activeConnection?.connId ?? "";
-  const databaseType = normalizeDatabaseType(activeConnection?.config.database_type);
+  const databaseType = normalizeDatabaseType(
+    activeConnection?.config.database_type
+  );
   const versionProbeKey = `${connId}::${currentDb ?? ""}`;
   const prefetchedVersionLoading =
     !!connId && prefetchedVersionReadyKey !== versionProbeKey;
@@ -112,7 +117,9 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
   const tabResult = tabId ? sqlTabResults[tabId] : null;
   const [localResult, setLocalResult] = useState<SqlExecuteResult | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
-  const [localExecutedSqlList, setLocalExecutedSqlList] = useState<string[]>([]);
+  const [localExecutedSqlList, setLocalExecutedSqlList] = useState<string[]>(
+    []
+  );
 
   const result = tabId ? (tabResult?.result ?? null) : localResult;
   const error = tabId ? (tabResult?.error ?? null) : localError;
@@ -164,9 +171,11 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
 
   const explainAnalyzeSupported = useMemo(
     () =>
-      databaseType === "postgres"
-        ? true
-        : supportsExplainAnalyze(prefetchedVersion ?? ""),
+      databaseType === "sqlite"
+        ? false
+        : databaseType === "postgres"
+          ? true
+          : supportsExplainAnalyze(prefetchedVersion ?? ""),
     [databaseType, prefetchedVersion]
   );
 
@@ -196,7 +205,11 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
   const dialectRef = useRef<SqlDialect>("mysql");
   useEffect(() => {
     dialectRef.current =
-      databaseType === "postgres" ? "postgres" : "mysql";
+      databaseType === "postgres"
+        ? "postgres"
+        : databaseType === "sqlite"
+          ? "sqlite"
+          : "mysql";
   }, [databaseType]);
 
   useEffect(() => {
@@ -258,7 +271,8 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
 
   const savedList = getSavedSqlList();
   const currentSavedSqlKey = useMemo(
-    () => (activeConnection ? savedSqlConnectionKey(activeConnection.config) : ""),
+    () =>
+      activeConnection ? savedSqlConnectionKey(activeConnection.config) : "",
     [activeConnection]
   );
   const savedListForCurrent = useMemo(
@@ -288,7 +302,12 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     );
     setSaveModalOpen(false);
     setSaveModalName("");
-  }, [addSavedSql, saveModalName, savedListForCurrent.length, activeConnection]);
+  }, [
+    addSavedSql,
+    saveModalName,
+    savedListForCurrent.length,
+    activeConnection,
+  ]);
 
   const loadSessionInfo = useCallback(async () => {
     const { connId: cid, currentDb: db } = execParamsRef.current;
@@ -482,7 +501,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
   }, []);
 
   const tabExecuteNonce = useDatabaseStore((s) =>
-    tabId ? (s.sqlTabExecuteNonce ?? {})[tabId] ?? 0 : 0
+    tabId ? ((s.sqlTabExecuteNonce ?? {})[tabId] ?? 0) : 0
   );
   const tabExecuteNonceSyncedRef = useRef<number | undefined>(undefined);
   useEffect(() => {
@@ -582,6 +601,40 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     result.columns !== null &&
     result.columns.length > 0;
 
+  const sessionLabels = useMemo(() => {
+    if (databaseType === "postgres") {
+      return {
+        version: "version()",
+        hostname: "server_host",
+        readOnly: "transaction_read_only",
+        timeoutHelp: "PostgreSQL 当前返回 0（未配置客户端侧统一超时）",
+        timeZone: "TimeZone",
+        database: "current_schema",
+        connectionId: "pg_backend_pid()",
+      };
+    }
+    if (databaseType === "sqlite") {
+      return {
+        version: "sqlite_version()",
+        hostname: "local",
+        readOnly: "read_only",
+        timeoutHelp: "SQLite 当前返回 0（未配置统一超时）",
+        timeZone: "local",
+        database: "database",
+        connectionId: "connection_id",
+      };
+    }
+    return {
+      version: "@@version",
+      hostname: "@@hostname",
+      readOnly: "@@read_only",
+      timeoutHelp: "MySQL: max_execution_time；MariaDB: max_statement_time",
+      timeZone: "@@time_zone",
+      database: "DATABASE()",
+      connectionId: "CONNECTION_ID()",
+    };
+  }, [databaseType]);
+
   const handleExportSqlExcel = useCallback(async () => {
     if (!result?.columns?.length || !result.rows?.length) {
       message.warning("没有可导出的查询结果");
@@ -623,7 +676,13 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
             执行
           </Button>
           {executing && (
-            <Tooltip title="停止当前查询（KILL QUERY）">
+            <Tooltip
+              title={
+                databaseType === "sqlite"
+                  ? "停止当前查询（SQLite 暂不支持主动取消）"
+                  : "停止当前查询（KILL QUERY）"
+              }
+            >
               <Button
                 danger
                 size="small"
@@ -638,7 +697,11 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
             Cmd/Ctrl + Enter
           </Text>
           <Tooltip
-            title={!connId || !activeConnection ? "请先建立数据库连接" : "保存当前 SQL"}
+            title={
+              !connId || !activeConnection
+                ? "请先建立数据库连接"
+                : "保存当前 SQL"
+            }
           >
             <Button
               type="default"
@@ -669,17 +732,24 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
               prefetchedVersionLoading
                 ? "正在检测数据库版本，请稍候"
                 : explainAnalyzeSupported
-                ? databaseType === "postgres"
-                  ? "EXPLAIN ANALYZE（PostgreSQL）"
-                  : "EXPLAIN ANALYZE（MySQL 8.0.18+ / MariaDB 10.7+ 等）"
-                : `当前版本「${prefetchedVersion ?? "未知"}」可能不支持 EXPLAIN ANALYZE，请使用左侧 EXPLAIN 或升级实例`
+                  ? databaseType === "postgres"
+                    ? "EXPLAIN ANALYZE（PostgreSQL）"
+                    : "EXPLAIN ANALYZE（MySQL 8.0.18+ / MariaDB 10.7+ 等）"
+                  : databaseType === "sqlite"
+                    ? "SQLite 暂不支持 EXPLAIN ANALYZE，请使用左侧 EXPLAIN"
+                    : `当前版本「${prefetchedVersion ?? "未知"}」可能不支持 EXPLAIN ANALYZE，请使用左侧 EXPLAIN 或升级实例`
             }
           >
             <Button
               type="default"
               size="small"
               onClick={() => void doExplain(true)}
-              disabled={!connId || executing || prefetchedVersionLoading || !explainAnalyzeSupported}
+              disabled={
+                !connId ||
+                executing ||
+                prefetchedVersionLoading ||
+                !explainAnalyzeSupported
+              }
             >
               ANALYZE
             </Button>
@@ -688,7 +758,9 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
             title={
               databaseType === "postgres"
                 ? "查看 PostgreSQL 版本、连接 ID、只读状态等"
-                : "查看 @@version、连接 ID、@@read_only 等"
+                : databaseType === "sqlite"
+                  ? "查看 SQLite 版本、只读状态、database 等"
+                  : "查看 @@version、连接 ID、@@read_only 等"
             }
           >
             <Button
@@ -908,7 +980,10 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
                   }}
                   title={stmt}
                 >
-                  <Text type="secondary" style={{ fontSize: 11, marginRight: 8 }}>
+                  <Text
+                    type="secondary"
+                    style={{ fontSize: 11, marginRight: 8 }}
+                  >
                     [{idx + 1}]
                   </Text>
                   <code style={{ fontSize: 12 }}>{stmt}</code>
@@ -927,8 +1002,12 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
               flexShrink: 0,
             }}
           >
-            <Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 8 }}>
-              已成功执行 {executedPreview.total} 条 SQL。语句较多时已默认折叠列表，展开后仅展示前{" "}
+            <Text
+              type="secondary"
+              style={{ fontSize: 12, display: "block", marginBottom: 8 }}
+            >
+              已成功执行 {executedPreview.total} 条
+              SQL。语句较多时已默认折叠列表，展开后仅展示前{" "}
               {executedPreview.visibleSlice.length} 条以避免界面卡顿。
             </Text>
             <Collapse
@@ -963,7 +1042,10 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
                             minWidth: 0,
                           }}
                         >
-                          <Text type="secondary" style={{ fontSize: 11, flexShrink: 0 }}>
+                          <Text
+                            type="secondary"
+                            style={{ fontSize: 11, flexShrink: 0 }}
+                          >
                             [{idx + 1}]
                           </Text>
                           <Text
@@ -1049,35 +1131,33 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
         <Spin spinning={sessionLoading}>
           {sessionInfo ? (
             <Descriptions column={1} size="small" bordered>
-              <Descriptions.Item label={databaseType === "postgres" ? "version()" : "@@version"}>
+              <Descriptions.Item label={sessionLabels.version}>
                 {sessionInfo.version}
               </Descriptions.Item>
-              <Descriptions.Item label={databaseType === "postgres" ? "server_host" : "@@hostname"}>
+              <Descriptions.Item label={sessionLabels.hostname}>
                 {sessionInfo.hostname}
               </Descriptions.Item>
-              <Descriptions.Item
-                label={databaseType === "postgres" ? "transaction_read_only" : "@@read_only"}
-              >
+              <Descriptions.Item label={sessionLabels.readOnly}>
                 {sessionInfo.server_read_only ? "是" : "否"}
               </Descriptions.Item>
               <Descriptions.Item label="SHOW GRANTS（可写）">
-                {sessionInfo.grant_write_capable ? "是（含 DML/DDL 等）" : "否（仅 SELECT/USAGE 等，界面已按只读灰显）"}
+                {sessionInfo.grant_write_capable
+                  ? "是（含 DML/DDL 等）"
+                  : "否（仅 SELECT/USAGE 等，界面已按只读灰显）"}
               </Descriptions.Item>
               <Descriptions.Item label="会话查询超时 (ms)">
                 {sessionInfo.max_execution_time_ms}
                 <Text type="secondary" style={{ fontSize: 11, marginLeft: 6 }}>
-                  {databaseType === "postgres"
-                    ? "PostgreSQL 当前返回 0（未配置客户端侧统一超时）"
-                    : "MySQL: max_execution_time；MariaDB: max_statement_time"}
+                  {sessionLabels.timeoutHelp}
                 </Text>
               </Descriptions.Item>
-              <Descriptions.Item label={databaseType === "postgres" ? "TimeZone" : "@@time_zone"}>
+              <Descriptions.Item label={sessionLabels.timeZone}>
                 {sessionInfo.time_zone}
               </Descriptions.Item>
-              <Descriptions.Item label={databaseType === "postgres" ? "current_schema" : "DATABASE()"}>
+              <Descriptions.Item label={sessionLabels.database}>
                 {sessionInfo.database ?? "—"}
               </Descriptions.Item>
-              <Descriptions.Item label="CONNECTION_ID()">
+              <Descriptions.Item label={sessionLabels.connectionId}>
                 {sessionInfo.connection_id}
               </Descriptions.Item>
             </Descriptions>

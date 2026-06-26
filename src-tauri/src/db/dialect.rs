@@ -199,6 +199,218 @@ impl SqliteDialect {
             where_sql
         )
     }
+
+    pub fn sql_editor_allowed_on_read_only_connection(&self, sql: &str) -> bool {
+        let upper = sql.trim().to_uppercase();
+        if upper.starts_with("WITH") {
+            return self.with_statement_main_is_select(&upper)
+                && !self.with_statement_contains_write(&upper);
+        }
+        upper.starts_with("SELECT")
+            || upper.starts_with("EXPLAIN")
+            || self.is_readonly_pragma(&upper)
+    }
+
+    fn is_readonly_pragma(&self, upper_sql: &str) -> bool {
+        let allowed = [
+            "PRAGMA DATABASE_LIST",
+            "PRAGMA TABLE_LIST",
+            "PRAGMA TABLE_INFO",
+            "PRAGMA TABLE_XINFO",
+            "PRAGMA INDEX_LIST",
+            "PRAGMA INDEX_INFO",
+            "PRAGMA INDEX_XINFO",
+            "PRAGMA FOREIGN_KEY_LIST",
+            "PRAGMA QUICK_CHECK",
+            "PRAGMA INTEGRITY_CHECK",
+        ];
+        allowed.iter().any(|prefix| upper_sql.starts_with(prefix))
+    }
+
+    fn with_statement_contains_write(&self, upper_sql: &str) -> bool {
+        let normalized = upper_sql.split_whitespace().collect::<Vec<_>>().join(" ");
+        let compact = normalized.replace("( ", "(");
+        [
+            " AS (INSERT ",
+            " AS (UPDATE ",
+            " AS (DELETE ",
+            " AS (REPLACE ",
+            " AS MATERIALIZED (INSERT ",
+            " AS MATERIALIZED (UPDATE ",
+            " AS MATERIALIZED (DELETE ",
+            " AS MATERIALIZED (REPLACE ",
+            " AS NOT MATERIALIZED (INSERT ",
+            " AS NOT MATERIALIZED (UPDATE ",
+            " AS NOT MATERIALIZED (DELETE ",
+            " AS NOT MATERIALIZED (REPLACE ",
+        ]
+        .iter()
+        .any(|marker| compact.contains(marker))
+    }
+
+    fn with_statement_main_is_select(&self, upper_sql: &str) -> bool {
+        let Some(mut idx) = self.consume_keyword(upper_sql, 0, "WITH") else {
+            return false;
+        };
+        idx = self.skip_ws(upper_sql, idx);
+        if let Some(next) = self.consume_keyword(upper_sql, idx, "RECURSIVE") {
+            idx = self.skip_ws(upper_sql, next);
+        }
+
+        loop {
+            idx = self.skip_ws(upper_sql, idx);
+            let Some(next) = self.skip_identifier(upper_sql, idx) else {
+                return false;
+            };
+            idx = self.skip_ws(upper_sql, next);
+
+            if upper_sql.as_bytes().get(idx) == Some(&b'(') {
+                let Some(next) = self.skip_balanced_parentheses(upper_sql, idx) else {
+                    return false;
+                };
+                idx = self.skip_ws(upper_sql, next);
+            }
+
+            let Some(next) = self.consume_keyword(upper_sql, idx, "AS") else {
+                return false;
+            };
+            idx = self.skip_ws(upper_sql, next);
+
+            if let Some(next) = self.consume_keyword(upper_sql, idx, "NOT") {
+                idx = self.skip_ws(upper_sql, next);
+                let Some(next) = self.consume_keyword(upper_sql, idx, "MATERIALIZED") else {
+                    return false;
+                };
+                idx = self.skip_ws(upper_sql, next);
+            } else if let Some(next) = self.consume_keyword(upper_sql, idx, "MATERIALIZED") {
+                idx = self.skip_ws(upper_sql, next);
+            }
+
+            if upper_sql.as_bytes().get(idx) != Some(&b'(') {
+                return false;
+            }
+            let Some(next) = self.skip_balanced_parentheses(upper_sql, idx) else {
+                return false;
+            };
+            idx = self.skip_ws(upper_sql, next);
+
+            if upper_sql.as_bytes().get(idx) == Some(&b',') {
+                idx += 1;
+                continue;
+            }
+            break;
+        }
+
+        upper_sql[idx..].trim_start().starts_with("SELECT")
+    }
+
+    fn consume_keyword(&self, sql: &str, idx: usize, keyword: &str) -> Option<usize> {
+        let rest = sql.get(idx..)?;
+        if !rest.starts_with(keyword) {
+            return None;
+        }
+        let end = idx + keyword.len();
+        match sql.as_bytes().get(end) {
+            Some(b) if b.is_ascii_alphanumeric() || *b == b'_' => None,
+            _ => Some(end),
+        }
+    }
+
+    fn skip_ws(&self, sql: &str, mut idx: usize) -> usize {
+        let bytes = sql.as_bytes();
+        while bytes.get(idx).is_some_and(|b| b.is_ascii_whitespace()) {
+            idx += 1;
+        }
+        idx
+    }
+
+    fn skip_identifier(&self, sql: &str, idx: usize) -> Option<usize> {
+        match sql.as_bytes().get(idx)? {
+            b'"' | b'`' => self.skip_quoted(sql, idx, *sql.as_bytes().get(idx)?),
+            b'[' => self.skip_bracket_quoted(sql, idx),
+            _ => {
+                let bytes = sql.as_bytes();
+                let mut end = idx;
+                while bytes
+                    .get(end)
+                    .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'$')
+                {
+                    end += 1;
+                }
+                if end == idx {
+                    None
+                } else {
+                    Some(end)
+                }
+            }
+        }
+    }
+
+    fn skip_balanced_parentheses(&self, sql: &str, idx: usize) -> Option<usize> {
+        let bytes = sql.as_bytes();
+        if bytes.get(idx) != Some(&b'(') {
+            return None;
+        }
+
+        let mut depth = 0usize;
+        let mut i = idx;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'\'' | b'"' | b'`' => {
+                    i = self.skip_quoted(sql, i, bytes[i])?;
+                    continue;
+                }
+                b'[' => {
+                    i = self.skip_bracket_quoted(sql, i)?;
+                    continue;
+                }
+                b'(' => depth += 1,
+                b')' => {
+                    depth = depth.checked_sub(1)?;
+                    if depth == 0 {
+                        return Some(i + 1);
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
+    fn skip_quoted(&self, sql: &str, idx: usize, quote: u8) -> Option<usize> {
+        let bytes = sql.as_bytes();
+        if bytes.get(idx) != Some(&quote) {
+            return None;
+        }
+        let mut i = idx + 1;
+        while i < bytes.len() {
+            if bytes[i] == quote {
+                if bytes.get(i + 1) == Some(&quote) {
+                    i += 2;
+                    continue;
+                }
+                return Some(i + 1);
+            }
+            i += 1;
+        }
+        None
+    }
+
+    fn skip_bracket_quoted(&self, sql: &str, idx: usize) -> Option<usize> {
+        let bytes = sql.as_bytes();
+        if bytes.get(idx) != Some(&b'[') {
+            return None;
+        }
+        let mut i = idx + 1;
+        while i < bytes.len() {
+            if bytes[i] == b']' {
+                return Some(i + 1);
+            }
+            i += 1;
+        }
+        None
+    }
 }
 
 pub const SQLITE_DIALECT: SqliteDialect = SqliteDialect;
@@ -287,6 +499,26 @@ mod tests {
             SQLITE_DIALECT.count_query("main", "users", " WHERE \"name\" = 'Alice'"),
             "SELECT COUNT(*) as cnt FROM \"main\".\"users\" WHERE \"name\" = 'Alice'"
         );
+    }
+
+    #[test]
+    fn sqlite_read_only_sql_editor_allows_safe_read_statements_only() {
+        assert!(SQLITE_DIALECT.sql_editor_allowed_on_read_only_connection("SELECT 1"));
+        assert!(SQLITE_DIALECT.sql_editor_allowed_on_read_only_connection("EXPLAIN SELECT 1"));
+        assert!(
+            SQLITE_DIALECT.sql_editor_allowed_on_read_only_connection("PRAGMA table_info(users)")
+        );
+
+        assert!(
+            !SQLITE_DIALECT.sql_editor_allowed_on_read_only_connection("PRAGMA journal_mode=WAL")
+        );
+        assert!(!SQLITE_DIALECT.sql_editor_allowed_on_read_only_connection("ATTACH 'x' AS aux"));
+        assert!(!SQLITE_DIALECT.sql_editor_allowed_on_read_only_connection("VACUUM"));
+        assert!(!SQLITE_DIALECT
+            .sql_editor_allowed_on_read_only_connection("INSERT INTO users VALUES (1)"));
+        assert!(!SQLITE_DIALECT.sql_editor_allowed_on_read_only_connection(
+            "WITH x AS (SELECT 1) INSERT INTO users SELECT * FROM x"
+        ));
     }
 
     #[test]

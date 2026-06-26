@@ -58,6 +58,43 @@ describe("tauriCommands SQL 执行与取消", () => {
     expect(r.columns[0].name).toBe("id");
   });
 
+  it("getSessionInfo 透传 SQLite database 名称", async () => {
+    vi.mocked(invoke).mockResolvedValue({
+      version: "3.45.0",
+      hostname: "local",
+      server_read_only: false,
+      max_execution_time_ms: 0,
+      time_zone: "local",
+      database: "main",
+      connection_id: 0,
+      grant_write_capable: true,
+    } as never);
+    const r = await api.getSessionInfo("cid", "main");
+    expect(invoke).toHaveBeenCalledWith("get_session_info", {
+      connId: "cid",
+      database: "main",
+    });
+    expect(r.hostname).toBe("local");
+  });
+
+  it("explainSql 透传 analyze 参数", async () => {
+    vi.mocked(invoke).mockResolvedValue({
+      result_type: "select",
+      columns: ["detail"],
+      rows: [["SCAN users"]],
+      affected_rows: null,
+      message: "返回 1 行 (耗时 1ms)",
+      execution_time_ms: 1,
+    } as never);
+    await api.explainSql("cid", "main", "SELECT * FROM users", false);
+    expect(invoke).toHaveBeenCalledWith("explain_sql", {
+      connId: "cid",
+      database: "main",
+      sql: "SELECT * FROM users",
+      analyze: false,
+    });
+  });
+
   it("batchUpdateRows 调用 batch_update_rows 命令并透传行集", async () => {
     vi.mocked(invoke).mockResolvedValue(2 as never);
     const rows = [

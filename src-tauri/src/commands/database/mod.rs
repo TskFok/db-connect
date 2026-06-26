@@ -3,11 +3,11 @@ pub mod column_ops;
 pub use column_ops::build_column_definition;
 
 use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
-use crate::db::{postgres, sqlite};
 use crate::db::postgres_ddl;
 use crate::db::sql_utils::{
     esc_id, esc_str, validate_column_extra, validate_column_type, validate_engine_name,
 };
+use crate::db::{postgres, sqlite};
 use crate::models::types::{
     ColumnInfo, CreateTableRequest, DatabaseInfo, SqlCompletionColumn, SqlCompletionMetadata,
     SqlCompletionTable, TableInfo,
@@ -322,7 +322,9 @@ pub async fn get_sql_completion_metadata(
                 columns,
             })
         }
-        DatabasePoolHandle::Sqlite(_) => Err(DatabasePoolHandle::sqlite_unsupported_error()),
+        DatabasePoolHandle::Sqlite(handle) => {
+            sqlite::get_sql_completion_metadata(&handle.pool, database).await
+        }
     }
 }
 

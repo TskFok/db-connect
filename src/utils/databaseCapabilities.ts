@@ -87,7 +87,7 @@ const POSTGRES_CAPABILITIES: DatabaseCapabilities = {
 };
 
 const SQLITE_CAPABILITIES: DatabaseCapabilities = {
-  sqlEditor: false,
+  sqlEditor: true,
   databaseManagement: false,
   tableBrowsing: true,
   tableDataEditing: false,

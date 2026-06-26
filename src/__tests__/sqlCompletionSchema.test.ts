@@ -45,10 +45,47 @@ describe("loadSqlCompletionSchema", () => {
       getTableStructure: vi.fn(),
     };
 
-    const schema = await loadSqlCompletionSchema(source, "conn-1", null, "mysql");
+    const schema = await loadSqlCompletionSchema(
+      source,
+      "conn-1",
+      null,
+      "mysql"
+    );
 
-    expect(source.getSqlCompletionMetadata).toHaveBeenCalledWith("conn-1", null);
+    expect(source.getSqlCompletionMetadata).toHaveBeenCalledWith(
+      "conn-1",
+      null
+    );
     expect(source.listDatabases).not.toHaveBeenCalled();
+    expect(schema).toEqual(metadata);
+  });
+
+  it("SQLite 也使用批量元数据接口加载 database/table/column", async () => {
+    const metadata: SqlCompletionMetadata = {
+      databases: ["main"],
+      tables: [{ name: "users" }],
+      columns: [{ table: "users", name: "name", type: "TEXT" }],
+    };
+    const source = {
+      getSqlCompletionMetadata: vi.fn().mockResolvedValue(metadata),
+      listDatabases: vi.fn(),
+      listTables: vi.fn(),
+      getTableStructure: vi.fn(),
+    };
+
+    const schema = await loadSqlCompletionSchema(
+      source,
+      "conn-1",
+      "main",
+      "sqlite"
+    );
+
+    expect(source.getSqlCompletionMetadata).toHaveBeenCalledWith(
+      "conn-1",
+      "main"
+    );
+    expect(source.listTables).not.toHaveBeenCalled();
+    expect(source.getTableStructure).not.toHaveBeenCalled();
     expect(schema).toEqual(metadata);
   });
 });

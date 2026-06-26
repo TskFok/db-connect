@@ -1,9 +1,9 @@
 use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
-use crate::db::{postgres, sqlite};
 use crate::db::sql_utils::{
     esc_id, esc_str, mysql_count_query, mysql_paginated_select,
     mysql_sql_editor_allowed_on_read_only_connection, validate_where_clause,
 };
+use crate::db::{postgres, sqlite};
 use crate::models::types::{QueryResult, SessionInfo, SqlExecuteResult};
 use crate::{AppState, RunningQuery};
 use mysql_async::prelude::*;
@@ -1264,7 +1264,10 @@ pub async fn execute_sql(
 
             result
         }
-        DatabasePoolHandle::Sqlite(_) => Err(DatabasePoolHandle::sqlite_unsupported_error()),
+        DatabasePoolHandle::Sqlite(handle) => {
+            let start = Instant::now();
+            sqlite::run_sql_on_pool(&handle.pool, &sql, read_only, start).await
+        }
     }
 }
 
@@ -1320,9 +1323,9 @@ pub async fn get_session_info(
     conn_id: String,
     database: Option<String>,
 ) -> Result<SessionInfo, String> {
-    let pool_handle = {
+    let (pool_handle, read_only) = {
         let mut manager = state.connection_manager.lock().await;
-        manager.get_database_pool_and_touch(&conn_id)?
+        manager.get_database_pool_touch_and_read_only(&conn_id)?
     };
 
     let pool = match pool_handle {
@@ -1361,28 +1364,7 @@ pub async fn get_session_info(
             });
         }
         DatabasePoolHandle::Sqlite(handle) => {
-            let conn = handle
-                .pool
-                .get()
-                .await
-                .map_err(|e| format!("读取 SQLite 会话信息失败: {}", e))?;
-            let version = conn
-                .interact(|conn| {
-                    conn.query_row("SELECT sqlite_version()", [], |row| row.get::<_, String>(0))
-                        .map_err(|e| format!("读取 SQLite 版本失败: {}", e))
-                })
-                .await
-                .map_err(|e| format!("SQLite 会话信息任务失败: {}", e))??;
-            return Ok(SessionInfo {
-                version: format!("SQLite {}", version),
-                hostname: "local".to_string(),
-                server_read_only: false,
-                max_execution_time_ms: 0,
-                time_zone: String::new(),
-                database: None,
-                connection_id: 0,
-                grant_write_capable: true,
-            });
+            return sqlite::get_session_info(&handle.pool, database, None, read_only).await;
         }
     };
 
@@ -1437,39 +1419,51 @@ pub async fn explain_sql(
     if trimmed.is_empty() {
         return Err("SQL 语句不能为空".to_string());
     }
-    let explain_stmt = if trimmed.to_uppercase().starts_with("EXPLAIN") {
-        trimmed.to_string()
-    } else if analyze {
-        format!("EXPLAIN ANALYZE {}", trimmed)
-    } else {
-        format!("EXPLAIN {}", trimmed)
-    };
-    validate_sql_input(&explain_stmt)?;
 
     let pool_handle = {
         let mut manager = state.connection_manager.lock().await;
         manager.get_database_pool_and_touch(&conn_id)?
     };
 
-    let pool = match pool_handle {
-        DatabasePoolHandle::MySql(pool) => pool,
+    match pool_handle {
+        DatabasePoolHandle::MySql(pool) => {
+            let explain_stmt = if trimmed.to_uppercase().starts_with("EXPLAIN") {
+                trimmed.to_string()
+            } else if analyze {
+                format!("EXPLAIN ANALYZE {}", trimmed)
+            } else {
+                format!("EXPLAIN {}", trimmed)
+            };
+            validate_sql_input(&explain_stmt)?;
+
+            let mut conn = get_conn_with_retry(&pool).await?;
+
+            use_database_if_set(&mut conn, &database).await?;
+
+            let start = Instant::now();
+            materialize_limited_select(&mut conn, &explain_stmt, start).await
+        }
         DatabasePoolHandle::Postgres(handle) => {
+            let explain_stmt = if trimmed.to_uppercase().starts_with("EXPLAIN") {
+                trimmed.to_string()
+            } else if analyze {
+                format!("EXPLAIN ANALYZE {}", trimmed)
+            } else {
+                format!("EXPLAIN {}", trimmed)
+            };
+            validate_sql_input(&explain_stmt)?;
+
             let client = postgres::get_client_with_retry(&handle.pool).await?;
             postgres::set_search_path_if_set(&client, &database).await?;
             let start = Instant::now();
-            return postgres::run_sql_on_client(&client, &explain_stmt, false, start).await;
+            postgres::run_sql_on_client(&client, &explain_stmt, false, start).await
         }
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        DatabasePoolHandle::Sqlite(handle) => {
+            validate_sql_input(trimmed)?;
+            let start = Instant::now();
+            sqlite::explain_sql_on_pool(&handle.pool, trimmed, analyze, start).await
         }
-    };
-
-    let mut conn = get_conn_with_retry(&pool).await?;
-
-    use_database_if_set(&mut conn, &database).await?;
-
-    let start = Instant::now();
-    materialize_limited_select(&mut conn, &explain_stmt, start).await
+    }
 }
 
 // ─── 单元测试 ───────────────────────────────────────────────────────────

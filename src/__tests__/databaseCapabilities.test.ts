@@ -51,11 +51,11 @@ describe("getDatabaseCapabilities", () => {
     expect(caps.databaseObjectNoun).toBe("数据库");
   });
 
-  it("SQLite 阶段二开放只读对象浏览，不开放 SQL 工作区和数据编辑", () => {
+  it("SQLite 阶段三开放 SQL 工作区和只读对象浏览，不开放数据编辑", () => {
     const caps = getDatabaseCapabilities("sqlite");
 
     expect(caps.tableBrowsing).toBe(true);
-    expect(caps.sqlEditor).toBe(false);
+    expect(caps.sqlEditor).toBe(true);
     expect(caps.databaseManagement).toBe(false);
     expect(caps.tableDataEditing).toBe(false);
     expect(caps.sqlFileImportExport).toBe(false);

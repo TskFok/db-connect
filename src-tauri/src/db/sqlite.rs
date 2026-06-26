@@ -1,15 +1,21 @@
+use crate::db::dialect::SQLITE_DIALECT;
 use crate::db::sql_utils::{
     sqlite_count_query, sqlite_id, sqlite_paginated_select, sqlite_str, validate_where_clause,
 };
-use crate::models::types::{ColumnInfo, ConnectionConfig, QueryResult, TableInfo};
+use crate::models::types::{
+    ColumnInfo, ConnectionConfig, QueryResult, SessionInfo, SqlCompletionColumn,
+    SqlCompletionMetadata, SqlCompletionTable, SqlExecuteResult, TableInfo,
+};
 use deadpool_sqlite::{Config as SqliteConfig, Pool, Runtime};
 use rusqlite::types::Value as SqliteValue;
 use serde_json::Value as JsonValue;
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Instant;
 
 const JS_MAX_SAFE_INTEGER: i64 = 9007199254740991;
 const JS_MIN_SAFE_INTEGER: i64 = -9007199254740991;
+const MAX_EXECUTE_SQL_SELECT_ROWS: usize = 100_000;
 
 #[derive(Clone)]
 pub struct SqlitePoolHandle {
@@ -77,6 +83,225 @@ pub async fn list_databases(pool: &Pool) -> Result<Vec<String>, String> {
     })
     .await
     .map_err(|e| format!("SQLite 查询任务失败: {}", e))?
+}
+
+pub async fn run_sql_on_pool(
+    pool: &Pool,
+    sql: &str,
+    read_only: bool,
+    start: Instant,
+) -> Result<SqlExecuteResult, String> {
+    if read_only && !SQLITE_DIALECT.sql_editor_allowed_on_read_only_connection(sql) {
+        return Err("当前连接为只读模式，仅允许 SELECT/EXPLAIN/安全 PRAGMA 等读操作".to_string());
+    }
+    let sql = sql.to_string();
+    let conn = pool
+        .get()
+        .await
+        .map_err(|e| format!("获取 SQLite 连接失败: {}", e))?;
+    conn.interact(move |conn| run_sql_on_conn(conn, &sql, start))
+        .await
+        .map_err(|e| format!("SQLite SQL 执行任务失败: {}", e))?
+}
+
+fn run_sql_on_conn(
+    conn: &mut rusqlite::Connection,
+    sql: &str,
+    start: Instant,
+) -> Result<SqlExecuteResult, String> {
+    let mut stmt = conn
+        .prepare(sql)
+        .map_err(|e| format!("执行 SQL 失败: {}", e))?;
+    let column_count = stmt.column_count();
+
+    if column_count > 0 {
+        let columns = stmt
+            .column_names()
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect::<Vec<_>>();
+        let mut query = stmt.query([]).map_err(|e| format!("执行查询失败: {}", e))?;
+        let mut rows = Vec::new();
+
+        while let Some(row) = query.next().map_err(|e| format!("执行查询失败: {}", e))? {
+            if rows.len() >= MAX_EXECUTE_SQL_SELECT_ROWS {
+                return Err(format!(
+                    "查询结果超过最大行数 {}（与 Excel 导出行上限一致），请使用 LIMIT 或缩小范围后重试",
+                    MAX_EXECUTE_SQL_SELECT_ROWS
+                ));
+            }
+
+            let mut values = Vec::with_capacity(column_count);
+            for idx in 0..column_count {
+                let value: SqliteValue = row
+                    .get(idx)
+                    .map_err(|e| format!("读取查询结果失败: {}", e))?;
+                values.push(sqlite_value_to_json(&value));
+            }
+            rows.push(values);
+        }
+
+        let elapsed = start.elapsed().as_millis() as u64;
+        let row_count = rows.len();
+        return Ok(SqlExecuteResult {
+            result_type: "select".to_string(),
+            columns: Some(columns),
+            rows: Some(rows),
+            affected_rows: None,
+            message: format!("返回 {} 行 (耗时 {}ms)", row_count, elapsed),
+            execution_time_ms: elapsed,
+        });
+    }
+
+    let affected = stmt
+        .execute([])
+        .map_err(|e| format!("执行 SQL 失败: {}", e))? as u64;
+    let elapsed = start.elapsed().as_millis() as u64;
+
+    Ok(SqlExecuteResult {
+        result_type: "modify".to_string(),
+        columns: None,
+        rows: None,
+        affected_rows: Some(affected),
+        message: format!("执行成功, 影响 {} 行 (耗时 {}ms)", affected, elapsed),
+        execution_time_ms: elapsed,
+    })
+}
+
+pub async fn explain_sql_on_pool(
+    pool: &Pool,
+    sql: &str,
+    analyze: bool,
+    start: Instant,
+) -> Result<SqlExecuteResult, String> {
+    if analyze {
+        return Err("SQLite 暂不支持 EXPLAIN ANALYZE".to_string());
+    }
+
+    let trimmed = sql.trim();
+    let explain_sql = if trimmed.to_uppercase().starts_with("EXPLAIN") {
+        trimmed.to_string()
+    } else {
+        format!("EXPLAIN QUERY PLAN {}", trimmed)
+    };
+    run_sql_on_pool(pool, &explain_sql, false, start).await
+}
+
+pub async fn get_sql_completion_metadata(
+    pool: &Pool,
+    database: Option<String>,
+) -> Result<SqlCompletionMetadata, String> {
+    let databases = list_databases(pool).await?;
+    let Some(schema) = database
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+    else {
+        return Ok(SqlCompletionMetadata {
+            databases,
+            tables: Vec::new(),
+            columns: Vec::new(),
+        });
+    };
+
+    let schema_id = sqlite_id(&schema);
+    let sql = format!(
+        "SELECT m.name AS table_name, \
+                x.name AS column_name, \
+                x.type AS column_type \
+         FROM {}.sqlite_schema AS m \
+         LEFT JOIN pragma_table_xinfo(m.name, ?1) AS x \
+         WHERE m.type IN ('table', 'view') \
+           AND m.name NOT LIKE 'sqlite_%' \
+         ORDER BY m.name, x.cid",
+        schema_id
+    );
+
+    let conn = pool
+        .get()
+        .await
+        .map_err(|e| format!("获取 SQLite 连接失败: {}", e))?;
+    let (tables, columns) = conn
+        .interact(move |conn| {
+            let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([schema.as_str()], |row| {
+                    Ok((
+                        row.get::<_, String>("table_name")?,
+                        row.get::<_, Option<String>>("column_name")?,
+                        row.get::<_, Option<String>>("column_type")?,
+                    ))
+                })
+                .map_err(|e| e.to_string())?;
+
+            let mut seen_tables = BTreeSet::new();
+            let mut tables = Vec::new();
+            let mut columns = Vec::new();
+
+            for row in rows {
+                let (table_name, column_name, column_type) = row.map_err(|e| e.to_string())?;
+                if seen_tables.insert(table_name.clone()) {
+                    tables.push(SqlCompletionTable {
+                        name: table_name.clone(),
+                    });
+                }
+                if let Some(name) = column_name {
+                    columns.push(SqlCompletionColumn {
+                        table: table_name,
+                        name,
+                        data_type: column_type,
+                    });
+                }
+            }
+
+            Ok::<(Vec<SqlCompletionTable>, Vec<SqlCompletionColumn>), String>((tables, columns))
+        })
+        .await
+        .map_err(|e| format!("SQLite 查询任务失败: {}", e))??;
+
+    Ok(SqlCompletionMetadata {
+        databases,
+        tables,
+        columns,
+    })
+}
+
+pub async fn get_session_info(
+    pool: &Pool,
+    database: Option<String>,
+    _path: Option<String>,
+    read_only: bool,
+) -> Result<SessionInfo, String> {
+    let conn = pool
+        .get()
+        .await
+        .map_err(|e| format!("读取 SQLite 会话信息失败: {}", e))?;
+    let version = conn
+        .interact(|conn| {
+            conn.query_row("SELECT sqlite_version()", [], |row| row.get::<_, String>(0))
+                .map_err(|e| format!("读取 SQLite 版本失败: {}", e))
+        })
+        .await
+        .map_err(|e| format!("SQLite 会话信息任务失败: {}", e))??;
+
+    let database = database
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| Some("main".to_string()));
+
+    Ok(SessionInfo {
+        version,
+        hostname: "local".to_string(),
+        server_read_only: read_only,
+        max_execution_time_ms: 0,
+        time_zone: "local".to_string(),
+        database,
+        connection_id: 0,
+        grant_write_capable: !read_only,
+    })
 }
 
 pub async fn list_tables(pool: &Pool, database: &str) -> Result<Vec<TableInfo>, String> {
@@ -372,7 +597,9 @@ mod tests {
         let path = std::env::temp_dir().join(format!("db-connect-{}.sqlite", Uuid::new_v4()));
         fs::File::create(&path).expect("create sqlite test file");
         let cfg = SqliteConfig::new(path.to_str().expect("utf8 sqlite path"));
-        let pool = cfg.create_pool(Runtime::Tokio1).expect("create sqlite pool");
+        let pool = cfg
+            .create_pool(Runtime::Tokio1)
+            .expect("create sqlite pool");
         let conn = pool.get().await.expect("get sqlite connection");
         conn.interact(|conn| {
             conn.execute_batch(
@@ -408,7 +635,10 @@ mod tests {
         assert_eq!(databases, vec!["main"]);
 
         let tables = list_tables(&pool, "main").await.expect("list tables");
-        let users = tables.iter().find(|t| t.name == "users").expect("users table");
+        let users = tables
+            .iter()
+            .find(|t| t.name == "users")
+            .expect("users table");
         assert_eq!(users.table_type, "TABLE");
         assert_eq!(users.engine.as_deref(), Some("SQLite"));
         assert_eq!(users.rows, None);
@@ -452,14 +682,9 @@ mod tests {
     async fn sqlite_data_queries_count_page_sort_and_convert_values() {
         let (pool, path) = test_pool_with_schema().await;
 
-        let count = query_table_count(
-            &pool,
-            "main",
-            "users",
-            Some("\"age\" >= 20".to_string()),
-        )
-        .await
-        .expect("query count");
+        let count = query_table_count(&pool, "main", "users", Some("\"age\" >= 20".to_string()))
+            .await
+            .expect("query count");
         assert_eq!(count, 2);
 
         let order_sql = build_order_by_sql(&[("age", "DESC"), ("name", "invalid")]);
@@ -495,6 +720,197 @@ mod tests {
             result.rows[0][2],
             JsonValue::String("[binary 3 bytes]".to_string())
         );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_run_sql_returns_select_rows_and_columns() {
+        let (pool, path) = test_pool_with_schema().await;
+
+        let result = run_sql_on_pool(
+            &pool,
+            "SELECT id, name FROM users ORDER BY id",
+            false,
+            Instant::now(),
+        )
+        .await
+        .expect("run select");
+
+        assert_eq!(result.result_type, "select");
+        assert_eq!(
+            result.columns.as_deref(),
+            Some(&["id".to_string(), "name".to_string()][..])
+        );
+        assert_eq!(result.rows.as_ref().expect("rows").len(), 2);
+        assert_eq!(result.affected_rows, None);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_run_sql_returns_affected_rows_for_modify_statement() {
+        let (pool, path) = test_pool_with_schema().await;
+
+        let result = run_sql_on_pool(
+            &pool,
+            "INSERT INTO users (id, name) VALUES (3, 'Cara')",
+            false,
+            Instant::now(),
+        )
+        .await
+        .expect("run insert");
+
+        assert_eq!(result.result_type, "modify");
+        assert_eq!(result.columns, None);
+        assert_eq!(result.rows, None);
+        assert_eq!(result.affected_rows, Some(1));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_run_sql_enforces_read_only_sql_allowlist() {
+        let (pool, path) = test_pool_with_schema().await;
+
+        let pragma = run_sql_on_pool(&pool, "PRAGMA table_info(users)", true, Instant::now())
+            .await
+            .expect("readonly pragma");
+        assert_eq!(pragma.result_type, "select");
+
+        let err = run_sql_on_pool(
+            &pool,
+            "INSERT INTO users (id, name) VALUES (4, 'Dora')",
+            true,
+            Instant::now(),
+        )
+        .await
+        .expect_err("readonly insert rejected");
+        assert!(err.contains("只读模式"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_run_sql_rejects_select_results_over_row_limit() {
+        let (pool, path) = test_pool_with_schema().await;
+
+        let err = run_sql_on_pool(
+            &pool,
+            "WITH RECURSIVE cnt(x) AS (
+                SELECT 1
+                UNION ALL
+                SELECT x + 1 FROM cnt WHERE x < 100001
+            )
+            SELECT x FROM cnt",
+            false,
+            Instant::now(),
+        )
+        .await
+        .expect_err("row limit exceeded");
+
+        assert_eq!(
+            err,
+            "查询结果超过最大行数 100000（与 Excel 导出行上限一致），请使用 LIMIT 或缩小范围后重试"
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_completion_metadata_lists_databases_only_without_selection() {
+        let (pool, path) = test_pool_with_schema().await;
+
+        let metadata = get_sql_completion_metadata(&pool, None)
+            .await
+            .expect("completion metadata");
+
+        assert_eq!(metadata.databases, vec!["main"]);
+        assert!(metadata.tables.is_empty());
+        assert!(metadata.columns.is_empty());
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_completion_metadata_uses_batch_schema_query_for_tables_and_columns() {
+        let (pool, path) = test_pool_with_schema().await;
+
+        let metadata = get_sql_completion_metadata(&pool, Some("main".to_string()))
+            .await
+            .expect("completion metadata");
+
+        assert_eq!(metadata.databases, vec!["main"]);
+        assert!(metadata.tables.iter().any(|table| table.name == "users"));
+        assert!(metadata
+            .tables
+            .iter()
+            .any(|table| table.name == "adult_users"));
+        assert!(metadata.columns.iter().any(|column| {
+            column.table == "users"
+                && column.name == "name"
+                && column.data_type.as_deref() == Some("TEXT")
+        }));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_session_info_maps_local_connection_fields() {
+        let (pool, path) = test_pool_with_schema().await;
+
+        let info = get_session_info(&pool, None, None, true)
+            .await
+            .expect("session info");
+
+        assert!(!info.version.is_empty());
+        assert_eq!(info.hostname, "local");
+        assert!(info.server_read_only);
+        assert_eq!(info.max_execution_time_ms, 0);
+        assert_eq!(info.time_zone, "local");
+        assert_eq!(info.database.as_deref(), Some("main"));
+        assert_eq!(info.connection_id, 0);
+        assert!(!info.grant_write_capable);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_explain_uses_query_plan_and_rejects_analyze() {
+        let (pool, path) = test_pool_with_schema().await;
+
+        let result = explain_sql_on_pool(
+            &pool,
+            "SELECT * FROM users WHERE id = 1",
+            false,
+            Instant::now(),
+        )
+        .await
+        .expect("explain query plan");
+
+        assert_eq!(result.result_type, "select");
+        assert_eq!(
+            result.columns.as_deref(),
+            Some(
+                &[
+                    "id".to_string(),
+                    "parent".to_string(),
+                    "notused".to_string(),
+                    "detail".to_string(),
+                ][..]
+            )
+        );
+        assert!(result.rows.as_ref().is_some_and(|rows| !rows.is_empty()));
+
+        let err = explain_sql_on_pool(
+            &pool,
+            "SELECT * FROM users WHERE id = 1",
+            true,
+            Instant::now(),
+        )
+        .await
+        .expect_err("analyze rejected");
+        assert_eq!(err, "SQLite 暂不支持 EXPLAIN ANALYZE");
 
         let _ = fs::remove_file(path);
     }

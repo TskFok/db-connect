@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   MYSQL_KEYWORDS,
   POSTGRES_KEYWORDS,
+  SQLITE_KEYWORDS,
   buildSqlSuggestions,
   getSqlKeywords,
   quoteIdentifier,
@@ -104,10 +105,22 @@ describe("sqlCompletion", () => {
     });
   });
 
+  describe("SQLITE_KEYWORDS", () => {
+    it("应包含 SQLite 常用关键词", () => {
+      expect(SQLITE_KEYWORDS).toContain("PRAGMA");
+      expect(SQLITE_KEYWORDS).toContain("EXPLAIN");
+      expect(SQLITE_KEYWORDS).toContain("QUERY PLAN");
+      expect(SQLITE_KEYWORDS).toContain("ON CONFLICT");
+      expect(SQLITE_KEYWORDS).toContain("ATTACH");
+      expect(SQLITE_KEYWORDS).toContain("DETACH");
+    });
+  });
+
   describe("getSqlKeywords", () => {
     it("按方言返回对应关键词集合", () => {
       expect(getSqlKeywords("mysql")).toBe(MYSQL_KEYWORDS);
       expect(getSqlKeywords("postgres")).toBe(POSTGRES_KEYWORDS);
+      expect(getSqlKeywords("sqlite")).toBe(SQLITE_KEYWORDS);
       // 默认 mysql
       expect(getSqlKeywords()).toBe(MYSQL_KEYWORDS);
     });
@@ -122,6 +135,11 @@ describe("sqlCompletion", () => {
     it("PostgreSQL 使用双引号并转义双引号", () => {
       expect(quoteIdentifier("users", "postgres")).toBe('"users"');
       expect(quoteIdentifier('we"ird', "postgres")).toBe('"we""ird"');
+    });
+
+    it("SQLite 使用双引号并转义双引号", () => {
+      expect(quoteIdentifier("users", "sqlite")).toBe('"users"');
+      expect(quoteIdentifier('we"ird', "sqlite")).toBe('"we""ird"');
     });
   });
 
@@ -162,6 +180,21 @@ describe("sqlCompletion", () => {
       const col = suggestions.find((s) => s.label === "users.id");
       expect(db?.insertText).toBe("`app`");
       expect(col?.insertText).toBe("`users`.`id`");
+    });
+
+    it("SQLite 方言下标识符使用双引号并提供 SQLite 关键词", () => {
+      const suggestions = buildSqlSuggestions(
+        fakeMonaco,
+        "",
+        schema,
+        fakeRange,
+        { dialect: "sqlite" }
+      );
+      const db = suggestions.find((s) => s.label === "app");
+      const col = suggestions.find((s) => s.label === "users.id");
+      expect(db?.insertText).toBe('"app"');
+      expect(col?.insertText).toBe('"users"."id"');
+      expect(suggestions.some((s) => s.label === "PRAGMA")).toBe(true);
     });
 
     it("前缀过滤大小写不敏感地匹配表名", () => {
