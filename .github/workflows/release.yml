@@ -45,6 +45,14 @@ jobs:
     needs: preflight
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate commit release notes
+        run: node scripts/release-notes.mjs "${{ needs.preflight.outputs.tag }}" > release-notes.md
+
       - name: Publish Release Drafter notes
         uses: release-drafter/release-drafter@v7
         with:
@@ -53,6 +61,16 @@ jobs:
           name: DB Connect ${{ needs.preflight.outputs.tag }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Override release notes with commit changelog
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          gh release edit "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "DB Connect $RELEASE_TAG" \
+            --notes-file release-notes.md
 
   publish:
     name: Build and publish (${{ matrix.platform }})

@@ -53,6 +53,8 @@ test("release workflow publishes notes via Release Drafter", () => {
 
   assert.match(workflow, /release-notes:/);
   assert.match(workflow, /publish: true/);
+  assert.match(workflow, /node scripts\/release-notes\.mjs/);
+  assert.match(workflow, /gh release edit/);
   assert.match(workflow, /generateReleaseNotes: false/);
   assert.doesNotMatch(workflow, /releaseBody:/);
 });
