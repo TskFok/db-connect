@@ -1,13 +1,5 @@
 import { useState, useEffect } from "react";
-import {
-  Modal,
-  Form,
-  Select,
-  Button,
-  Space,
-  Typography,
-  Alert,
-} from "antd";
+import { Modal, Form, Select, Button, Space, Typography, Alert } from "antd";
 import { SafeInput } from "../common/SafeInput";
 import Editor from "@monaco-editor/react";
 import type { CreateTriggerRequest, TriggerInfo } from "../../types";
@@ -43,6 +35,11 @@ END`;
 /** 默认触发器语句体模板（PostgreSQL：必须调用已存在的触发器函数） */
 const DEFAULT_PG_TRIGGER_BODY = "EXECUTE FUNCTION function_name()";
 
+/** 默认触发器语句体模板（SQLite） */
+const DEFAULT_SQLITE_TRIGGER_BODY = `BEGIN
+  SELECT RAISE(IGNORE);
+END`;
+
 export function TriggerEditor({
   open,
   onCancel,
@@ -56,9 +53,17 @@ export function TriggerEditor({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const themeMode = useThemeStore((s) => s.mode);
-  const dbType = useConnectionStore((s) => s.activeConnection?.config.database_type);
-  const isPostgres = normalizeDatabaseType(dbType) === "postgres";
-  const defaultBody = isPostgres ? DEFAULT_PG_TRIGGER_BODY : DEFAULT_TRIGGER_BODY;
+  const dbType = useConnectionStore(
+    (s) => s.activeConnection?.config.database_type
+  );
+  const normalizedDbType = normalizeDatabaseType(dbType);
+  const isPostgres = normalizedDbType === "postgres";
+  const isSqlite = normalizedDbType === "sqlite";
+  const defaultBody = isPostgres
+    ? DEFAULT_PG_TRIGGER_BODY
+    : isSqlite
+      ? DEFAULT_SQLITE_TRIGGER_BODY
+      : DEFAULT_TRIGGER_BODY;
   const [triggerBody, setTriggerBody] = useState(defaultBody);
 
   const isEdit = !!editingTrigger;
@@ -85,6 +90,9 @@ export function TriggerEditor({
     const name = form.getFieldValue("name") || "<trigger_name>";
     if (isPostgres) {
       return `CREATE TRIGGER "${name}" ${timing} ${event} ON "${database}"."${table}"\nFOR EACH ROW\n${triggerBody}`;
+    }
+    if (isSqlite) {
+      return `CREATE TRIGGER "${name}"\n${timing} ${event} ON "${database}"."${table}"\n${triggerBody}`;
     }
     return `CREATE TRIGGER \`${database}\`.\`${name}\`\n${timing} ${event} ON \`${database}\`.\`${table}\`\nFOR EACH ROW\n${triggerBody}`;
   };

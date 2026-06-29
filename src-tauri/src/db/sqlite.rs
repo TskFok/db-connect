@@ -4,14 +4,16 @@ use crate::db::sql_utils::{
     validate_where_clause,
 };
 use crate::models::types::{
-    AddColumnRequest, ColumnInfo, ConnectionConfig, CreateTableRequest, QueryResult, SessionInfo,
+    AddColumnRequest, ColumnInfo, ConnectionConfig, CreateIndexRequest, CreateTableRequest,
+    CreateTriggerRequest, ForeignKeyInfo, IndexColumnInfo, IndexInfo, QueryResult, SessionInfo,
     SqlCompletionColumn, SqlCompletionMetadata, SqlCompletionTable, SqlExecuteResult, TableInfo,
+    TriggerInfo,
 };
-use deadpool_sqlite::{Config as SqliteConfig, Pool, Runtime};
+use deadpool_sqlite::{Config as SqliteConfig, Object as SqliteObject, Pool, Runtime};
 use rusqlite::types::Value as SqliteValue;
 use rusqlite::{params_from_iter, OptionalExtension};
 use serde_json::Value as JsonValue;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::time::Instant;
 
@@ -415,6 +417,782 @@ pub async fn get_table_structure(
     })
     .await
     .map_err(|e| format!("SQLite 查询任务失败: {}", e))?
+}
+
+fn sqlite_qualified_id(schema: &str, name: &str) -> String {
+    format!("{}.{}", sqlite_id(schema), sqlite_id(name))
+}
+
+pub async fn list_indexes(
+    pool: &Pool,
+    database: &str,
+    table: &str,
+) -> Result<Vec<IndexInfo>, String> {
+    let database = database.to_string();
+    let table = table.to_string();
+    let conn = pool
+        .get()
+        .await
+        .map_err(|e| format!("获取 SQLite 连接失败: {}", e))?;
+    conn.interact(move |conn| list_indexes_on_conn(conn, &database, &table))
+        .await
+        .map_err(|e| format!("SQLite 索引查询任务失败: {}", e))?
+}
+
+fn list_indexes_on_conn(
+    conn: &rusqlite::Connection,
+    database: &str,
+    table: &str,
+) -> Result<Vec<IndexInfo>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT il.name AS index_name,
+                    il.\"unique\" AS unique_flag,
+                    il.origin,
+                    il.partial,
+                    ix.seqno,
+                    ix.cid,
+                    ix.name AS column_name,
+                    ix.\"desc\" AS desc_flag,
+                    ix.coll
+             FROM pragma_index_list(?1, ?2) AS il
+             LEFT JOIN pragma_index_xinfo(il.name, ?2) AS ix
+             ORDER BY il.seq, ix.seqno",
+        )
+        .map_err(|e| format!("查询 SQLite 索引失败: {}", e))?;
+    let mut rows = stmt
+        .query([table, database])
+        .map_err(|e| format!("查询 SQLite 索引失败: {}", e))?;
+    let mut indexes: Vec<IndexInfo> = Vec::new();
+    let mut positions: HashMap<String, usize> = HashMap::new();
+
+    while let Some(row) = rows
+        .next()
+        .map_err(|e| format!("读取 SQLite 索引失败: {}", e))?
+    {
+        let name: String = row
+            .get("index_name")
+            .map_err(|e| format!("读取 SQLite 索引名称失败: {}", e))?;
+        let unique_flag: i64 = row.get("unique_flag").unwrap_or(0);
+        let origin: String = row.get("origin").unwrap_or_default();
+        let partial: i64 = row.get("partial").unwrap_or(0);
+        let pos = if let Some(pos) = positions.get(&name).copied() {
+            pos
+        } else {
+            let pos = indexes.len();
+            positions.insert(name.clone(), pos);
+            indexes.push(IndexInfo {
+                name: name.clone(),
+                unique: unique_flag != 0,
+                index_type: "BTREE".to_string(),
+                columns: Vec::new(),
+                is_primary: origin == "pk",
+                comment: if partial != 0 {
+                    "partial".to_string()
+                } else {
+                    String::new()
+                },
+            });
+            pos
+        };
+
+        let cid: Option<i64> = row.get("cid").unwrap_or(None);
+        let column_name: Option<String> = row.get("column_name").unwrap_or(None);
+        if cid.unwrap_or(-1) < 0 {
+            continue;
+        }
+        let Some(column_name) = column_name else {
+            continue;
+        };
+        let seqno: Option<i64> = row.get("seqno").unwrap_or(None);
+        let desc_flag: Option<i64> = row.get("desc_flag").unwrap_or(None);
+        indexes[pos].columns.push(IndexColumnInfo {
+            column_name,
+            seq_in_index: seqno.unwrap_or(0).saturating_add(1) as u32,
+            collation: Some(if desc_flag.unwrap_or(0) != 0 {
+                "D".to_string()
+            } else {
+                "A".to_string()
+            }),
+            sub_part: None,
+        });
+    }
+
+    for index in &mut indexes {
+        index.columns.sort_by_key(|column| column.seq_in_index);
+    }
+    Ok(indexes)
+}
+
+fn validate_sqlite_object_name(kind: &str, value: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err(format!("{}不能为空", kind));
+    }
+    Ok(())
+}
+
+pub fn build_sqlite_create_index_sql(
+    database: &str,
+    table: &str,
+    request: &CreateIndexRequest,
+) -> Result<String, String> {
+    validate_sqlite_object_name("数据库名", database)?;
+    validate_sqlite_object_name("表名", table)?;
+    validate_sqlite_object_name("索引名称", &request.index_name)?;
+    if request.columns.is_empty() {
+        return Err("至少需要选择一列".to_string());
+    }
+
+    let index_kind = match request.index_type.to_uppercase().as_str() {
+        "UNIQUE" => "CREATE UNIQUE INDEX",
+        "FULLTEXT" | "SPATIAL" => {
+            return Err("SQLite 暂不支持通过当前入口创建 FULLTEXT 或 SPATIAL 索引".to_string());
+        }
+        _ => "CREATE INDEX",
+    };
+    let columns = request
+        .columns
+        .iter()
+        .map(|column| {
+            validate_sqlite_object_name("列名", &column.column_name)?;
+            let order = match column.order.as_deref().map(str::to_uppercase) {
+                Some(order) if order == "DESC" => "DESC",
+                _ => "ASC",
+            };
+            Ok(format!("{} {}", sqlite_id(&column.column_name), order))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    Ok(format!(
+        "{} {} ON {} ({})",
+        index_kind,
+        sqlite_qualified_id(database, &request.index_name),
+        sqlite_id(table),
+        columns.join(", ")
+    ))
+}
+
+pub async fn create_index(
+    pool: &Pool,
+    database: &str,
+    table: &str,
+    request: &CreateIndexRequest,
+) -> Result<(), String> {
+    let sql = build_sqlite_create_index_sql(database, table, request)?;
+    execute_table_ddl(pool, "创建索引", database, table, sql).await
+}
+
+pub async fn delete_index(pool: &Pool, database: &str, index_name: &str) -> Result<(), String> {
+    validate_sqlite_object_name("数据库名", database)?;
+    validate_sqlite_object_name("索引名称", index_name)?;
+    let sql = format!("DROP INDEX {}", sqlite_qualified_id(database, index_name));
+    execute_ddl(pool, "删除索引", sql).await
+}
+
+#[derive(Debug, Clone)]
+struct SqliteForeignKeyAgg {
+    id: i64,
+    table_name: String,
+    referenced_table_name: String,
+    columns: Vec<(i64, String, String)>,
+    update_rule: String,
+    delete_rule: String,
+}
+
+pub async fn list_foreign_keys(
+    pool: &Pool,
+    database: &str,
+    table: &str,
+) -> Result<Vec<ForeignKeyInfo>, String> {
+    let database = database.to_string();
+    let table = table.to_string();
+    let conn = pool
+        .get()
+        .await
+        .map_err(|e| format!("获取 SQLite 连接失败: {}", e))?;
+    conn.interact(move |conn| list_foreign_keys_on_conn(conn, &database, &table))
+        .await
+        .map_err(|e| format!("SQLite 外键查询任务失败: {}", e))?
+}
+
+fn list_foreign_keys_on_conn(
+    conn: &rusqlite::Connection,
+    database: &str,
+    table: &str,
+) -> Result<Vec<ForeignKeyInfo>, String> {
+    validate_sqlite_object_name("数据库名", database)?;
+    validate_sqlite_object_name("表名", table)?;
+    let sql = format!(
+        "SELECT m.name AS table_name,
+                fk.id,
+                fk.seq,
+                fk.\"table\" AS referenced_table,
+                fk.\"from\" AS column_name,
+                fk.\"to\" AS referenced_column,
+                fk.on_update,
+                fk.on_delete
+         FROM {}.sqlite_schema AS m
+         JOIN pragma_foreign_key_list(m.name, ?1) AS fk
+         WHERE m.type = 'table'
+         ORDER BY m.name, fk.id, fk.seq",
+        sqlite_id(database)
+    );
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| format!("查询 SQLite 外键失败: {}", e))?;
+    let mut rows = stmt
+        .query([database])
+        .map_err(|e| format!("查询 SQLite 外键失败: {}", e))?;
+    let mut map: BTreeMap<(String, i64), SqliteForeignKeyAgg> = BTreeMap::new();
+
+    while let Some(row) = rows
+        .next()
+        .map_err(|e| format!("读取 SQLite 外键失败: {}", e))?
+    {
+        let table_name: String = row.get("table_name").unwrap_or_default();
+        let id: i64 = row.get("id").unwrap_or(0);
+        let seq: i64 = row.get("seq").unwrap_or(0);
+        let referenced_table_name: String = row.get("referenced_table").unwrap_or_default();
+        let column_name: String = row.get("column_name").unwrap_or_default();
+        let referenced_column: String = row.get("referenced_column").unwrap_or_default();
+        let update_rule: String = row.get("on_update").unwrap_or_default();
+        let delete_rule: String = row.get("on_delete").unwrap_or_default();
+        map.entry((table_name.clone(), id))
+            .and_modify(|agg| {
+                agg.columns
+                    .push((seq, column_name.clone(), referenced_column.clone()));
+            })
+            .or_insert_with(|| SqliteForeignKeyAgg {
+                id,
+                table_name,
+                referenced_table_name,
+                columns: vec![(seq, column_name, referenced_column)],
+                update_rule,
+                delete_rule,
+            });
+    }
+
+    let mut result = Vec::new();
+    for mut agg in map.into_values() {
+        let direction = if agg.table_name == table {
+            "outgoing"
+        } else if agg.referenced_table_name == table {
+            "incoming"
+        } else {
+            continue;
+        };
+        agg.columns.sort_by_key(|(seq, _, _)| *seq);
+        result.push(ForeignKeyInfo {
+            constraint_name: format!("fk_{}_{}", agg.table_name, agg.id),
+            direction: direction.to_string(),
+            table_schema: database.to_string(),
+            table_name: agg.table_name,
+            column_names: agg
+                .columns
+                .iter()
+                .map(|(_, column, _)| column.clone())
+                .collect(),
+            referenced_table_schema: database.to_string(),
+            referenced_table_name: agg.referenced_table_name,
+            referenced_column_names: agg
+                .columns
+                .iter()
+                .map(|(_, _, column)| column.clone())
+                .collect(),
+            update_rule: agg.update_rule,
+            delete_rule: agg.delete_rule,
+        });
+    }
+
+    result.sort_by(|a, b| {
+        a.direction
+            .cmp(&b.direction)
+            .then_with(|| a.constraint_name.cmp(&b.constraint_name))
+    });
+    Ok(result)
+}
+
+pub fn parse_sqlite_trigger_timing_event(sql: &str) -> (String, String) {
+    let tokens = sql
+        .split(|c: char| c.is_whitespace() || c == '(' || c == ')')
+        .map(|token| token.trim_matches(|c| c == '"' || c == '`' || c == '[' || c == ']'))
+        .filter(|token| !token.is_empty())
+        .map(str::to_uppercase)
+        .collect::<Vec<_>>();
+    for pair in tokens.windows(2) {
+        let timing = pair[0].as_str();
+        let event = pair[1].as_str();
+        if (timing == "BEFORE" || timing == "AFTER")
+            && (event == "INSERT" || event == "UPDATE" || event == "DELETE")
+        {
+            return (timing.to_string(), event.to_string());
+        }
+    }
+    (String::new(), String::new())
+}
+
+pub async fn list_triggers(
+    pool: &Pool,
+    database: &str,
+    table: Option<&str>,
+) -> Result<Vec<TriggerInfo>, String> {
+    let database = database.to_string();
+    let table = table.map(str::to_string);
+    let conn = pool
+        .get()
+        .await
+        .map_err(|e| format!("获取 SQLite 连接失败: {}", e))?;
+    conn.interact(move |conn| list_triggers_on_conn(conn, &database, table.as_deref()))
+        .await
+        .map_err(|e| format!("SQLite 触发器查询任务失败: {}", e))?
+}
+
+fn list_triggers_on_conn(
+    conn: &rusqlite::Connection,
+    database: &str,
+    table: Option<&str>,
+) -> Result<Vec<TriggerInfo>, String> {
+    validate_sqlite_object_name("数据库名", database)?;
+    let sql = format!(
+        "SELECT name, tbl_name, sql
+         FROM {}.sqlite_schema
+         WHERE type = 'trigger'
+         ORDER BY name",
+        sqlite_id(database)
+    );
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| format!("查询 SQLite 触发器失败: {}", e))?;
+    let rows = stmt
+        .query_map([], |row| {
+            let name: String = row.get("name")?;
+            let table_name: String = row.get("tbl_name")?;
+            let definition: String = row.get::<_, Option<String>>("sql")?.unwrap_or_default();
+            let (timing, event) = parse_sqlite_trigger_timing_event(&definition);
+            Ok(TriggerInfo {
+                name,
+                event,
+                timing,
+                table_name,
+                statement: definition,
+                created: None,
+                sql_mode: String::new(),
+                definer: String::new(),
+            })
+        })
+        .map_err(|e| format!("查询 SQLite 触发器失败: {}", e))?;
+
+    let mut triggers = Vec::new();
+    for row in rows {
+        let trigger = row.map_err(|e| format!("读取 SQLite 触发器失败: {}", e))?;
+        if table.is_none_or(|table| trigger.table_name == table) {
+            triggers.push(trigger);
+        }
+    }
+    Ok(triggers)
+}
+
+pub async fn get_trigger_definition(
+    pool: &Pool,
+    database: &str,
+    trigger_name: &str,
+    table: Option<&str>,
+) -> Result<String, String> {
+    validate_sqlite_object_name("触发器名称", trigger_name)?;
+    let database = database.to_string();
+    let trigger_name = trigger_name.to_string();
+    let table = table.map(str::to_string);
+    let conn = pool
+        .get()
+        .await
+        .map_err(|e| format!("获取 SQLite 连接失败: {}", e))?;
+    conn.interact(move |conn| {
+        let sql = format!(
+            "SELECT sql
+             FROM {}.sqlite_schema
+             WHERE type = 'trigger'
+               AND name = ?1
+               AND (?2 IS NULL OR tbl_name = ?2)",
+            sqlite_id(&database)
+        );
+        conn.query_row(&sql, (&trigger_name, table.as_deref()), |row| {
+            row.get::<_, Option<String>>(0)
+        })
+        .optional()
+        .map_err(|e| format!("查询 SQLite 触发器定义失败: {}", e))?
+        .flatten()
+        .ok_or_else(|| format!("触发器 '{}' 不存在", trigger_name))
+    })
+    .await
+    .map_err(|e| format!("SQLite 触发器定义任务失败: {}", e))?
+}
+
+fn validate_sqlite_trigger_request(request: &CreateTriggerRequest) -> Result<(), String> {
+    validate_sqlite_object_name("触发器名称", &request.name)?;
+    if request.body.trim().is_empty() {
+        return Err("触发器语句体不能为空".to_string());
+    }
+    let timing = request.timing.to_uppercase();
+    if timing != "BEFORE" && timing != "AFTER" {
+        return Err("触发器时机必须为 BEFORE 或 AFTER".to_string());
+    }
+    let event = request.event.to_uppercase();
+    if event != "INSERT" && event != "UPDATE" && event != "DELETE" {
+        return Err("触发器事件必须为 INSERT、UPDATE 或 DELETE".to_string());
+    }
+    Ok(())
+}
+
+pub fn build_sqlite_create_trigger_sql(
+    database: &str,
+    table: &str,
+    request: &CreateTriggerRequest,
+) -> Result<String, String> {
+    validate_sqlite_object_name("数据库名", database)?;
+    validate_sqlite_object_name("表名", table)?;
+    validate_sqlite_trigger_request(request)?;
+    Ok(format!(
+        "CREATE TRIGGER {}\n{} {} ON {}\n{}",
+        sqlite_id(&request.name),
+        request.timing.to_uppercase(),
+        request.event.to_uppercase(),
+        sqlite_qualified_id(database, table),
+        request.body.trim()
+    ))
+}
+
+pub async fn create_trigger(
+    pool: &Pool,
+    database: &str,
+    table: &str,
+    request: &CreateTriggerRequest,
+) -> Result<(), String> {
+    let sql = build_sqlite_create_trigger_sql(database, table, request)?;
+    execute_table_ddl(pool, "创建触发器", database, table, sql).await
+}
+
+pub async fn drop_trigger(pool: &Pool, database: &str, trigger_name: &str) -> Result<(), String> {
+    validate_sqlite_object_name("数据库名", database)?;
+    validate_sqlite_object_name("触发器名称", trigger_name)?;
+    let sql = format!(
+        "DROP TRIGGER {}",
+        sqlite_qualified_id(database, trigger_name)
+    );
+    execute_ddl(pool, "删除触发器", sql).await
+}
+
+pub async fn run_one_statement(conn: &SqliteObject, stmt: &str) -> Result<(), String> {
+    let stmt = stmt.trim().to_string();
+    if stmt.is_empty() {
+        return Ok(());
+    }
+    conn.interact(move |conn| run_one_statement_on_conn(conn, &stmt))
+        .await
+        .map_err(|e| format!("SQLite 导入任务失败: {}", e))?
+}
+
+pub fn run_one_statement_on_conn(
+    conn: &mut rusqlite::Connection,
+    stmt: &str,
+) -> Result<(), String> {
+    let stmt = stmt.trim();
+    if stmt.is_empty() {
+        return Ok(());
+    }
+    conn.execute_batch(stmt)
+        .map_err(|e| format!("导入 SQL 失败: {}", e))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SqliteExportObject {
+    pub object_type: String,
+    pub name: String,
+    pub table_name: String,
+    pub sql: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SqliteExportTable {
+    pub name: String,
+    pub columns: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SqliteExportMetadata {
+    pub schema: String,
+    pub objects: Vec<SqliteExportObject>,
+    pub tables: Vec<SqliteExportTable>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SqliteExportInsertBatch {
+    pub table: String,
+    pub columns: Vec<String>,
+    pub rows: Vec<String>,
+}
+
+pub async fn load_export_metadata(
+    pool: &Pool,
+    schema: &str,
+) -> Result<SqliteExportMetadata, String> {
+    let schema = schema.to_string();
+    let conn = pool
+        .get()
+        .await
+        .map_err(|e| format!("获取 SQLite 连接失败: {}", e))?;
+    conn.interact(move |conn| load_export_metadata_on_conn(conn, &schema))
+        .await
+        .map_err(|e| format!("SQLite 导出元数据任务失败: {}", e))?
+}
+
+fn load_export_metadata_on_conn(
+    conn: &rusqlite::Connection,
+    schema: &str,
+) -> Result<SqliteExportMetadata, String> {
+    validate_sqlite_object_name("数据库名", schema)?;
+    let object_sql = format!(
+        "SELECT type, name, tbl_name, sql
+         FROM {}.sqlite_schema
+         WHERE type IN ('table', 'view', 'index', 'trigger')
+           AND name NOT LIKE 'sqlite_%'
+         ORDER BY CASE type
+           WHEN 'table' THEN 1
+           WHEN 'view' THEN 2
+           WHEN 'index' THEN 3
+           WHEN 'trigger' THEN 4
+           ELSE 5
+         END, name",
+        sqlite_id(schema)
+    );
+    let mut stmt = conn
+        .prepare(&object_sql)
+        .map_err(|e| format!("查询 SQLite 导出对象失败: {}", e))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(SqliteExportObject {
+                object_type: row.get("type")?,
+                name: row.get("name")?,
+                table_name: row.get("tbl_name")?,
+                sql: row.get::<_, Option<String>>("sql")?.unwrap_or_default(),
+            })
+        })
+        .map_err(|e| format!("查询 SQLite 导出对象失败: {}", e))?;
+    let mut objects = Vec::new();
+    for row in rows {
+        let object = row.map_err(|e| format!("读取 SQLite 导出对象失败: {}", e))?;
+        if !object.sql.trim().is_empty() {
+            objects.push(object);
+        }
+    }
+
+    let column_sql = format!(
+        "SELECT m.name AS table_name,
+                x.name AS column_name
+         FROM {}.sqlite_schema AS m
+         JOIN pragma_table_xinfo(m.name, ?1) AS x
+         WHERE m.type = 'table'
+           AND m.name NOT LIKE 'sqlite_%'
+           AND x.hidden = 0
+         ORDER BY m.name, x.cid",
+        sqlite_id(schema)
+    );
+    let mut column_stmt = conn
+        .prepare(&column_sql)
+        .map_err(|e| format!("查询 SQLite 导出列失败: {}", e))?;
+    let column_rows = column_stmt
+        .query_map([schema], |row| {
+            Ok((
+                row.get::<_, String>("table_name")?,
+                row.get::<_, String>("column_name")?,
+            ))
+        })
+        .map_err(|e| format!("查询 SQLite 导出列失败: {}", e))?;
+    let mut columns_by_table: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for row in column_rows {
+        let (table_name, column_name) =
+            row.map_err(|e| format!("读取 SQLite 导出列失败: {}", e))?;
+        columns_by_table
+            .entry(table_name)
+            .or_default()
+            .push(column_name);
+    }
+
+    let tables = objects
+        .iter()
+        .filter(|object| object.object_type == "table")
+        .map(|object| SqliteExportTable {
+            name: object.name.clone(),
+            columns: columns_by_table.remove(&object.name).unwrap_or_default(),
+        })
+        .collect();
+
+    Ok(SqliteExportMetadata {
+        schema: schema.to_string(),
+        objects,
+        tables,
+    })
+}
+
+fn build_sqlite_export_data_query(
+    schema: &str,
+    tables: &[SqliteExportTable],
+    max_rows: u64,
+) -> Option<String> {
+    let parts = tables
+        .iter()
+        .enumerate()
+        .filter(|(_, table)| !table.columns.is_empty())
+        .map(|(idx, table)| {
+            let values_sql = table
+                .columns
+                .iter()
+                .map(|column| format!("quote({})", sqlite_id(column)))
+                .collect::<Vec<_>>()
+                .join(" || ', ' || ");
+            format!(
+                "SELECT * FROM (SELECT {} AS table_order, {} AS table_name, {} AS values_sql FROM {} LIMIT {})",
+                idx,
+                sqlite_str(&table.name),
+                values_sql,
+                sqlite_qualified_id(schema, &table.name),
+                max_rows
+            )
+        })
+        .collect::<Vec<_>>();
+    if parts.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "SELECT table_name, values_sql FROM ({}) AS exported_rows ORDER BY table_order",
+        parts.join(" UNION ALL ")
+    ))
+}
+
+pub async fn load_export_insert_batches(
+    pool: &Pool,
+    schema: &str,
+    tables: &[SqliteExportTable],
+    max_rows: u64,
+) -> Result<(Vec<SqliteExportInsertBatch>, u64), String> {
+    let schema = schema.to_string();
+    let tables = tables.to_vec();
+    let conn = pool
+        .get()
+        .await
+        .map_err(|e| format!("获取 SQLite 连接失败: {}", e))?;
+    conn.interact(move |conn| {
+        let Some(sql) = build_sqlite_export_data_query(&schema, &tables, max_rows) else {
+            return Ok((Vec::new(), 0));
+        };
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| format!("导出 SQLite 表数据失败: {}", e))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>("table_name")?,
+                    row.get::<_, String>("values_sql")?,
+                ))
+            })
+            .map_err(|e| format!("导出 SQLite 表数据失败: {}", e))?;
+        let mut rows_by_table: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut total = 0u64;
+        for row in rows {
+            let (table_name, values_sql) =
+                row.map_err(|e| format!("读取 SQLite 表数据失败: {}", e))?;
+            total += 1;
+            rows_by_table
+                .entry(table_name)
+                .or_default()
+                .push(values_sql);
+        }
+        let batches = tables
+            .into_iter()
+            .filter_map(|table| {
+                rows_by_table
+                    .remove(&table.name)
+                    .filter(|rows| !rows.is_empty())
+                    .map(|rows| SqliteExportInsertBatch {
+                        table: table.name,
+                        columns: table.columns,
+                        rows,
+                    })
+            })
+            .collect();
+        Ok((batches, total))
+    })
+    .await
+    .map_err(|e| format!("SQLite 导出数据任务失败: {}", e))?
+}
+
+fn ensure_sqlite_semicolon(sql: &str) -> String {
+    let trimmed = sql.trim();
+    if trimmed.ends_with(';') {
+        trimmed.to_string()
+    } else {
+        format!("{};", trimmed)
+    }
+}
+
+fn append_sqlite_ddl(out: &mut String, ddl: &str) {
+    if ddl.trim().is_empty() {
+        return;
+    }
+    out.push_str(&ensure_sqlite_semicolon(ddl));
+    out.push('\n');
+}
+
+pub fn build_export_script(
+    metadata: &SqliteExportMetadata,
+    inserts: &[SqliteExportInsertBatch],
+) -> Result<String, String> {
+    validate_sqlite_object_name("数据库名", &metadata.schema)?;
+    let mut inserts_by_table = inserts
+        .iter()
+        .map(|batch| (batch.table.as_str(), batch))
+        .collect::<BTreeMap<_, _>>();
+    let mut out = String::new();
+    out.push_str("-- DB Connect SQLite export\n");
+    out.push_str("PRAGMA foreign_keys=OFF;\n");
+    out.push_str("BEGIN TRANSACTION;\n");
+
+    for object in metadata
+        .objects
+        .iter()
+        .filter(|object| object.object_type == "table")
+    {
+        append_sqlite_ddl(&mut out, &object.sql);
+        if let Some(batch) = inserts_by_table.remove(object.name.as_str()) {
+            let columns_sql = batch
+                .columns
+                .iter()
+                .map(|column| sqlite_id(column))
+                .collect::<Vec<_>>()
+                .join(", ");
+            for row in &batch.rows {
+                out.push_str(&format!(
+                    "INSERT INTO {} ({}) VALUES ({});\n",
+                    sqlite_id(&batch.table),
+                    columns_sql,
+                    row
+                ));
+            }
+        }
+    }
+
+    for object_type in ["view", "index", "trigger"] {
+        for object in metadata
+            .objects
+            .iter()
+            .filter(|object| object.object_type == object_type)
+        {
+            append_sqlite_ddl(&mut out, &object.sql);
+        }
+    }
+
+    out.push_str("COMMIT;\n");
+    out.push_str("PRAGMA foreign_keys=ON;\n");
+    Ok(out)
 }
 
 pub fn sqlite_value_to_json(value: &SqliteValue) -> JsonValue {
@@ -1263,7 +2041,10 @@ fn i64_to_u64(value: i64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::types::{AddColumnRequest, CreateTableColumnDef, CreateTableRequest};
+    use crate::models::types::{
+        AddColumnRequest, CreateIndexColumn, CreateIndexRequest, CreateTableColumnDef,
+        CreateTableRequest, CreateTriggerRequest,
+    };
     use rusqlite::types::Value as SqliteValue;
     use serde_json::Value as JsonValue;
     use std::collections::HashMap;
@@ -1297,13 +2078,29 @@ mod tests {
                     qty INTEGER NOT NULL,
                     PRIMARY KEY (order_id, item_id)
                 );
+                CREATE TABLE posts (
+                    id INTEGER PRIMARY KEY,
+                    user_id INTEGER,
+                    title TEXT,
+                    FOREIGN KEY (user_id)
+                        REFERENCES users(id)
+                        ON UPDATE CASCADE
+                        ON DELETE SET NULL
+                );
                 CREATE TABLE no_pk (
                     name TEXT
                 );
+                CREATE UNIQUE INDEX idx_users_name ON users (name DESC);
+                CREATE INDEX idx_users_age_partial ON users (age) WHERE age IS NOT NULL;
                 INSERT INTO users (id, name, age, big, payload)
                 VALUES
                     (1, 'Alice', 30, 9007199254740992, X'000102'),
                     (2, 'Bob', 20, 42, X'FF');
+                CREATE TRIGGER trg_users_ai
+                AFTER INSERT ON users
+                BEGIN
+                    UPDATE users SET active = 1 WHERE id = NEW.id;
+                END;
                 CREATE VIEW adult_users AS
                     SELECT id, name FROM users WHERE age >= 18;",
             )
@@ -1314,6 +2111,245 @@ mod tests {
         .expect("seed sqlite schema");
         drop(conn);
         (pool, path)
+    }
+
+    #[tokio::test]
+    async fn sqlite_indexes_list_create_and_drop_with_sqlite_ddl() {
+        let (pool, path) = test_pool_with_schema().await;
+
+        let indexes = list_indexes(&pool, "main", "users")
+            .await
+            .expect("list sqlite indexes");
+        let name_idx = indexes
+            .iter()
+            .find(|idx| idx.name == "idx_users_name")
+            .expect("unique name index");
+        assert!(name_idx.unique);
+        assert_eq!(name_idx.index_type, "BTREE");
+        assert!(!name_idx.is_primary);
+        assert_eq!(name_idx.columns[0].column_name, "name");
+        assert_eq!(name_idx.columns[0].seq_in_index, 1);
+        assert_eq!(name_idx.columns[0].collation.as_deref(), Some("D"));
+
+        let partial_idx = indexes
+            .iter()
+            .find(|idx| idx.name == "idx_users_age_partial")
+            .expect("partial index");
+        assert_eq!(partial_idx.comment, "partial");
+
+        let pk_indexes = list_indexes(&pool, "main", "order_items")
+            .await
+            .expect("list primary key index");
+        assert!(pk_indexes
+            .iter()
+            .any(|idx| idx.name.starts_with("sqlite_autoindex_") && idx.is_primary));
+
+        let request = CreateIndexRequest {
+            index_name: "idx_users_email".to_string(),
+            index_type: "UNIQUE".to_string(),
+            index_method: Some("BTREE".to_string()),
+            columns: vec![CreateIndexColumn {
+                column_name: "profile".to_string(),
+                length: None,
+                order: Some("ASC".to_string()),
+            }],
+            comment: Some("ignored by sqlite".to_string()),
+        };
+        let sql = build_sqlite_create_index_sql("main", "users", &request)
+            .expect("build sqlite create index sql");
+        assert_eq!(
+            sql,
+            "CREATE UNIQUE INDEX \"main\".\"idx_users_email\" ON \"users\" (\"profile\" ASC)"
+        );
+
+        create_index(&pool, "main", "users", &request)
+            .await
+            .expect("create sqlite unique index");
+        let indexes = list_indexes(&pool, "main", "users")
+            .await
+            .expect("list indexes after create");
+        assert!(indexes.iter().any(|idx| idx.name == "idx_users_email"));
+
+        delete_index(&pool, "main", "idx_users_email")
+            .await
+            .expect("drop sqlite index");
+        let indexes = list_indexes(&pool, "main", "users")
+            .await
+            .expect("list indexes after drop");
+        assert!(!indexes.iter().any(|idx| idx.name == "idx_users_email"));
+
+        let mut unsupported = request;
+        unsupported.index_type = "FULLTEXT".to_string();
+        let err = build_sqlite_create_index_sql("main", "users", &unsupported)
+            .expect_err("fulltext unsupported");
+        assert_eq!(
+            err,
+            "SQLite 暂不支持通过当前入口创建 FULLTEXT 或 SPATIAL 索引"
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_foreign_keys_are_loaded_in_one_schema_query_and_grouped() {
+        let (pool, path) = test_pool_with_schema().await;
+
+        let outgoing = list_foreign_keys(&pool, "main", "posts")
+            .await
+            .expect("list outgoing foreign keys");
+        assert_eq!(outgoing.len(), 1);
+        assert_eq!(outgoing[0].constraint_name, "fk_posts_0");
+        assert_eq!(outgoing[0].direction, "outgoing");
+        assert_eq!(outgoing[0].table_schema, "main");
+        assert_eq!(outgoing[0].table_name, "posts");
+        assert_eq!(outgoing[0].column_names, vec!["user_id"]);
+        assert_eq!(outgoing[0].referenced_table_schema, "main");
+        assert_eq!(outgoing[0].referenced_table_name, "users");
+        assert_eq!(outgoing[0].referenced_column_names, vec!["id"]);
+        assert_eq!(outgoing[0].update_rule, "CASCADE");
+        assert_eq!(outgoing[0].delete_rule, "SET NULL");
+
+        let incoming = list_foreign_keys(&pool, "main", "users")
+            .await
+            .expect("list incoming foreign keys");
+        assert_eq!(incoming.len(), 1);
+        assert_eq!(incoming[0].constraint_name, "fk_posts_0");
+        assert_eq!(incoming[0].direction, "incoming");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_triggers_list_definition_create_and_drop() {
+        let (pool, path) = test_pool_with_schema().await;
+
+        let triggers = list_triggers(&pool, "main", Some("users"))
+            .await
+            .expect("list sqlite triggers");
+        let trigger = triggers
+            .iter()
+            .find(|item| item.name == "trg_users_ai")
+            .expect("seed trigger");
+        assert_eq!(trigger.timing, "AFTER");
+        assert_eq!(trigger.event, "INSERT");
+        assert_eq!(trigger.table_name, "users");
+        assert!(trigger.statement.contains("CREATE TRIGGER trg_users_ai"));
+        assert_eq!(trigger.created, None);
+        assert_eq!(trigger.sql_mode, "");
+        assert_eq!(trigger.definer, "");
+
+        let definition = get_trigger_definition(&pool, "main", "trg_users_ai", Some("users"))
+            .await
+            .expect("get sqlite trigger definition");
+        assert!(definition.contains("AFTER INSERT ON users"));
+
+        let request = CreateTriggerRequest {
+            name: "trg_users_bu".to_string(),
+            timing: "BEFORE".to_string(),
+            event: "UPDATE".to_string(),
+            body: "BEGIN\n  SELECT RAISE(IGNORE);\nEND".to_string(),
+        };
+        let sql = build_sqlite_create_trigger_sql("main", "users", &request)
+            .expect("build sqlite trigger sql");
+        assert_eq!(
+            sql,
+            "CREATE TRIGGER \"trg_users_bu\"\nBEFORE UPDATE ON \"main\".\"users\"\nBEGIN\n  SELECT RAISE(IGNORE);\nEND"
+        );
+
+        create_trigger(&pool, "main", "users", &request)
+            .await
+            .expect("create sqlite trigger");
+        assert!(list_triggers(&pool, "main", Some("users"))
+            .await
+            .expect("list triggers after create")
+            .iter()
+            .any(|item| item.name == "trg_users_bu"));
+
+        drop_trigger(&pool, "main", "trg_users_bu")
+            .await
+            .expect("drop sqlite trigger");
+        assert!(!list_triggers(&pool, "main", Some("users"))
+            .await
+            .expect("list triggers after drop")
+            .iter()
+            .any(|item| item.name == "trg_users_bu"));
+
+        assert_eq!(
+            parse_sqlite_trigger_timing_event("CREATE TRIGGER weird BEGIN SELECT 1; END"),
+            (String::new(), String::new())
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_import_statement_runner_executes_sql_and_reports_failures() {
+        let (pool, path) = test_pool_with_schema().await;
+        let conn = pool.get().await.expect("get sqlite connection");
+
+        run_one_statement(
+            &conn,
+            "CREATE TABLE imported (id INTEGER PRIMARY KEY, name TEXT);",
+        )
+        .await
+        .expect("create imported table");
+        run_one_statement(&conn, "INSERT INTO imported (id, name) VALUES (1, 'Ada');")
+            .await
+            .expect("insert imported row");
+        run_one_statement(&conn, "SELECT * FROM imported;")
+            .await
+            .expect("select statements are allowed during import");
+
+        let count = query_table_count(&pool, "main", "imported", None)
+            .await
+            .expect("imported count");
+        assert_eq!(count, 1);
+
+        let err = run_one_statement(&conn, "INSERT INTO missing_table VALUES (1);")
+            .await
+            .expect_err("bad import statement reports error");
+        assert!(err.contains("no such table"));
+
+        drop(conn);
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_export_script_includes_schema_data_and_sqlite_literals() {
+        let (pool, path) = test_pool_with_schema().await;
+
+        let metadata = load_export_metadata(&pool, "main")
+            .await
+            .expect("load sqlite export metadata");
+        assert!(metadata
+            .objects
+            .iter()
+            .any(|object| { object.object_type == "table" && object.name == "users" }));
+        assert!(metadata.objects.iter().any(|object| {
+            object.object_type == "index" && object.name == "idx_users_age_partial"
+        }));
+        assert!(!metadata
+            .objects
+            .iter()
+            .any(|object| object.name.starts_with("sqlite_autoindex_")));
+
+        let (inserts, rows) = load_export_insert_batches(&pool, "main", &metadata.tables, 100)
+            .await
+            .expect("load sqlite export rows");
+        assert_eq!(rows, 2);
+
+        let script = build_export_script(&metadata, &inserts).expect("build sqlite export script");
+        assert!(script.starts_with("-- DB Connect SQLite export\n"));
+        assert!(script.contains("PRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;"));
+        assert!(script.contains("CREATE TABLE users"));
+        assert!(script.contains("CREATE INDEX idx_users_age_partial"));
+        assert!(script.contains("CREATE TRIGGER trg_users_ai"));
+        assert!(script.contains(
+            "INSERT INTO \"users\" (\"id\", \"name\", \"age\", \"big\", \"active\", \"profile\", \"payload\") VALUES (1, 'Alice', 30, 9007199254740992, NULL, NULL, X'000102');"
+        ));
+        assert!(script.contains("COMMIT;\nPRAGMA foreign_keys=ON;"));
+
+        let _ = fs::remove_file(path);
     }
 
     #[tokio::test]

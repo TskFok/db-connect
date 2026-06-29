@@ -51,7 +51,7 @@ describe("getDatabaseCapabilities", () => {
     expect(caps.databaseObjectNoun).toBe("数据库");
   });
 
-  it("SQLite 阶段四开放表数据编辑和可控 DDL 子集，仍隐藏数据库级管理和 MySQL 专属能力", () => {
+  it("SQLite 阶段五开放对象查看/索引/触发器/导入导出，仍隐藏数据库级管理和 MySQL 专属能力", () => {
     const caps = getDatabaseCapabilities("sqlite");
 
     expect(caps.tableBrowsing).toBe(true);
@@ -59,12 +59,17 @@ describe("getDatabaseCapabilities", () => {
     expect(caps.databaseManagement).toBe(false);
     expect(caps.tableDataEditing).toBe(true);
     expect(caps.schemaManagement).toBe(true);
+    expect(caps.indexManagement).toBe(true);
+    expect(caps.foreignKeyManagement).toBe(true);
+    expect(caps.triggerManagement).toBe(true);
+    expect(caps.sqlFileImportExport).toBe(true);
+    expect(caps.favoriteTables).toBe(true);
+    expect(caps.savedSql).toBe(true);
+    expect(caps.routineManagement).toBe(false);
+    expect(caps.eventManagement).toBe(false);
     expect(caps.charsetAndCollation).toBe(false);
     expect(caps.storageEngine).toBe(false);
     expect(caps.columnReordering).toBe(false);
-    expect(caps.sqlFileImportExport).toBe(false);
-    expect(caps.favoriteTables).toBe(false);
-    expect(caps.savedSql).toBe(false);
     expect(caps.databaseObjectNoun).toBe("database");
   });
 

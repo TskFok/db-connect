@@ -33,6 +33,7 @@ import { previewAddForeignKeySql } from "../../utils/foreignKeySql";
 import { isConnectionGloballyReadOnly } from "../../utils/sqlFileIoUi";
 import { useClientReadOnly } from "../../hooks/useClientReadOnly";
 import { useAntTableScrollY } from "../../hooks/useAntTableScrollY";
+import { normalizeDatabaseType } from "../../utils/connectionConfig";
 
 const { Text } = Typography;
 
@@ -58,8 +59,12 @@ function formatParentRef(fk: ForeignKeyInfo): string {
 export function ForeignKeyList() {
   const { activeConnection } = useConnectionStore();
   const clientReadOnly = useClientReadOnly();
-  const { selectedDatabase, selectedTable, tableStructure, tableContentActiveTab } =
-    useDatabaseStore();
+  const {
+    selectedDatabase,
+    selectedTable,
+    tableStructure,
+    tableContentActiveTab,
+  } = useDatabaseStore();
   const [fks, setFks] = useState<ForeignKeyInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,6 +85,7 @@ export function ForeignKeyList() {
   const databaseType = activeConnection?.config.database_type;
   const database = selectedDatabase ?? "";
   const table = selectedTable ?? "";
+  const isSqlite = normalizeDatabaseType(databaseType) === "sqlite";
   const writeBlocked = clientReadOnly || readOnlyDb;
 
   const [diagramExpanded, setDiagramExpanded] = useState(false);
@@ -365,7 +371,11 @@ export function ForeignKeyList() {
         type="info"
         showIcon
         style={{ marginBottom: 12 }}
-        message="外键在子表上定义。「他表引用本表」时，删除操作作用于对方子表上的约束。"
+        message={
+          isSqlite
+            ? "SQLite 外键可在此查看；新增或删除外键需要通过重建表结构完成。"
+            : "外键在子表上定义。「他表引用本表」时，删除操作作用于对方子表上的约束。"
+        }
       />
 
       {error && (
@@ -401,7 +411,10 @@ export function ForeignKeyList() {
                 <Space>
                   <LinkOutlined />
                   <Text strong>关系图</Text>
-                  <Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>
+                  <Text
+                    type="secondary"
+                    style={{ fontSize: 12, fontWeight: 400 }}
+                  >
                     （默认折叠，展开后可在下方查看外键列表）
                   </Text>
                 </Space>
@@ -449,24 +462,28 @@ export function ForeignKeyList() {
         title={<Text strong>外键列表</Text>}
         extra={
           <Space>
-            <Button icon={<ReloadOutlined />} size="small" onClick={loadForeignKeys}>
+            <Button
+              icon={<ReloadOutlined />}
+              size="small"
+              onClick={loadForeignKeys}
+            >
               刷新
             </Button>
-            <Tooltip
-              title={
-                clientReadOnly ? "只读连接无法添加外键" : undefined
-              }
-            >
-              <Button
-                type="primary"
-                size="small"
-                icon={<PlusOutlined />}
-                onClick={openWizard}
-                disabled={writeBlocked}
+            {!isSqlite && (
+              <Tooltip
+                title={clientReadOnly ? "只读连接无法添加外键" : undefined}
               >
-                添加外键向导
-              </Button>
-            </Tooltip>
+                <Button
+                  type="primary"
+                  size="small"
+                  icon={<PlusOutlined />}
+                  onClick={openWizard}
+                  disabled={writeBlocked}
+                >
+                  添加外键向导
+                </Button>
+              </Tooltip>
+            )}
           </Space>
         }
         styles={{
@@ -491,7 +508,11 @@ export function ForeignKeyList() {
           style={{ flex: 1, minHeight: 0, overflow: "hidden" }}
         >
           <Table<ForeignKeyInfo>
-            columns={columns}
+            columns={
+              isSqlite
+                ? columns.filter((column) => column.key !== "act")
+                : columns
+            }
             dataSource={fks}
             rowKey={(r) =>
               `${r.constraint_name}@${r.table_schema}.${r.table_name}`
@@ -565,7 +586,9 @@ export function ForeignKeyList() {
               style={{ flex: 1 }}
               rules={[{ required: true }]}
             >
-              <Select options={ACTION_OPTIONS.map((v) => ({ value: v, label: v }))} />
+              <Select
+                options={ACTION_OPTIONS.map((v) => ({ value: v, label: v }))}
+              />
             </Form.Item>
             <Form.Item
               name="on_delete"
@@ -573,7 +596,9 @@ export function ForeignKeyList() {
               style={{ flex: 1 }}
               rules={[{ required: true }]}
             >
-              <Select options={ACTION_OPTIONS.map((v) => ({ value: v, label: v }))} />
+              <Select
+                options={ACTION_OPTIONS.map((v) => ({ value: v, label: v }))}
+              />
             </Form.Item>
           </Space>
         </Form>
@@ -585,7 +610,8 @@ export function ForeignKeyList() {
               label: "为何需要二次确认？",
               children: (
                 <Text type="secondary" style={{ fontSize: 12 }}>
-                  外键 ALTER 可能影响线上写入；向导在执行前展示完整 DDL，避免误点。
+                  外键 ALTER 可能影响线上写入；向导在执行前展示完整
+                  DDL，避免误点。
                 </Text>
               ),
             },

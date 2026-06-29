@@ -26,14 +26,19 @@ import * as api from "../../services/tauriCommands";
 import { IndexEditor } from "./IndexEditor";
 import { useClientReadOnly } from "../../hooks/useClientReadOnly";
 import { useAntTableScrollY } from "../../hooks/useAntTableScrollY";
+import { normalizeDatabaseType } from "../../utils/connectionConfig";
 
 const { Text } = Typography;
 
 export function IndexList() {
   const { activeConnection } = useConnectionStore();
   const clientReadOnly = useClientReadOnly();
-  const { selectedDatabase, selectedTable, tableStructure, tableContentActiveTab } =
-    useDatabaseStore();
+  const {
+    selectedDatabase,
+    selectedTable,
+    tableStructure,
+    tableContentActiveTab,
+  } = useDatabaseStore();
 
   const { containerRef, scrollY } = useAntTableScrollY({
     remeasureKey: `${tableContentActiveTab}|${selectedDatabase}|${selectedTable}`,
@@ -49,6 +54,8 @@ export function IndexList() {
   const connId = activeConnection?.connId ?? "";
   const database = selectedDatabase ?? "";
   const table = selectedTable ?? "";
+  const isSqlite =
+    normalizeDatabaseType(activeConnection?.config.database_type) === "sqlite";
 
   // 加载索引列表
   const loadIndexes = useCallback(async () => {
@@ -91,7 +98,9 @@ export function IndexList() {
 
   // 创建/编辑索引成功后刷新
   const handleEditorSuccess = () => {
-    const msg = editingIndex ? `索引 "${editingIndex.name}" 修改成功` : "索引创建成功";
+    const msg = editingIndex
+      ? `索引 "${editingIndex.name}" 修改成功`
+      : "索引创建成功";
     setEditorOpen(false);
     setEditingIndex(null);
     loadIndexes();
@@ -157,11 +166,7 @@ export function IndexList() {
       width: 80,
       align: "center",
       render: (unique: boolean) =>
-        unique ? (
-          <Tag color="green">YES</Tag>
-        ) : (
-          <Tag color="default">NO</Tag>
-        ),
+        unique ? <Tag color="green">YES</Tag> : <Tag color="default">NO</Tag>,
     },
     {
       title: "包含列",
@@ -199,28 +204,59 @@ export function IndexList() {
       key: "action",
       width: 100,
       align: "center",
-      render: (_: unknown, record: IndexInfo) => (
-        <Space size={4}>
-          {!record.is_primary && (
-            <Tooltip
-              title={clientReadOnly ? "只读连接无法编辑索引" : "编辑索引"}
-            >
-              <Button
-                type="text"
-                size="small"
-                icon={<EditOutlined />}
-                disabled={clientReadOnly}
-                onClick={() => handleOpenEdit(record)}
-              />
+      render: (_: unknown, record: IndexInfo) => {
+        const isSqliteInternalIndex =
+          isSqlite && record.name.startsWith("sqlite_autoindex_");
+        if (isSqliteInternalIndex) {
+          return (
+            <Tooltip title="SQLite 内部索引由主键或唯一约束维护，不能直接编辑或删除">
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                系统维护
+              </Text>
             </Tooltip>
-          )}
-          {record.is_primary ? (
-            <Tooltip title="主键索引不建议直接删除">
+          );
+        }
+
+        return (
+          <Space size={4}>
+            {!record.is_primary && (
+              <Tooltip
+                title={clientReadOnly ? "只读连接无法编辑索引" : "编辑索引"}
+              >
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<EditOutlined />}
+                  disabled={clientReadOnly}
+                  onClick={() => handleOpenEdit(record)}
+                />
+              </Tooltip>
+            )}
+            {record.is_primary ? (
+              <Tooltip title="主键索引不建议直接删除">
+                <Popconfirm
+                  title="确定删除主键?"
+                  description="删除主键可能导致严重后果，确认继续?"
+                  onConfirm={() => handleDelete(record.name)}
+                  okText="确认删除"
+                  cancelText="取消"
+                  okButtonProps={{ danger: true }}
+                  disabled={clientReadOnly}
+                >
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<DeleteOutlined />}
+                    danger
+                    disabled={clientReadOnly}
+                  />
+                </Popconfirm>
+              </Tooltip>
+            ) : (
               <Popconfirm
-                title="确定删除主键?"
-                description="删除主键可能导致严重后果，确认继续?"
+                title={`确定删除索引 "${record.name}"?`}
                 onConfirm={() => handleDelete(record.name)}
-                okText="确认删除"
+                okText="删除"
                 cancelText="取消"
                 okButtonProps={{ danger: true }}
                 disabled={clientReadOnly}
@@ -233,27 +269,10 @@ export function IndexList() {
                   disabled={clientReadOnly}
                 />
               </Popconfirm>
-            </Tooltip>
-          ) : (
-            <Popconfirm
-              title={`确定删除索引 "${record.name}"?`}
-              onConfirm={() => handleDelete(record.name)}
-              okText="删除"
-              cancelText="取消"
-              okButtonProps={{ danger: true }}
-              disabled={clientReadOnly}
-            >
-              <Button
-                type="text"
-                size="small"
-                icon={<DeleteOutlined />}
-                danger
-                disabled={clientReadOnly}
-              />
-            </Popconfirm>
-          )}
-        </Space>
-      ),
+            )}
+          </Space>
+        );
+      },
     },
   ];
 
@@ -286,9 +305,7 @@ export function IndexList() {
               loading={loading}
             />
           </Tooltip>
-          <Tooltip
-            title={clientReadOnly ? "只读连接无法新建索引" : undefined}
-          >
+          <Tooltip title={clientReadOnly ? "只读连接无法新建索引" : undefined}>
             <Button
               icon={<PlusOutlined />}
               size="small"
@@ -321,7 +338,12 @@ export function IndexList() {
 
       {/* 索引表格 */}
       <Card
-        style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+        }}
         styles={{
           body: {
             flex: 1,

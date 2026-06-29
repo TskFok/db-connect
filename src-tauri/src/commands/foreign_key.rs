@@ -1,11 +1,15 @@
 use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
 use crate::db::postgres_objects;
 use crate::db::sql_utils::esc_id;
+use crate::db::sqlite;
 use crate::models::types::{AddForeignKeyRequest, ForeignKeyInfo};
 use crate::AppState;
 use mysql_async::prelude::*;
 use std::collections::HashMap;
 use tauri::State;
+
+const SQLITE_FOREIGN_KEY_WRITE_UNSUPPORTED: &str =
+    "SQLite 暂不支持通过当前入口新增或删除外键，请通过重建表结构完成该操作";
 
 #[derive(Debug, Clone)]
 struct FkAgg {
@@ -50,8 +54,8 @@ pub async fn list_foreign_keys(
             DatabasePoolHandle::Postgres(handle) => {
                 return postgres_objects::list_foreign_keys(&handle.pool, &database, &table).await;
             }
-            DatabasePoolHandle::Sqlite(_) => {
-                return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            DatabasePoolHandle::Sqlite(handle) => {
+                return sqlite::list_foreign_keys(&handle.pool, &database, &table).await;
             }
         }
     };
@@ -299,7 +303,7 @@ pub async fn add_foreign_key(
                 .await;
             }
             DatabasePoolHandle::Sqlite(_) => {
-                return Err(DatabasePoolHandle::sqlite_unsupported_error());
+                return Err(SQLITE_FOREIGN_KEY_WRITE_UNSUPPORTED.to_string());
             }
         }
     };
@@ -339,7 +343,7 @@ pub async fn drop_foreign_key(
                 .await;
             }
             DatabasePoolHandle::Sqlite(_) => {
-                return Err(DatabasePoolHandle::sqlite_unsupported_error());
+                return Err(SQLITE_FOREIGN_KEY_WRITE_UNSUPPORTED.to_string());
             }
         }
     };

@@ -1,13 +1,13 @@
 # DB Connect
 
-基于 **Tauri 2 + React + TypeScript** 的跨平台数据库桌面图形化管理工具，目前支持 **MySQL / MariaDB** 与 **PostgreSQL**。仓库 CI 在 **Linux / macOS / Windows** 上运行前端单测与完整 `tauri build`；日常使用与打包说明以 **macOS** 为例，其他系统请参阅 [Tauri 前置依赖](https://v2.tauri.app/start/prerequisites/)。
+基于 **Tauri 2 + React + TypeScript** 的跨平台数据库桌面图形化管理工具，目前支持 **MySQL / MariaDB**、**PostgreSQL** 与 **SQLite**。仓库 CI 在 **Linux / macOS / Windows** 上运行前端单测与完整 `tauri build`；日常使用与打包说明以 **macOS** 为例，其他系统请参阅 [Tauri 前置依赖](https://v2.tauri.app/start/prerequisites/)。
 
 ## 功能特性
 
 ### 连接管理
 
 - **连接排序**：支持拖拽自定义连接显示顺序，顺序持久化保存
-- **直连 / SSH 隧道**：支持直接连接 MySQL / MariaDB / PostgreSQL，或通过 SSH 隧道转发
+- **直连 / SSH 隧道 / SQLite 文件**：支持直接连接 MySQL / MariaDB / PostgreSQL，或通过 SSH 隧道转发；SQLite 通过选择本地 `.db` / `.sqlite` 文件连接
 - **多种认证方式**：密码认证、SSH 密钥认证（`private_key_path`）
 - **连接配置持久化**：保存、编辑、删除连接配置，自动加载已保存连接
 - **连接测试**：建立连接前可测试连通性
@@ -26,25 +26,25 @@
 
 ### 数据库管理
 
-- **数据库 / schema 列表**：MySQL 展示数据库，PostgreSQL 展示 schema；树形展示对象及表，支持虚拟滚动，支持按名称排序（A→Z / Z→A）
+- **数据库 / schema / SQLite main 列表**：MySQL 展示数据库，PostgreSQL 展示 schema，SQLite 展示 `main` 等库名；树形展示对象及表，支持虚拟滚动，支持按名称排序（A→Z / Z→A）
 - **视图与基表**：表列表中对 **VIEW** 与 **BASE TABLE** 区分展示；打开视图后，部分仅适用于物理表的能力（如外键页签）会自动隐藏
-- **数据库 / schema 编辑**：MySQL 支持修改字符集/排序规则（utf8mb4、utf8、latin1、gbk 等）；PostgreSQL 支持 schema 创建、删除与重命名
+- **数据库 / schema 编辑**：MySQL 支持修改字符集/排序规则（utf8mb4、utf8、latin1、gbk 等）；PostgreSQL 支持 schema 创建、删除与重命名；SQLite 不展示数据库级编辑、字符集或存储引擎入口
 - **数据库重命名**：MySQL 通过创建新库 → 迁移表 → 删除旧库实现；PostgreSQL 走 schema 重命名
 - **新建表**：可视化创建表（列定义、主键、MySQL 引擎、注释）
 - **删除表 / 清空表**：删除表支持确认；对物理表支持 **TRUNCATE**（外键等约束导致的失败会给出可读错误提示）
 - **表搜索**：按表名或注释搜索（`Cmd/Ctrl+F`）
 - **表收藏**：收藏常用表，在侧边栏顶部快捷访问，支持一键进入和取消收藏
 - **多标签工作区**：可同时打开多张表的内容页与多个 **SQL** 标签页，在顶部标签栏切换；每个 SQL 标签独立保留编辑器内容与执行结果
-- **例程（存储过程 / 函数）**：在数据库概览的「例程」子标签中列出当前库的 `PROCEDURE` / `FUNCTION`，支持类型筛选、查看完整 DDL、删除
-- **事件调度（EVENT）**：MySQL 在「事件」子标签中列出调度事件，支持查看 DDL、启用/停用、删除；PostgreSQL 无等价事件入口
-- **数据库 / schema 级 SQL 导入 / 导出**：在概览工具栏可将 **`.sql` 文件**导入当前数据库 / schema（按语句拆分执行，支持 PostgreSQL dollar-quoted 函数体，带进度与失败摘要）；或导出为 **`.sql`**（结构 + 可选 **INSERT** 数据，INSERT 数量上限可在导出对话框中配置，默认与查询导出上限量级一致）。PostgreSQL 导出覆盖 schema、表、视图、索引、外键、触发器、函数/过程
+- **例程（存储过程 / 函数）**：在数据库概览的「例程」子标签中列出当前库的 `PROCEDURE` / `FUNCTION`，支持类型筛选、查看完整 DDL、删除；SQLite 不支持 routine
+- **事件调度（EVENT）**：MySQL 在「事件」子标签中列出调度事件，支持查看 DDL、启用/停用、删除；PostgreSQL 与 SQLite 无等价事件入口
+- **数据库 / schema 级 SQL 导入 / 导出**：在概览工具栏可将 **`.sql` 文件**导入当前数据库 / schema（按语句拆分执行，支持 PostgreSQL dollar-quoted 函数体，带进度与失败摘要）；或导出为 **`.sql`**（结构 + 可选 **INSERT** 数据，INSERT 数量上限可在导出对话框中配置，默认与查询导出上限量级一致）。PostgreSQL 导出覆盖 schema、表、视图、索引、外键、触发器、函数/过程；SQLite 导出覆盖表、视图、索引、触发器与 SQLite 方言 INSERT
 
 ### 外键管理
 
 - **外键列表**：在表视图的「外键」页签查看当前表上的约束及引用关系
 - **关系图**：基于当前表外键生成 **Mermaid** 关系图，便于理解表间依赖
-- **新建外键**：向导式选择本地列、引用表与引用列，配置 `ON UPDATE` / `ON DELETE` 行为后执行 `ALTER TABLE`
-- **删除外键**：支持确认后删除约束
+- **新建外键**：向导式选择本地列、引用表与引用列，配置 `ON UPDATE` / `ON DELETE` 行为后执行 `ALTER TABLE`；SQLite 因需重建表结构，仅提供查看
+- **删除外键**：支持确认后删除约束；SQLite 仅查看，不展示删除入口
 
 ### 表内容整合视图
 
@@ -52,14 +52,15 @@
 
 ### 表结构管理
 
-- **表结构查看**：列名、类型、可空、键、默认值、注释；MySQL 额外展示存储引擎
+- **表结构查看**：列名、类型、可空、键、默认值、注释；MySQL 额外展示存储引擎，SQLite 不展示字符集和存储引擎
 - **修改列**：重命名、改类型、可空、默认值、extra、注释
 - **新增列**：指定位置（`AFTER` 某列或末尾）
 - **删除列**：支持确认删除
 - **重命名表**：直接修改表名
-- **修改表引擎**：MySQL 支持 InnoDB、MyISAM 等；PostgreSQL 不展示该入口
+- **修改表引擎**：MySQL 支持 InnoDB、MyISAM 等；PostgreSQL / SQLite 不展示该入口
 
 ### 数据浏览与编辑
+
 - **分页查询**：支持自定义每页行数
 - **排序**：按列升序/降序
 - **条件筛选**：Where 子句过滤（支持多条件 AND/OR）
@@ -73,7 +74,7 @@
 ### 索引管理
 
 - **索引列表**：查看主键、唯一索引、普通索引
-- **创建索引**：INDEX、UNIQUE、FULLTEXT、SPATIAL，支持 BTREE/HASH 方法
+- **创建索引**：MySQL 支持 INDEX、UNIQUE、FULLTEXT、SPATIAL 与 BTREE/HASH 方法；PostgreSQL 支持常用索引方法；SQLite 当前入口支持普通索引与唯一索引
 - **删除索引**：支持确认删除
 
 ### 触发器管理
@@ -89,7 +90,7 @@
 - **常用 SQL 片段**：可将当前编辑器内容**命名保存**到本地列表，在抽屉中一键载入或删除（[`savedSqlStore`](src/stores/savedSqlStore.ts)，与独立 SQL 标签配合使用）
 - **SQL 自动补全**：数据库名、表名、列名智能提示
 - **多语句支持**：按分号拆分批量执行，显示每条语句结果
-- **EXPLAIN**：工具栏支持对当前或选中 SQL 执行 `EXPLAIN`；MySQL / MariaDB 下 `EXPLAIN ANALYZE` 会在根据版本判断可能不兼容时灰显，PostgreSQL 下直接开放
+- **EXPLAIN**：工具栏支持对当前或选中 SQL 执行 `EXPLAIN`；MySQL / MariaDB 下 `EXPLAIN ANALYZE` 会在根据版本判断可能不兼容时灰显，PostgreSQL 下直接开放，SQLite 使用 `EXPLAIN QUERY PLAN`
 - **高危语句**：对 `TRUNCATE`、`DROP DATABASE` / `DROP SCHEMA` 等在执行前提供二次确认；可在连接「高级」中勾选跳过（不推荐）
 - **会话信息**：按数据库类型展示版本、主机、只读状态、查询超时、连接 ID、当前数据库 / schema 等便于排障
 - **数据库 / schema 切换**：下拉选择当前默认数据库或 schema
@@ -105,16 +106,16 @@
 
 ### 快捷键
 
-| 快捷键 | 功能 |
-|--------|------|
-| `Cmd/Ctrl + N` | 新建连接 |
-| `Cmd/Ctrl + R` | 刷新（在「数据」页签且已选表时刷新当前表数据，否则刷新左侧数据库树） |
-| `Cmd/Ctrl + D` | 断开连接 |
-| `Cmd/Ctrl + F` | 搜索表 |
-| `Cmd/Ctrl + L` | 切换深色/浅色主题 |
-| `Cmd/Ctrl + Enter` | 执行 SQL（在 SQL 编辑器中） |
-| `Cmd/Ctrl + /` | 显示/隐藏快捷键帮助 |
-| `Esc` | 关闭弹窗 |
+| 快捷键             | 功能                                                                 |
+| ------------------ | -------------------------------------------------------------------- |
+| `Cmd/Ctrl + N`     | 新建连接                                                             |
+| `Cmd/Ctrl + R`     | 刷新（在「数据」页签且已选表时刷新当前表数据，否则刷新左侧数据库树） |
+| `Cmd/Ctrl + D`     | 断开连接                                                             |
+| `Cmd/Ctrl + F`     | 搜索表                                                               |
+| `Cmd/Ctrl + L`     | 切换深色/浅色主题                                                    |
+| `Cmd/Ctrl + Enter` | 执行 SQL（在 SQL 编辑器中）                                          |
+| `Cmd/Ctrl + /`     | 显示/隐藏快捷键帮助                                                  |
+| `Esc`              | 关闭弹窗                                                             |
 
 ## 技术栈
 
@@ -128,7 +129,7 @@
 - **关系图**：Mermaid（外键可视化）
 - **表格导出**：write-excel-file（`.xlsx` 生成）
 - **剪贴板**：`@tauri-apps/plugin-clipboard-manager`
-- **数据库驱动**：mysql_async、deadpool-postgres / tokio-postgres (Rust)
+- **数据库驱动**：mysql_async、deadpool-postgres / tokio-postgres、deadpool-sqlite / rusqlite (Rust)
 - **SSH 隧道**：按平台区分实现
   - **Windows**：russh（纯 Rust 客户端，`ring` 后端，无需系统 libssh2）
   - **macOS / Linux**：调用系统 OpenSSH（`ssh`）建立本地端口转发
@@ -167,8 +168,8 @@ npm install
 cp .env.example .env
 ```
 
-| 变量 | 说明 |
-|------|------|
+| 变量                     | 说明                                                                  |
+| ------------------------ | --------------------------------------------------------------------- |
 | `VITE_GITHUB_ISSUE_REPO` | 崩溃上报默认 GitHub 仓库，格式 `owner/repo`；未设置时使用代码内默认值 |
 
 CI 打包可通过仓库 **Settings → Secrets and variables → Actions → Variables** 设置 `VITE_GITHUB_ISSUE_REPO`。

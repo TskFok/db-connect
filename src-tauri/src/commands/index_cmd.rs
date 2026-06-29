@@ -1,6 +1,7 @@
 use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
 use crate::db::postgres_objects;
 use crate::db::sql_utils::{esc_id, esc_str};
+use crate::db::sqlite;
 use crate::models::types::{CreateIndexRequest, IndexColumnInfo, IndexInfo};
 use crate::AppState;
 use mysql_async::prelude::*;
@@ -22,8 +23,8 @@ pub async fn list_indexes(
             DatabasePoolHandle::Postgres(handle) => {
                 return postgres_objects::list_indexes(&handle.pool, &database, &table).await;
             }
-            DatabasePoolHandle::Sqlite(_) => {
-                return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            DatabasePoolHandle::Sqlite(handle) => {
+                return sqlite::list_indexes(&handle.pool, &database, &table).await;
             }
         }
     };
@@ -124,8 +125,8 @@ pub async fn create_index(
                 return postgres_objects::create_index(&handle.pool, &database, &table, &request)
                     .await;
             }
-            DatabasePoolHandle::Sqlite(_) => {
-                return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            DatabasePoolHandle::Sqlite(handle) => {
+                return sqlite::create_index(&handle.pool, &database, &table, &request).await;
             }
         }
     };
@@ -195,8 +196,8 @@ pub async fn delete_index(
                 return postgres_objects::drop_index(&handle.pool, &database, &table, &index_name)
                     .await;
             }
-            DatabasePoolHandle::Sqlite(_) => {
-                return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            DatabasePoolHandle::Sqlite(handle) => {
+                return sqlite::delete_index(&handle.pool, &database, &index_name).await;
             }
         }
     };

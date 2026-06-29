@@ -48,20 +48,25 @@ export function IndexEditor({
   const [form] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const dbType = useConnectionStore((s) => s.activeConnection?.config.database_type);
-  const isPostgres = normalizeDatabaseType(dbType) === "postgres";
+  const dbType = useConnectionStore(
+    (s) => s.activeConnection?.config.database_type
+  );
+  const normalizedDbType = normalizeDatabaseType(dbType);
+  const isPostgres = normalizedDbType === "postgres";
+  const isSqlite = normalizedDbType === "sqlite";
 
-  const indexTypeOptions = isPostgres
-    ? [
-        { label: "普通索引 (INDEX)", value: "INDEX" },
-        { label: "唯一索引 (UNIQUE)", value: "UNIQUE" },
-      ]
-    : [
-        { label: "普通索引 (INDEX)", value: "INDEX" },
-        { label: "唯一索引 (UNIQUE)", value: "UNIQUE" },
-        { label: "全文索引 (FULLTEXT)", value: "FULLTEXT" },
-        { label: "空间索引 (SPATIAL)", value: "SPATIAL" },
-      ];
+  const indexTypeOptions =
+    isPostgres || isSqlite
+      ? [
+          { label: "普通索引 (INDEX)", value: "INDEX" },
+          { label: "唯一索引 (UNIQUE)", value: "UNIQUE" },
+        ]
+      : [
+          { label: "普通索引 (INDEX)", value: "INDEX" },
+          { label: "唯一索引 (UNIQUE)", value: "UNIQUE" },
+          { label: "全文索引 (FULLTEXT)", value: "FULLTEXT" },
+          { label: "空间索引 (SPATIAL)", value: "SPATIAL" },
+        ];
 
   const indexMethodOptions = isPostgres
     ? [
@@ -72,10 +77,12 @@ export function IndexEditor({
         { label: "SPGIST", value: "spgist" },
         { label: "BRIN", value: "brin" },
       ]
-    : [
-        { label: "BTREE", value: "BTREE" },
-        { label: "HASH", value: "HASH" },
-      ];
+    : isSqlite
+      ? [{ label: "BTREE", value: "BTREE" }]
+      : [
+          { label: "BTREE", value: "BTREE" },
+          { label: "HASH", value: "HASH" },
+        ];
 
   const isEdit = !!editingIndex;
 
@@ -191,7 +198,9 @@ export function IndexEditor({
         size="small"
         initialValues={{
           index_type: "INDEX",
-          columns: [{ column_name: undefined, length: undefined, order: undefined }],
+          columns: [
+            { column_name: undefined, length: undefined, order: undefined },
+          ],
         }}
       >
         {/* 索引名称 */}
@@ -226,7 +235,11 @@ export function IndexEditor({
             label="索引方法"
             style={{ width: 160 }}
           >
-            <Select allowClear placeholder="默认" options={indexMethodOptions} />
+            <Select
+              allowClear
+              placeholder="默认"
+              options={indexMethodOptions}
+            />
           </Form.Item>
         </Space>
 
@@ -321,7 +334,11 @@ export function IndexEditor({
                 <Button
                   type="dashed"
                   onClick={() =>
-                    add({ column_name: undefined, length: undefined, order: undefined })
+                    add({
+                      column_name: undefined,
+                      length: undefined,
+                      order: undefined,
+                    })
                   }
                   icon={<PlusOutlined />}
                   style={{ width: "100%" }}

@@ -3,6 +3,7 @@ use crate::db::postgres;
 use crate::db::postgres_ddl::format_pg_error;
 use crate::db::sql_script::split_sql_statements;
 use crate::db::sql_utils::{esc_id, esc_str, pg_id, pg_str, strip_export_schema_qualifiers};
+use crate::db::sqlite;
 use crate::models::types::{
     ExportSqlFileResult, ImportSqlFileResult, ImportSqlStatementFailure, TableInfo,
 };
@@ -992,8 +993,34 @@ pub async fn import_sql_file(
                 }
             }
         }
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        DatabasePoolHandle::Sqlite(handle) => {
+            let conn = handle
+                .pool
+                .get()
+                .await
+                .map_err(|e| format!("获取 SQLite 连接失败: {}", e))?;
+            for (i, stmt) in statements.iter().enumerate() {
+                match sqlite::run_one_statement(&conn, stmt).await {
+                    Ok(()) => ok += 1,
+                    Err(e) => {
+                        failed += 1;
+                        record_import_failure(&mut failures, (i + 1) as u32, stmt, e);
+                    }
+                }
+                let done = (i + 1) as u32;
+                if done == 1
+                    || done == total
+                    || done.is_multiple_of(IMPORT_PROGRESS_EMIT_INTERVAL as u32)
+                {
+                    let _ = app.emit(
+                        "sql-import-progress",
+                        SqlImportProgress {
+                            current: done,
+                            total,
+                        },
+                    );
+                }
+            }
         }
     }
 
@@ -1147,6 +1174,79 @@ async fn export_postgres_database_to_file_impl(
     })
 }
 
+async fn export_sqlite_database_to_file_impl(
+    app: &AppHandle,
+    pool: &deadpool_sqlite::Pool,
+    schema: &str,
+    file_path: String,
+    include_data: bool,
+    max_rows: u64,
+    mut file: BufWriter<std::fs::File>,
+) -> Result<ExportSqlFileResult, String> {
+    let start = Instant::now();
+    let metadata = sqlite::load_export_metadata(pool, schema).await?;
+    let metadata_steps = metadata.objects.len();
+    let data_steps = if include_data {
+        metadata.tables.len()
+    } else {
+        0
+    };
+    let total_steps_u32 = (metadata_steps + data_steps).max(1) as u32;
+    let _ = app.emit(
+        "sql-export-progress",
+        SqlExportProgress {
+            current: 0,
+            total: total_steps_u32,
+        },
+    );
+
+    let (inserts, insert_rows) = if include_data {
+        sqlite::load_export_insert_batches(pool, schema, &metadata.tables, max_rows).await?
+    } else {
+        (Vec::new(), 0)
+    };
+    let script = sqlite::build_export_script(&metadata, &inserts)?;
+    file.write_all(script.as_bytes())
+        .map_err(|e| format_fs_err("写入导出文件失败", e))?;
+    file.flush()
+        .map_err(|e| format_fs_err("写入导出文件失败", e))?;
+    drop(file);
+
+    let path = Path::new(&file_path);
+    crate::util::secure_fs::set_secure_file_permissions(path)
+        .map_err(|e| format!("设置文件权限失败: {}", e))?;
+
+    let _ = app.emit(
+        "sql-export-progress",
+        SqlExportProgress {
+            current: total_steps_u32,
+            total: total_steps_u32,
+        },
+    );
+
+    Ok(ExportSqlFileResult {
+        tables_exported: metadata
+            .objects
+            .iter()
+            .filter(|object| object.object_type == "table")
+            .count() as u32,
+        views_exported: metadata
+            .objects
+            .iter()
+            .filter(|object| object.object_type == "view")
+            .count() as u32,
+        triggers_exported: metadata
+            .objects
+            .iter()
+            .filter(|object| object.object_type == "trigger")
+            .count() as u32,
+        events_exported: 0,
+        insert_rows,
+        file_path,
+        elapsed_ms: start.elapsed().as_millis() as u64,
+    })
+}
+
 /// 将当前库导出为 .sql（表/视图的 CREATE；可选导出表数据为 INSERT，每表最多 `max_rows_per_table` 行）。
 #[tauri::command]
 pub async fn export_database_to_file(
@@ -1187,8 +1287,17 @@ pub async fn export_database_to_file(
             )
             .await;
         }
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        DatabasePoolHandle::Sqlite(handle) => {
+            return export_sqlite_database_to_file_impl(
+                &app,
+                &handle.pool,
+                &database,
+                file_path,
+                include_data,
+                max_rows,
+                file,
+            )
+            .await;
         }
     };
     let mut conn = get_conn_with_retry(&pool).await?;
