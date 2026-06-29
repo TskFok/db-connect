@@ -488,6 +488,9 @@ pub async fn query_table_count(
         DatabasePoolHandle::Sqlite(handle) => {
             return sqlite::query_table_count(&handle.pool, &database, &table, where_clause).await;
         }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+        }
     };
 
     let where_sql = match &where_clause {
@@ -618,6 +621,9 @@ pub async fn query_table_data(
                 skip_count,
             )
             .await;
+        }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_unsupported_error());
         }
     };
 
@@ -755,6 +761,9 @@ pub async fn insert_row(
         }
         DatabasePoolHandle::Sqlite(handle) => {
             return sqlite::insert_row(&handle.pool, &database, &table, values).await;
+        }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
         }
     };
 
@@ -921,6 +930,9 @@ pub async fn update_row(
             return sqlite::update_row(&handle.pool, &database, &table, primary_keys, updates)
                 .await;
         }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        }
     };
 
     if updates.is_empty() {
@@ -987,6 +999,9 @@ pub async fn batch_update_rows(
                 .collect();
             return sqlite::batch_update_rows(&handle.pool, &database, &table, sqlite_rows).await;
         }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        }
     };
 
     if rows.is_empty() {
@@ -1050,6 +1065,9 @@ pub async fn delete_rows(
         DatabasePoolHandle::Sqlite(handle) => {
             return sqlite::delete_rows(&handle.pool, &database, &table, primary_keys).await;
         }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        }
     };
 
     let rows = map_primary_key_rows(&primary_keys)?;
@@ -1110,6 +1128,9 @@ pub async fn query_full_rows(
                 primary_key_values,
             )
             .await;
+        }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_unsupported_error());
         }
     };
 
@@ -1293,6 +1314,7 @@ pub async fn execute_sql(
             let start = Instant::now();
             sqlite::run_sql_on_pool(&handle.pool, &sql, read_only, start).await
         }
+        DatabasePoolHandle::SqlServer(_) => Err(DatabasePoolHandle::sqlserver_unsupported_error()),
     }
 }
 
@@ -1321,7 +1343,9 @@ pub async fn cancel_query(
                 let mut manager = state.connection_manager.lock().await;
                 match manager.get_database_pool_and_touch(&conn_id)? {
                     DatabasePoolHandle::MySql(pool) => pool,
-                    DatabasePoolHandle::Postgres(_) | DatabasePoolHandle::Sqlite(_) => {
+                    DatabasePoolHandle::Postgres(_)
+                    | DatabasePoolHandle::Sqlite(_)
+                    | DatabasePoolHandle::SqlServer(_) => {
                         return Err("当前运行中查询不是 MySQL 查询".to_string());
                     }
                 }
@@ -1390,6 +1414,9 @@ pub async fn get_session_info(
         }
         DatabasePoolHandle::Sqlite(handle) => {
             return sqlite::get_session_info(&handle.pool, database, None, read_only).await;
+        }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_unsupported_error());
         }
     };
 
@@ -1488,6 +1515,7 @@ pub async fn explain_sql(
             let start = Instant::now();
             sqlite::explain_sql_on_pool(&handle.pool, trimmed, analyze, start).await
         }
+        DatabasePoolHandle::SqlServer(_) => Err(DatabasePoolHandle::sqlserver_unsupported_error()),
     }
 }
 

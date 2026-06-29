@@ -57,6 +57,9 @@ pub async fn list_foreign_keys(
             DatabasePoolHandle::Sqlite(handle) => {
                 return sqlite::list_foreign_keys(&handle.pool, &database, &table).await;
             }
+            DatabasePoolHandle::SqlServer(_) => {
+                return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+            }
         }
     };
 
@@ -305,6 +308,9 @@ pub async fn add_foreign_key(
             DatabasePoolHandle::Sqlite(_) => {
                 return Err(SQLITE_FOREIGN_KEY_WRITE_UNSUPPORTED.to_string());
             }
+            DatabasePoolHandle::SqlServer(_) => {
+                return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+            }
         }
     };
 
@@ -344,6 +350,9 @@ pub async fn drop_foreign_key(
             }
             DatabasePoolHandle::Sqlite(_) => {
                 return Err(SQLITE_FOREIGN_KEY_WRITE_UNSUPPORTED.to_string());
+            }
+            DatabasePoolHandle::SqlServer(_) => {
+                return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
             }
         }
     };

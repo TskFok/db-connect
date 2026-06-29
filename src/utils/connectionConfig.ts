@@ -7,6 +7,7 @@ export function normalizeDatabaseType(
 ): DatabaseType {
   if (value === "postgres") return "postgres";
   if (value === "sqlite") return "sqlite";
+  if (value === "sqlserver") return "sqlserver";
   return DEFAULT_DATABASE_TYPE;
 }
 
@@ -22,5 +23,6 @@ export function normalizeConnectionConfig<T extends ConnectionConfig>(
 export function defaultPortForDatabaseType(type: DatabaseType): number {
   if (type === "postgres") return 5432;
   if (type === "sqlite") return 0;
+  if (type === "sqlserver") return 1433;
   return 3306;
 }

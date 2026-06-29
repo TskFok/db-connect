@@ -33,6 +33,7 @@ pub enum DatabaseType {
     MySql,
     Postgres,
     Sqlite,
+    SqlServer,
 }
 
 /// 数据库连接配置
@@ -794,6 +795,18 @@ mod tests {
         let c: ConnectionConfig = serde_json::from_str(json).unwrap();
         assert_eq!(c.database_type, DatabaseType::Sqlite);
         assert_eq!(c.sqlite_path.as_deref(), Some("/tmp/app.db"));
+    }
+
+    #[test]
+    fn test_connection_config_serializes_sqlserver_type() {
+        let json = r#"{"database_type":"sqlserver","name":"MSSQL","host":"sql.example.com","port":1433,"username":"sa","password":null,"database":"appdb","ssh":null}"#;
+        let c: ConnectionConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(c.database_type, DatabaseType::SqlServer);
+        assert_eq!(c.port, 1433);
+        assert_eq!(c.database.as_deref(), Some("appdb"));
+
+        let serialized = serde_json::to_string(&c).unwrap();
+        assert!(serialized.contains("\"database_type\":\"sqlserver\""));
     }
 
     #[test]

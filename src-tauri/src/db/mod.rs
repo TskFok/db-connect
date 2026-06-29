@@ -7,4 +7,5 @@ pub mod postgres_objects;
 pub mod sql_script;
 pub mod sql_utils;
 pub mod sqlite;
+pub mod sqlserver;
 pub mod ssh_tunnel;

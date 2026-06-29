@@ -99,6 +99,64 @@ describe("ConnectionForm database type defaults", () => {
     });
   });
 
+  it("新建连接可选择 SQL Server，自动切换到 1433 端口并保留服务端数据库字段", async () => {
+    render(<ConnectionForm />);
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "数据库类型" }));
+    fireEvent.click(await screen.findByText("SQL Server"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("spinbutton", { name: "端口" })).toHaveValue(
+        "1433"
+      );
+    });
+    expect(screen.getByRole("textbox", { name: "主机地址" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "用户名" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "数据库" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "SQLite 文件" })).toBeNull();
+    expect(screen.getByText("SSL / TLS（SQL Server）")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("高级：只读与安全"));
+    expect(screen.getByLabelText("只读连接")).toBeInTheDocument();
+    expect(screen.getByLabelText("高危 SQL")).toBeInTheDocument();
+  });
+
+  it("保存 SQL Server 连接时提交 sqlserver 类型和常规服务端配置", async () => {
+    mockApi.saveConnection.mockResolvedValue(undefined);
+    mockApi.listSavedConnections.mockResolvedValue([]);
+    render(<ConnectionForm />);
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "数据库类型" }));
+    fireEvent.click(await screen.findByText("SQL Server"));
+    fireEvent.change(screen.getByRole("textbox", { name: "连接名称" }), {
+      target: { value: "SQL Server Dev" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "主机地址" }), {
+      target: { value: "sql.example.com" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "用户名" }), {
+      target: { value: "sa" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "数据库" }), {
+      target: { value: "appdb" },
+    });
+    fireEvent.click(screen.getByText("高级：只读与安全"));
+    fireEvent.click(screen.getByLabelText("只读连接"));
+    fireEvent.click(screen.getByRole("button", { name: /保存$/ }));
+
+    await waitFor(() => {
+      expect(mockApi.saveConnection).toHaveBeenCalledWith({
+        database_type: "sqlserver",
+        name: "SQL Server Dev",
+        host: "sql.example.com",
+        port: 1433,
+        username: "sa",
+        password: undefined,
+        database: "appdb",
+        read_only: true,
+      });
+    });
+  });
+
   it("新建连接可选择 SQLite 并仅显示文件路径和安全设置", async () => {
     render(<ConnectionForm />);
 

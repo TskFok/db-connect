@@ -33,6 +33,9 @@ pub async fn list_databases(
         DatabasePoolHandle::MySql(pool) => pool,
         DatabasePoolHandle::Postgres(handle) => return postgres::list_schemas(&handle.pool).await,
         DatabasePoolHandle::Sqlite(handle) => return sqlite::list_databases(&handle.pool).await,
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -64,6 +67,9 @@ pub async fn list_tables(
         }
         DatabasePoolHandle::Sqlite(handle) => {
             return sqlite::list_tables(&handle.pool, &database).await;
+        }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_unsupported_error());
         }
     };
 
@@ -129,6 +135,9 @@ pub async fn get_table_structure(
         }
         DatabasePoolHandle::Sqlite(handle) => {
             return sqlite::get_table_structure(&handle.pool, &database, &table).await;
+        }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_unsupported_error());
         }
     };
 
@@ -325,6 +334,7 @@ pub async fn get_sql_completion_metadata(
         DatabasePoolHandle::Sqlite(handle) => {
             sqlite::get_sql_completion_metadata(&handle.pool, database).await
         }
+        DatabasePoolHandle::SqlServer(_) => Err(DatabasePoolHandle::sqlserver_unsupported_error()),
     }
 }
 
@@ -348,6 +358,9 @@ pub async fn get_table_definition(
         }
         DatabasePoolHandle::Sqlite(_) => {
             return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_unsupported_error());
         }
     };
 
@@ -401,6 +414,9 @@ pub async fn get_database_info(
         }
         DatabasePoolHandle::Sqlite(_) => {
             return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_unsupported_error());
         }
     };
 
@@ -462,6 +478,9 @@ pub async fn alter_database_charset(
         DatabasePoolHandle::Sqlite(_) => {
             return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
         }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -516,6 +535,9 @@ pub async fn drop_database(
         DatabasePoolHandle::Sqlite(_) => {
             return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
         }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        }
     };
 
     validate_drop_database_name(&database)?;
@@ -552,6 +574,9 @@ pub async fn create_database(
         }
         DatabasePoolHandle::Sqlite(_) => {
             return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
+        }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
         }
     };
 
@@ -618,6 +643,9 @@ pub async fn rename_database(
         }
         DatabasePoolHandle::Sqlite(_) => {
             return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
+        }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
         }
     };
 
@@ -688,6 +716,9 @@ pub async fn rename_table(
         DatabasePoolHandle::Sqlite(handle) => {
             return sqlite::rename_table(&handle.pool, &database, &old_name, &new_name).await;
         }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -728,6 +759,9 @@ pub async fn alter_table_engine(
         }
         DatabasePoolHandle::Sqlite(_) => {
             return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
+        }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
         }
     };
 
@@ -770,6 +804,9 @@ pub async fn get_primary_keys(
         DatabasePoolHandle::Sqlite(handle) => {
             return sqlite::get_primary_keys(&handle.pool, &database, &table).await;
         }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -811,6 +848,9 @@ pub async fn drop_table(
         DatabasePoolHandle::Sqlite(handle) => {
             return sqlite::drop_table(&handle.pool, &database, &table).await;
         }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -844,6 +884,9 @@ pub async fn truncate_table(
         }
         DatabasePoolHandle::Sqlite(handle) => {
             return sqlite::truncate_table(&handle.pool, &database, &table).await;
+        }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
         }
     };
 
@@ -886,6 +929,9 @@ pub async fn create_table(
         }
         DatabasePoolHandle::Sqlite(handle) => {
             return sqlite::create_table(&handle.pool, &database, &request).await;
+        }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
         }
     };
 

@@ -26,6 +26,9 @@ pub async fn list_triggers(
             DatabasePoolHandle::Sqlite(handle) => {
                 return sqlite::list_triggers(&handle.pool, &database, table.as_deref()).await;
             }
+            DatabasePoolHandle::SqlServer(_) => {
+                return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+            }
         }
     };
 
@@ -112,6 +115,9 @@ pub async fn get_trigger_definition(
                 )
                 .await;
             }
+            DatabasePoolHandle::SqlServer(_) => {
+                return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+            }
         }
     };
 
@@ -159,6 +165,9 @@ pub async fn create_trigger(
             DatabasePoolHandle::Sqlite(handle) => {
                 return sqlite::create_trigger(&handle.pool, &database, &table, &request).await;
             }
+            DatabasePoolHandle::SqlServer(_) => {
+                return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+            }
         }
     };
 
@@ -205,6 +214,9 @@ pub async fn drop_trigger(
             }
             DatabasePoolHandle::Sqlite(handle) => {
                 return sqlite::drop_trigger(&handle.pool, &database, &trigger_name).await;
+            }
+            DatabasePoolHandle::SqlServer(_) => {
+                return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
             }
         }
     };

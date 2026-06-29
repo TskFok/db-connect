@@ -1,3 +1,4 @@
+use crate::db::sqlserver::SqlServerPool;
 use crate::models::types::DatabaseType;
 use deadpool_postgres::Pool as PgPool;
 use deadpool_sqlite::Pool as SqlitePool;
@@ -17,6 +18,10 @@ pub struct PostgresDatabaseAdapter {
 
 pub struct SqliteDatabaseAdapter {
     pool: SqlitePool,
+}
+
+pub struct SqlServerDatabaseAdapter {
+    pool: SqlServerPool,
 }
 
 impl MySqlDatabaseAdapter {
@@ -76,5 +81,25 @@ impl SqliteDatabaseAdapter {
 impl DatabaseAdapter for SqliteDatabaseAdapter {
     fn database_type(&self) -> DatabaseType {
         DatabaseType::Sqlite
+    }
+}
+
+impl SqlServerDatabaseAdapter {
+    pub fn new(pool: SqlServerPool) -> Self {
+        Self { pool }
+    }
+
+    pub fn pool_clone(&self) -> SqlServerPool {
+        self.pool.clone()
+    }
+
+    pub fn close(&self) {
+        let _ = &self.pool;
+    }
+}
+
+impl DatabaseAdapter for SqlServerDatabaseAdapter {
+    fn database_type(&self) -> DatabaseType {
+        DatabaseType::SqlServer
     }
 }

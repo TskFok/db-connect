@@ -26,6 +26,9 @@ pub async fn list_indexes(
             DatabasePoolHandle::Sqlite(handle) => {
                 return sqlite::list_indexes(&handle.pool, &database, &table).await;
             }
+            DatabasePoolHandle::SqlServer(_) => {
+                return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+            }
         }
     };
 
@@ -128,6 +131,9 @@ pub async fn create_index(
             DatabasePoolHandle::Sqlite(handle) => {
                 return sqlite::create_index(&handle.pool, &database, &table, &request).await;
             }
+            DatabasePoolHandle::SqlServer(_) => {
+                return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+            }
         }
     };
 
@@ -198,6 +204,9 @@ pub async fn delete_index(
             }
             DatabasePoolHandle::Sqlite(handle) => {
                 return sqlite::delete_index(&handle.pool, &database, &index_name).await;
+            }
+            DatabasePoolHandle::SqlServer(_) => {
+                return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
             }
         }
     };

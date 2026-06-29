@@ -1,8 +1,10 @@
 use crate::db::adapter::{
-    DatabaseAdapter, MySqlDatabaseAdapter, PostgresDatabaseAdapter, SqliteDatabaseAdapter,
+    DatabaseAdapter, MySqlDatabaseAdapter, PostgresDatabaseAdapter, SqlServerDatabaseAdapter,
+    SqliteDatabaseAdapter,
 };
 use crate::db::postgres::{self, PostgresCancelTls, PostgresPoolHandle};
 use crate::db::sqlite;
+use crate::db::sqlserver::{self, SqlServerPoolHandle};
 use crate::db::ssh_tunnel::SshTunnel;
 use crate::models::types::{ConnectionConfig, DatabaseType};
 use mysql_async::prelude::*;
@@ -156,11 +158,17 @@ pub struct SqliteActiveConnection {
     pub adapter: SqliteDatabaseAdapter,
 }
 
+pub struct SqlServerActiveConnection {
+    pub adapter: SqlServerDatabaseAdapter,
+    pub ssh_tunnel: Option<SshTunnel>,
+}
+
 #[derive(Clone)]
 pub enum DatabasePoolHandle {
     MySql(Pool),
     Postgres(PostgresPoolHandle),
     Sqlite(sqlite::SqlitePoolHandle),
+    SqlServer(SqlServerPoolHandle),
 }
 
 impl DatabasePoolHandle {
@@ -171,6 +179,14 @@ impl DatabasePoolHandle {
     pub fn sqlite_write_unsupported_error() -> String {
         "SQLite 暂不支持该写操作".to_string()
     }
+
+    pub fn sqlserver_unsupported_error() -> String {
+        "SQL Server 暂不支持该操作".to_string()
+    }
+
+    pub fn sqlserver_write_unsupported_error() -> String {
+        "SQL Server 暂不支持该写操作".to_string()
+    }
 }
 
 /// 活跃连接的数据库类型分发结构。
@@ -178,6 +194,7 @@ pub enum ActiveDatabaseConnection {
     MySql(MySqlActiveConnection),
     Postgres(PostgresActiveConnection),
     Sqlite(SqliteActiveConnection),
+    SqlServer(SqlServerActiveConnection),
 }
 
 pub struct ActiveConnection {
@@ -192,6 +209,9 @@ impl ActiveDatabaseConnection {
         match self {
             ActiveDatabaseConnection::MySql(conn) => Ok(conn.adapter.pool_clone()),
             ActiveDatabaseConnection::Postgres(_) | ActiveDatabaseConnection::Sqlite(_) => {
+                Err("当前连接不是 MySQL，不支持该操作".to_string())
+            }
+            ActiveDatabaseConnection::SqlServer(_) => {
                 Err("当前连接不是 MySQL，不支持该操作".to_string())
             }
         }
@@ -213,6 +233,11 @@ impl ActiveDatabaseConnection {
                     pool: conn.adapter.pool_clone(),
                 })
             }
+            ActiveDatabaseConnection::SqlServer(conn) => {
+                DatabasePoolHandle::SqlServer(SqlServerPoolHandle {
+                    pool: conn.adapter.pool_clone(),
+                })
+            }
         }
     }
 
@@ -221,6 +246,7 @@ impl ActiveDatabaseConnection {
             ActiveDatabaseConnection::MySql(conn) => conn.adapter.database_type(),
             ActiveDatabaseConnection::Postgres(conn) => conn.adapter.database_type(),
             ActiveDatabaseConnection::Sqlite(conn) => conn.adapter.database_type(),
+            ActiveDatabaseConnection::SqlServer(conn) => conn.adapter.database_type(),
         }
     }
 
@@ -247,6 +273,13 @@ impl ActiveDatabaseConnection {
                 conn.adapter.close();
                 Ok(())
             }
+            ActiveDatabaseConnection::SqlServer(mut conn) => {
+                if let Some(tunnel) = conn.ssh_tunnel.take() {
+                    tunnel.close();
+                }
+                conn.adapter.close();
+                Ok(())
+            }
         }
     }
 
@@ -269,6 +302,12 @@ impl ActiveDatabaseConnection {
                 conn.adapter.close();
             }
             ActiveDatabaseConnection::Sqlite(conn) => {
+                conn.adapter.close();
+            }
+            ActiveDatabaseConnection::SqlServer(mut conn) => {
+                if let Some(tunnel) = conn.ssh_tunnel.take() {
+                    tunnel.close();
+                }
                 conn.adapter.close();
             }
         }
@@ -308,6 +347,7 @@ impl ConnectionManager {
             DatabaseType::MySql => Self::prepare_mysql_connection(config).await,
             DatabaseType::Postgres => Self::prepare_postgres_connection(config).await,
             DatabaseType::Sqlite => Self::prepare_sqlite_connection(config).await,
+            DatabaseType::SqlServer => Self::prepare_sqlserver_connection(config).await,
         }
     }
 
@@ -429,6 +469,48 @@ impl ConnectionManager {
         Ok((conn_id, active))
     }
 
+    async fn prepare_sqlserver_connection(
+        config: ConnectionConfig,
+    ) -> Result<(String, ActiveConnection), String> {
+        let conn_id = uuid::Uuid::new_v4().to_string();
+
+        let (host, port, tunnel) = if let Some(ssh_config) = &config.ssh {
+            let tunnel = SshTunnel::start(ssh_config, &config.host, config.port).await?;
+            let local_port = tunnel.local_port();
+            (String::from("127.0.0.1"), local_port, Some(tunnel))
+        } else {
+            (config.host.clone(), config.port, None)
+        };
+
+        let handle = match sqlserver::build_sqlserver_pool(&host, port, &config) {
+            Ok(handle) => handle,
+            Err(e) => {
+                if let Some(tunnel) = tunnel {
+                    tunnel.close();
+                }
+                return Err(e);
+            }
+        };
+
+        if let Err(e) = sqlserver::test_pool(&handle.pool).await {
+            if let Some(tunnel) = tunnel {
+                tunnel.close();
+            }
+            return Err(format!("连接 SQL Server 失败: {}", e));
+        }
+
+        let active = ActiveConnection {
+            database: ActiveDatabaseConnection::SqlServer(SqlServerActiveConnection {
+                adapter: SqlServerDatabaseAdapter::new(handle.pool),
+                ssh_tunnel: tunnel,
+            }),
+            config,
+            last_activity: Instant::now(),
+        };
+
+        Ok((conn_id, active))
+    }
+
     /// 注册一个已建立好的连接（仅写入 HashMap，调用方只需短暂持锁）。
     pub fn register(&mut self, conn_id: String, active: ActiveConnection) {
         self.connections.insert(conn_id, active);
@@ -468,6 +550,7 @@ impl ConnectionManager {
             Some(DatabasePoolHandle::MySql(pool)) => Self::ping_pool(&pool).await,
             Some(DatabasePoolHandle::Postgres(handle)) => postgres::ping_pool(&handle.pool).await,
             Some(DatabasePoolHandle::Sqlite(handle)) => sqlite::ping_pool(&handle.pool).await,
+            Some(DatabasePoolHandle::SqlServer(handle)) => sqlserver::ping_pool(&handle.pool).await,
             None => false,
         }
     }
@@ -602,6 +685,7 @@ impl ConnectionManager {
             DatabaseType::MySql => Self::test_mysql_connection(config).await,
             DatabaseType::Postgres => Self::test_postgres_connection(config).await,
             DatabaseType::Sqlite => Self::test_sqlite_connection(config).await,
+            DatabaseType::SqlServer => Self::test_sqlserver_connection(config).await,
         }
     }
 
@@ -680,6 +764,36 @@ impl ConnectionManager {
         let result = sqlite::test_pool(&handle.pool).await;
         handle.pool.close();
         result?;
+        Ok(start.elapsed().as_millis() as u64)
+    }
+
+    async fn test_sqlserver_connection(config: &ConnectionConfig) -> Result<u64, String> {
+        let start = Instant::now();
+
+        let (host, port, tunnel) = if let Some(ssh_config) = &config.ssh {
+            let tunnel = SshTunnel::start(ssh_config, &config.host, config.port).await?;
+            let local_port = tunnel.local_port();
+            (String::from("127.0.0.1"), local_port, Some(tunnel))
+        } else {
+            (config.host.clone(), config.port, None)
+        };
+
+        let handle = match sqlserver::build_sqlserver_pool(&host, port, config) {
+            Ok(handle) => handle,
+            Err(e) => {
+                if let Some(tunnel) = tunnel {
+                    tunnel.close();
+                }
+                return Err(e);
+            }
+        };
+
+        let result = sqlserver::test_pool(&handle.pool).await;
+        if let Some(tunnel) = tunnel {
+            tunnel.close();
+        }
+        result?;
+
         Ok(start.elapsed().as_millis() as u64)
     }
 

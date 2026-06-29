@@ -1022,6 +1022,9 @@ pub async fn import_sql_file(
                 }
             }
         }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        }
     }
 
     let _ = app.emit(
@@ -1298,6 +1301,9 @@ pub async fn export_database_to_file(
                 file,
             )
             .await;
+        }
+        DatabasePoolHandle::SqlServer(_) => {
+            return Err(DatabasePoolHandle::sqlserver_unsupported_error());
         }
     };
     let mut conn = get_conn_with_retry(&pool).await?;

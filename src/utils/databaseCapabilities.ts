@@ -106,11 +106,32 @@ const SQLITE_CAPABILITIES: DatabaseCapabilities = {
   databaseObjectNoun: "database",
 };
 
+const SQLSERVER_CAPABILITIES: DatabaseCapabilities = {
+  sqlEditor: false,
+  databaseManagement: false,
+  tableBrowsing: false,
+  tableDataEditing: false,
+  schemaManagement: false,
+  routineManagement: false,
+  eventManagement: false,
+  triggerManagement: false,
+  indexManagement: false,
+  foreignKeyManagement: false,
+  sqlFileImportExport: false,
+  savedSql: false,
+  favoriteTables: false,
+  charsetAndCollation: false,
+  storageEngine: false,
+  columnReordering: false,
+  databaseObjectNoun: "schema",
+};
+
 export function getDatabaseCapabilities(
   databaseType: DatabaseType | string | null | undefined
 ): DatabaseCapabilities {
   const normalized = normalizeDatabaseType(databaseType);
   if (normalized === "postgres") return POSTGRES_CAPABILITIES;
   if (normalized === "sqlite") return SQLITE_CAPABILITIES;
+  if (normalized === "sqlserver") return SQLSERVER_CAPABILITIES;
   return MYSQL_CAPABILITIES;
 }

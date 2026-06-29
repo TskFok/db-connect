@@ -33,6 +33,9 @@ pub async fn list_routines(
             DatabasePoolHandle::Sqlite(_) => {
                 return Err(DatabasePoolHandle::sqlite_unsupported_error());
             }
+            DatabasePoolHandle::SqlServer(_) => {
+                return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+            }
         }
     };
 
@@ -148,6 +151,9 @@ pub async fn get_routine_definition(
             DatabasePoolHandle::Sqlite(_) => {
                 return Err(DatabasePoolHandle::sqlite_unsupported_error());
             }
+            DatabasePoolHandle::SqlServer(_) => {
+                return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+            }
         }
     };
 
@@ -218,6 +224,9 @@ pub async fn drop_routine(
             }
             DatabasePoolHandle::Sqlite(_) => {
                 return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            }
+            DatabasePoolHandle::SqlServer(_) => {
+                return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
             }
         }
     };

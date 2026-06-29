@@ -1,6 +1,6 @@
 use crate::crypto;
 use crate::db::connection::{ConnectionManager, DatabasePoolHandle};
-use crate::db::{postgres, sqlite};
+use crate::db::{postgres, sqlite, sqlserver};
 use crate::models::types::{
     redact_connection_secrets, ConnectionConfig, ConnectionGroup, TestResult, PASSWORD_REDACTED,
 };
@@ -530,6 +530,7 @@ pub async fn ping_connection(state: State<'_, AppState>, conn_id: String) -> Res
         Some(DatabasePoolHandle::MySql(pool)) => Ok(ConnectionManager::ping_pool(&pool).await),
         Some(DatabasePoolHandle::Postgres(handle)) => Ok(postgres::ping_pool(&handle.pool).await),
         Some(DatabasePoolHandle::Sqlite(handle)) => Ok(sqlite::ping_pool(&handle.pool).await),
+        Some(DatabasePoolHandle::SqlServer(handle)) => Ok(sqlserver::ping_pool(&handle.pool).await),
         None => Ok(false),
     }
 }
@@ -987,6 +988,70 @@ mod tests {
         assert!(json.contains("\"password\": \"secret\""));
         assert!(json.contains("\"groups\""));
         assert!(json.contains("\"connections\""));
+    }
+
+    #[test]
+    fn test_connection_transfer_json_preserves_sqlserver_type() {
+        let json = r#"{
+            "format": "db-connect.connections",
+            "version": 1,
+            "connections": [
+                {
+                    "id": "sqlserver-conn",
+                    "database_type": "sqlserver",
+                    "name": "SQL Server",
+                    "host": "sql.example.com",
+                    "port": 1433,
+                    "username": "sa",
+                    "password": null,
+                    "database": "appdb",
+                    "ssh": null
+                }
+            ],
+            "groups": []
+        }"#;
+
+        let parsed = parse_connection_transfer_json(json).expect("transfer JSON should parse");
+
+        assert_eq!(parsed.connections.len(), 1);
+        assert_eq!(parsed.connections[0].database_type, DatabaseType::SqlServer);
+        assert_eq!(parsed.connections[0].database.as_deref(), Some("appdb"));
+    }
+
+    #[test]
+    fn test_export_connection_storage_json_includes_sqlserver_type() {
+        let storage = ConnectionStorageData {
+            groups: vec![],
+            connections: vec![ConnectionConfig {
+                id: Some("sqlserver-conn".to_string()),
+                database_type: DatabaseType::SqlServer,
+                name: "SQL Server".to_string(),
+                host: "sql.example.com".to_string(),
+                port: 1433,
+                username: "sa".to_string(),
+                password: Some("secret".to_string()),
+                database: Some("appdb".to_string()),
+                sqlite_path: None,
+                ssh: None,
+                ssl_mode: Some("required".to_string()),
+                ssl_ca_path: None,
+                ssl_pkcs12_path: None,
+                ssl_pkcs12_password: None,
+                ssl_tls_hostname: None,
+                client_charset: None,
+                session_init_commands: None,
+                read_only: Some(true),
+                skip_dangerous_sql_confirm: None,
+                group_id: None,
+            }],
+        };
+
+        let json = export_connection_storage_json(&storage).expect("export should serialize");
+        let parsed = parse_connection_transfer_json(&json).expect("export should reparse");
+
+        assert!(json.contains("\"database_type\": \"sqlserver\""));
+        assert_eq!(parsed.connections[0].database_type, DatabaseType::SqlServer);
+        assert_eq!(parsed.connections[0].port, 1433);
     }
 
     #[test]

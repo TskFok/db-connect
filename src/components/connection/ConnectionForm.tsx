@@ -43,6 +43,7 @@ const DATABASE_TYPE_OPTIONS: Array<{
   { value: "mysql", label: "MySQL" },
   { value: "postgres", label: "PostgreSQL" },
   { value: "sqlite", label: "SQLite" },
+  { value: "sqlserver", label: "SQL Server" },
 ];
 
 const SSL_MODE_OPTIONS = [
@@ -93,7 +94,9 @@ export function ConnectionForm() {
       ? "PostgreSQL"
       : currentDatabaseType === "sqlite"
         ? "SQLite"
-        : "MySQL";
+        : currentDatabaseType === "sqlserver"
+          ? "SQL Server"
+          : "MySQL";
 
   // editingConnection 变化时同步表单值（解决：先点新建再点编辑时配置不显示的问题）
   useEffect(() => {
@@ -393,7 +396,11 @@ export function ConnectionForm() {
           >
             <SafeInput
               placeholder={
-                currentDatabaseType === "postgres" ? "postgres" : "root"
+                currentDatabaseType === "postgres"
+                  ? "postgres"
+                  : currentDatabaseType === "sqlserver"
+                    ? "sa"
+                    : "root"
               }
             />
           </Form.Item>
@@ -404,12 +411,19 @@ export function ConnectionForm() {
 
           <Form.Item
             name="database"
-            label={currentDatabaseType === "postgres" ? "数据库" : "默认数据库"}
+            label={
+              currentDatabaseType === "postgres" ||
+              currentDatabaseType === "sqlserver"
+                ? "数据库"
+                : "默认数据库"
+            }
           >
             <SafeInput
               placeholder={
                 currentDatabaseType === "postgres"
                   ? "PostgreSQL 物理 database，例如 postgres"
+                  : currentDatabaseType === "sqlserver"
+                    ? "SQL Server 物理 database，例如 master"
                   : "可选，连接后自动选择的数据库"
               }
             />

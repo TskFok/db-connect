@@ -38,7 +38,12 @@ describe("savedSqlConnection", () => {
     const postgres = savedSqlConnectionKey(
       baseConfig({ database_type: "postgres" })
     );
+    const sqlserver = savedSqlConnectionKey(
+      baseConfig({ database_type: "sqlserver", port: 1433, username: "sa" })
+    );
     expect(mysql).not.toBe(postgres);
+    expect(sqlserver).toMatch(/^session:sqlserver\|127\.0\.0\.1\|1433\|sa\|/);
+    expect(sqlserver).not.toBe(mysql);
   });
 
   it("savedSqlConnectionLabel 优先使用连接名称", () => {

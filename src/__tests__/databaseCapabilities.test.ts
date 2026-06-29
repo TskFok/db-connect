@@ -73,6 +73,28 @@ describe("getDatabaseCapabilities", () => {
     expect(caps.databaseObjectNoun).toBe("database");
   });
 
+  it("SQL Server Phase 1 只开放连接层，暂不开放浏览、编辑、导入导出和对象管理", () => {
+    const caps = getDatabaseCapabilities("sqlserver");
+
+    expect(caps.sqlEditor).toBe(false);
+    expect(caps.databaseManagement).toBe(false);
+    expect(caps.tableBrowsing).toBe(false);
+    expect(caps.tableDataEditing).toBe(false);
+    expect(caps.schemaManagement).toBe(false);
+    expect(caps.routineManagement).toBe(false);
+    expect(caps.eventManagement).toBe(false);
+    expect(caps.triggerManagement).toBe(false);
+    expect(caps.indexManagement).toBe(false);
+    expect(caps.foreignKeyManagement).toBe(false);
+    expect(caps.sqlFileImportExport).toBe(false);
+    expect(caps.savedSql).toBe(false);
+    expect(caps.favoriteTables).toBe(false);
+    expect(caps.charsetAndCollation).toBe(false);
+    expect(caps.storageEngine).toBe(false);
+    expect(caps.columnReordering).toBe(false);
+    expect(caps.databaseObjectNoun).toBe("schema");
+  });
+
   it("未知类型回退到 MySQL 能力集，避免静默禁用所有功能", () => {
     expect(getDatabaseCapabilities("unknown-db").tableDataEditing).toBe(true);
     expect(getDatabaseCapabilities(null).tableDataEditing).toBe(true);
