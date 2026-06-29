@@ -287,16 +287,20 @@ export function TableData() {
   const currentDatabaseType = normalizeDatabaseType(
     activeConnection?.config.database_type
   );
-  const dataEditingAllowed = !clientReadOnly && capabilities.tableDataEditing;
   /**
    * 当前表是否具备「按主键定位的写操作」前置条件：
    * - 已加载结构（避免在结构尚未到位时误判为"无主键"）
    * - 至少存在一个主键列
-   * INSERT 不依赖主键（直接 INSERT 即可），但 UPDATE / DELETE / 批量提交都需要主键来定位行，
-   * 因此在无主键表上前置禁用以保留清晰的错误提示，避免拼出无法精确定位的写 SQL。
+   * SQLite 阶段四要求无主键表不开放可视化编辑，因此新增/更新/删除统一禁用。
    */
   const hasPrimaryKeyForEdits =
     !!tableStructure && tableStructure.some((c) => c.key === "PRI");
+  const requiresPrimaryKeyForDataEditing = currentDatabaseType === "sqlite";
+  const baseDataEditingAllowed =
+    !clientReadOnly && capabilities.tableDataEditing;
+  const dataEditingAllowed =
+    baseDataEditingAllowed &&
+    (!requiresPrimaryKeyForDataEditing || hasPrimaryKeyForEdits);
   const noPrimaryKeyDisabledReason =
     "该表没有主键，无法定位行；请改用 SQL 编辑器或为表添加主键";
   const rowEditDisabledReason = !capabilities.tableDataEditing
@@ -306,7 +310,14 @@ export function TableData() {
       : !hasPrimaryKeyForEdits
         ? noPrimaryKeyDisabledReason
         : "";
-  const rowOperationsAllowed = dataEditingAllowed && hasPrimaryKeyForEdits;
+  const insertDisabledReason = !capabilities.tableDataEditing
+    ? "当前数据库类型不允许编辑表数据"
+    : clientReadOnly
+      ? "当前连接为只读模式，不允许编辑表数据"
+      : requiresPrimaryKeyForDataEditing && !hasPrimaryKeyForEdits
+        ? noPrimaryKeyDisabledReason
+        : "";
+  const rowOperationsAllowed = baseDataEditingAllowed && hasPrimaryKeyForEdits;
   const rowSelectionScopeKey = connId && database && table ? `${connId}|${database}|${table}` : "";
   const selectedRowKeys = useMemo(
     () =>
@@ -1281,15 +1292,50 @@ export function TableData() {
       let insertColumns: string[];
       let insertRows: Record<string, unknown>[];
 
-      if (hiddenColumns.size > 0 && primaryKeyColumn) {
+      if (hiddenColumns.size > 0 && primaryKeyColumns.length > 0) {
         // 有隐藏列：按主键获取 SELECT * 完整数据
         try {
-          const pkValues = selectedRows.map((r) => r[primaryKeyColumn]).filter((v) => v !== undefined);
-          if (pkValues.length === 0) {
-            messageApi.warning("无法获取选中行的主键值");
-            return;
-          }
-          const fullResult = await queryFullRows(connId, database, table, primaryKeyColumn, pkValues);
+          const fullResult = await (async () => {
+            if (primaryKeyColumns.length === 1) {
+              const pkValues = selectedRows
+                .map((r) => r[primaryKeyColumn])
+                .filter((v) => v !== undefined);
+              if (pkValues.length === 0) {
+                messageApi.warning("无法获取选中行的主键值");
+                return null;
+              }
+              return queryFullRows(
+                connId,
+                database,
+                table,
+                primaryKeyColumn,
+                pkValues
+              );
+            }
+
+            const primaryKeyRows = selectedRows
+              .map((row) => getRecordPrimaryKeys(row, primaryKeyColumns))
+              .filter((primaryKeys) =>
+                primaryKeyColumns.every(
+                  (pk) =>
+                    Object.prototype.hasOwnProperty.call(primaryKeys, pk) &&
+                    primaryKeys[pk] !== undefined
+                )
+              );
+            if (primaryKeyRows.length === 0) {
+              messageApi.warning("无法获取选中行的主键值");
+              return null;
+            }
+            return queryFullRows(
+              connId,
+              database,
+              table,
+              primaryKeyColumn,
+              [],
+              primaryKeyRows
+            );
+          })();
+          if (!fullResult) return;
           insertColumns = fullResult.columns;
           insertRows = fullResult.rows.map((row) => {
             const obj: Record<string, unknown> = {};
@@ -1672,9 +1718,7 @@ export function TableData() {
             显示不可见字符
           </Checkbox>
           <Tooltip
-            title={
-              dataEditingAllowed ? "新增行" : "当前数据库类型或连接模式不允许新增行"
-            }
+            title={dataEditingAllowed ? "新增行" : insertDisabledReason}
           >
             <Button
               icon={<PlusOutlined />}

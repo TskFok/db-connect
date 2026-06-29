@@ -50,9 +50,7 @@ export const MYSQL_DATA_TYPES = [
   },
   {
     label: "其他类型",
-    options: [
-      { label: "json", value: "json" },
-    ],
+    options: [{ label: "json", value: "json" }],
   },
 ];
 
@@ -91,11 +89,7 @@ export const LENGTH_TYPES = new Set([
 ]);
 
 /** 使用 (M,D) 精度/小数位格式的数据类型 */
-export const SCALE_TYPES = new Set([
-  "decimal",
-  "float",
-  "double",
-]);
+export const SCALE_TYPES = new Set(["decimal", "float", "double"]);
 
 /** PostgreSQL 常用数据类型分组（用于 Select 下拉框）。
  *  名称沿用 PostgreSQL 官方简称；用户可在「类型」字段中自由输入更细粒度的类型。 */
@@ -153,6 +147,23 @@ export const POSTGRES_LENGTH_TYPES = new Set([
 
 /** PostgreSQL 中支持 (M,D) 的类型 */
 export const POSTGRES_SCALE_TYPES = new Set(["numeric", "decimal"]);
+
+/** SQLite 常用类型亲和性（用于 Select 下拉框）。 */
+export const SQLITE_DATA_TYPES = [
+  {
+    label: "SQLite 类型",
+    options: [
+      { label: "INTEGER", value: "INTEGER" },
+      { label: "REAL", value: "REAL" },
+      { label: "TEXT", value: "TEXT" },
+      { label: "BLOB", value: "BLOB" },
+      { label: "NUMERIC", value: "NUMERIC" },
+    ],
+  },
+];
+
+export const SQLITE_LENGTH_TYPES = new Set<string>();
+export const SQLITE_SCALE_TYPES = new Set<string>();
 
 /** 解析后的列类型结构 */
 export interface ParsedColumnType {

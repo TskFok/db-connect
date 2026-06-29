@@ -829,6 +829,54 @@ describe("TableData 行勾选隔离", () => {
     expect(dialogBody?.style.overflowY).toBe("auto");
   });
 
+  it("无主键表不开放新增行入口", async () => {
+    useConnectionStore.setState({
+      activeConnection: {
+        ...mockActiveConnection,
+        config: {
+          ...mockActiveConnection.config,
+          database_type: "sqlite" as const,
+          sqlite_path: "/tmp/test.sqlite",
+        },
+      },
+    });
+    useDatabaseStore.setState({
+      selectedTable: "comments",
+      tableStructure: commentsStructure,
+      selectedTableInfo: {
+        name: "comments",
+        table_type: "TABLE",
+        engine: "InnoDB",
+        rows: 2,
+        data_length: 0,
+        index_length: null,
+        comment: "",
+      },
+    });
+    useTableDataStore.setState({
+      activeTableKey: "conn-1|mydb|comments",
+      columns: commentsSnapshot.columns,
+      rows: commentsSnapshot.rows,
+      total: commentsSnapshot.total,
+      page: commentsSnapshot.page,
+      pageSize: commentsSnapshot.pageSize,
+      sortFields: commentsSnapshot.sortFields,
+      whereClause: commentsSnapshot.whereClause,
+      filterRows: commentsSnapshot.filterRows,
+      dataError: commentsSnapshot.dataError,
+      executionTime: commentsSnapshot.executionTime,
+      lastSelectColumns: commentsSnapshot.lastSelectColumns,
+    });
+
+    render(<TableData />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Comment A")).toBeInTheDocument();
+    });
+
+    expect(screen.getByLabelText("新增行")).toBeDisabled();
+  });
+
   it("有筛选条件时：查询 SQL 不在表格上方内联展示，可通过旁侧图标弹窗查看并复制", async () => {
     const filteredUsersSnapshot = {
       ...usersSnapshot,

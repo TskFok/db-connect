@@ -1,4 +1,13 @@
-import { useState, useCallback, useEffect, useMemo, createContext, useContext, type CSSProperties, type HTMLAttributes } from "react";
+import {
+  useState,
+  useCallback,
+  useEffect,
+  useMemo,
+  createContext,
+  useContext,
+  type CSSProperties,
+  type HTMLAttributes,
+} from "react";
 import {
   Table,
   Tag,
@@ -44,7 +53,11 @@ import { CSS } from "@dnd-kit/utilities";
 import { useShallow } from "zustand/react/shallow";
 import { useDatabaseStore } from "../../stores/databaseStore";
 import { useConnectionStore } from "../../stores/connectionStore";
-import type { ColumnInfo, AlterColumnRequest, AddColumnRequest } from "../../types";
+import type {
+  ColumnInfo,
+  AlterColumnRequest,
+  AddColumnRequest,
+} from "../../types";
 import {
   MYSQL_DATA_TYPES,
   UNSIGNED_TYPES,
@@ -53,6 +66,9 @@ import {
   POSTGRES_DATA_TYPES,
   POSTGRES_LENGTH_TYPES,
   POSTGRES_SCALE_TYPES,
+  SQLITE_DATA_TYPES,
+  SQLITE_LENGTH_TYPES,
+  SQLITE_SCALE_TYPES,
   parseColumnType,
   buildColumnType,
 } from "../../utils/columnTypeUtils";
@@ -65,6 +81,7 @@ import { useClientReadOnly } from "../../hooks/useClientReadOnly";
 import { useAntTableScrollY } from "../../hooks/useAntTableScrollY";
 import { formatBytes } from "../../utils/formatBytes";
 import { getDatabaseCapabilities } from "../../utils/databaseCapabilities";
+import { normalizeDatabaseType } from "../../utils/connectionConfig";
 
 const { Text } = Typography;
 
@@ -91,7 +108,10 @@ const ENGINE_OPTIONS = [
 const MYSQL_EXTRA_OPTIONS = [
   { label: "(无)", value: "" },
   { label: "auto_increment", value: "auto_increment" },
-  { label: "ON UPDATE CURRENT_TIMESTAMP", value: "ON UPDATE CURRENT_TIMESTAMP" },
+  {
+    label: "ON UPDATE CURRENT_TIMESTAMP",
+    value: "ON UPDATE CURRENT_TIMESTAMP",
+  },
 ];
 
 /** PostgreSQL 仅暴露"(无)"；identity/generated 通过类型/SQL 显式管理。 */
@@ -214,7 +234,9 @@ export function TableStructure() {
 
   // 列编辑 Modal 状态
   const [columnModalOpen, setColumnModalOpen] = useState(false);
-  const [columnModalMode, setColumnModalMode] = useState<"edit" | "add">("edit");
+  const [columnModalMode, setColumnModalMode] = useState<"edit" | "add">(
+    "edit"
+  );
   const [editingColumnName, setEditingColumnName] = useState<string>("");
   const [columnForm] = Form.useForm();
   const [columnLoading, setColumnLoading] = useState(false);
@@ -227,21 +249,42 @@ export function TableStructure() {
     () => getDatabaseCapabilities(activeConnection?.config.database_type),
     [activeConnection?.config.database_type]
   );
-  const structureReadOnly = clientReadOnly || isView || !capabilities.schemaManagement;
+  const databaseType = normalizeDatabaseType(
+    activeConnection?.config.database_type
+  );
+  const isSqlite = databaseType === "sqlite";
+  const structureReadOnly =
+    clientReadOnly || isView || !capabilities.schemaManagement;
   const showEngine = capabilities.storageEngine;
   const columnReorderingEnabled = capabilities.columnReordering;
-  const dataTypeOptions = showEngine ? MYSQL_DATA_TYPES : POSTGRES_DATA_TYPES;
-  const lengthSet = showEngine ? LENGTH_TYPES : POSTGRES_LENGTH_TYPES;
-  const scaleSet = showEngine ? SCALE_TYPES : POSTGRES_SCALE_TYPES;
+  const dataTypeOptions = isSqlite
+    ? SQLITE_DATA_TYPES
+    : showEngine
+      ? MYSQL_DATA_TYPES
+      : POSTGRES_DATA_TYPES;
+  const lengthSet = isSqlite
+    ? SQLITE_LENGTH_TYPES
+    : showEngine
+      ? LENGTH_TYPES
+      : POSTGRES_LENGTH_TYPES;
+  const scaleSet = isSqlite
+    ? SQLITE_SCALE_TYPES
+    : showEngine
+      ? SCALE_TYPES
+      : POSTGRES_SCALE_TYPES;
   const unsignedSet = showEngine ? UNSIGNED_TYPES : new Set<string>();
-  const extraOptions = showEngine ? MYSQL_EXTRA_OPTIONS : POSTGRES_EXTRA_OPTIONS;
+  const extraOptions = showEngine
+    ? MYSQL_EXTRA_OPTIONS
+    : POSTGRES_EXTRA_OPTIONS;
+  const canAlterColumnDefinition = !isSqlite;
 
   const [structureOrderOverride, setStructureOrderOverride] = useState<
     ColumnInfo[] | null
   >(null);
   // PostgreSQL 不支持原生重排列；即便有写权限也禁用拖拽，避免误导用户。
   const dragSortEnabled = !structureReadOnly && columnReorderingEnabled;
-  const dragRowDisabled = structureReadOnly || structureLoading || !columnReorderingEnabled;
+  const dragRowDisabled =
+    structureReadOnly || structureLoading || !columnReorderingEnabled;
   const { containerRef: tableContainerRef, scrollY: tableScrollY } =
     useAntTableScrollY({
       remeasureKey: `${tableContentActiveTab}|${selectedDatabase}|${selectedTable}`,
@@ -276,7 +319,11 @@ export function TableStructure() {
       const oldIndex = items.findIndex((c) => c.name === activeId);
       const newIndex = items.findIndex((c) => c.name === overId);
       if (oldIndex < 0 || newIndex < 0) return;
-      const result = computeReorderPlacementAfterMove(items, oldIndex, newIndex);
+      const result = computeReorderPlacementAfterMove(
+        items,
+        oldIndex,
+        newIndex
+      );
       if (!result) return;
 
       const placementText = describeColumnReorderPlacement(result.placement);
@@ -339,7 +386,8 @@ export function TableStructure() {
         messageApi.success(`表名已修改为 "${newName}"`);
       }
 
-      const currentTable = newName && newName !== selectedTable ? newName : selectedTable;
+      const currentTable =
+        newName && newName !== selectedTable ? newName : selectedTable;
       if (showEngine && newEngine && newEngine !== selectedTableInfo?.engine) {
         await alterTableEngine(connId, database, currentTable, newEngine);
         messageApi.success(`引擎已修改为 "${newEngine}"`);
@@ -351,27 +399,40 @@ export function TableStructure() {
     } finally {
       setEditLoading(false);
     }
-  }, [connId, database, selectedTable, selectedTableInfo, editForm, renameTable, alterTableEngine, messageApi, showEngine]);
+  }, [
+    connId,
+    database,
+    selectedTable,
+    selectedTableInfo,
+    editForm,
+    renameTable,
+    alterTableEngine,
+    messageApi,
+    showEngine,
+  ]);
 
   // 打开列编辑 Modal
-  const handleOpenColumnEdit = useCallback((column: ColumnInfo) => {
-    setColumnModalMode("edit");
-    setEditingColumnName(column.name);
-    const parsed = parseColumnType(column.column_type);
-    columnForm.setFieldsValue({
-      name: column.name,
-      data_type: parsed.dataType,
-      length: parsed.length,
-      scale: parsed.scale,
-      unsigned: parsed.unsigned,
-      nullable: column.nullable,
-      is_primary: column.key === "PRI",
-      default_value: column.default_value ?? "",
-      extra: column.extra,
-      comment: column.comment,
-    });
-    setColumnModalOpen(true);
-  }, [columnForm]);
+  const handleOpenColumnEdit = useCallback(
+    (column: ColumnInfo) => {
+      setColumnModalMode("edit");
+      setEditingColumnName(column.name);
+      const parsed = parseColumnType(column.column_type);
+      columnForm.setFieldsValue({
+        name: column.name,
+        data_type: parsed.dataType,
+        length: parsed.length,
+        scale: parsed.scale,
+        unsigned: parsed.unsigned,
+        nullable: column.nullable,
+        is_primary: column.key === "PRI",
+        default_value: column.default_value ?? "",
+        extra: column.extra,
+        comment: column.comment,
+      });
+      setColumnModalOpen(true);
+    },
+    [columnForm]
+  );
 
   // 打开新增列 Modal
   const handleOpenAddColumn = useCallback(() => {
@@ -379,8 +440,8 @@ export function TableStructure() {
     setEditingColumnName("");
     columnForm.setFieldsValue({
       name: "",
-      data_type: "varchar",
-      length: "255",
+      data_type: isSqlite ? "TEXT" : "varchar",
+      length: isSqlite ? "" : "255",
       scale: "",
       unsigned: false,
       nullable: true,
@@ -390,7 +451,7 @@ export function TableStructure() {
       after_column: null,
     });
     setColumnModalOpen(true);
-  }, [columnForm]);
+  }, [columnForm, isSqlite]);
 
   // 保存列 (编辑/新增)
   const handleColumnSave = useCallback(async () => {
@@ -399,7 +460,10 @@ export function TableStructure() {
       const values = await columnForm.validateFields();
       setColumnLoading(true);
 
-      const defaultVal = values.default_value?.trim() === "" ? null : values.default_value?.trim() ?? null;
+      const defaultVal =
+        values.default_value?.trim() === ""
+          ? null
+          : (values.default_value?.trim() ?? null);
       const columnType = buildColumnType(
         values.data_type,
         values.length || "",
@@ -440,160 +504,175 @@ export function TableStructure() {
     } finally {
       setColumnLoading(false);
     }
-  }, [connId, database, table, columnForm, columnModalMode, editingColumnName, alterColumn, addColumn, messageApi]);
+  }, [
+    connId,
+    database,
+    table,
+    columnForm,
+    columnModalMode,
+    editingColumnName,
+    alterColumn,
+    addColumn,
+    messageApi,
+  ]);
 
   // 删除列
-  const handleDropColumn = useCallback(async (columnName: string) => {
-    if (!connId || !database || !table) return;
-    try {
-      await dropColumn(connId, database, table, columnName);
-      messageApi.success(`列 "${columnName}" 已删除`);
-    } catch (e) {
-      messageApi.error(toErrorMessage(e));
-    }
-  }, [connId, database, table, dropColumn, messageApi]);
+  const handleDropColumn = useCallback(
+    async (columnName: string) => {
+      if (!connId || !database || !table) return;
+      try {
+        await dropColumn(connId, database, table, columnName);
+        messageApi.success(`列 "${columnName}" 已删除`);
+      } catch (e) {
+        messageApi.error(toErrorMessage(e));
+      }
+    },
+    [connId, database, table, dropColumn, messageApi]
+  );
 
   /** 列表格的列定义 */
   const columns = useMemo((): ColumnsType<ColumnInfo> => {
     const base: ColumnsType<ColumnInfo> = [
-    {
-      title: "列名",
-      dataIndex: "name",
-      key: "name",
-      width: 180,
-      render: (name: string, record: ColumnInfo) => (
-        <Space size={4}>
-          {record.key === "PRI" && (
-            <KeyOutlined style={{ color: "#faad14", fontSize: 12 }} />
-          )}
-          <Text strong style={{ color: "var(--text-primary)" }}>
-            {name}
-          </Text>
-        </Space>
-      ),
-    },
-    {
-      title: "类型",
-      dataIndex: "column_type",
-      key: "column_type",
-      width: 180,
-      render: (type: string) => (
-        <Text code style={{ fontSize: 12 }}>
-          {type}
-        </Text>
-      ),
-    },
-    {
-      title: "可空",
-      dataIndex: "nullable",
-      key: "nullable",
-      width: 80,
-      align: "center",
-      render: (nullable: boolean) =>
-        nullable ? (
-          <Tag color="default">YES</Tag>
-        ) : (
-          <Tag color="blue">NO</Tag>
+      {
+        title: "列名",
+        dataIndex: "name",
+        key: "name",
+        width: 180,
+        render: (name: string, record: ColumnInfo) => (
+          <Space size={4}>
+            {record.key === "PRI" && (
+              <KeyOutlined style={{ color: "#faad14", fontSize: 12 }} />
+            )}
+            <Text strong style={{ color: "var(--text-primary)" }}>
+              {name}
+            </Text>
+          </Space>
         ),
-    },
-    {
-      title: "键",
-      dataIndex: "key",
-      key: "key",
-      width: 80,
-      align: "center",
-      render: (key: string) => {
-        if (!key) return "-";
-        const colorMap: Record<string, string> = {
-          PRI: "gold",
-          UNI: "green",
-          MUL: "cyan",
-        };
-        return <Tag color={colorMap[key] || "default"}>{key}</Tag>;
       },
-    },
-    {
-      title: "默认值",
-      dataIndex: "default_value",
-      key: "default_value",
-      width: 140,
-      render: (value: string | null) =>
-        value !== null ? (
-          <Text style={{ fontSize: 12 }}>{value || "''"}</Text>
-        ) : (
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            NULL
+      {
+        title: "类型",
+        dataIndex: "column_type",
+        key: "column_type",
+        width: 180,
+        render: (type: string) => (
+          <Text code style={{ fontSize: 12 }}>
+            {type}
           </Text>
         ),
-    },
-    {
-      title: "额外",
-      dataIndex: "extra",
-      key: "extra",
-      width: 160,
-      render: (extra: string) =>
-        extra ? (
-          <Tag color="purple" style={{ fontSize: 11 }}>
-            {extra}
-          </Tag>
-        ) : (
-          "-"
-        ),
-    },
-    {
-      title: "注释",
-      dataIndex: "comment",
-      key: "comment",
-      ellipsis: true,
-      render: (comment: string) =>
-        comment ? (
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {comment}
-          </Text>
-        ) : (
-          "-"
-        ),
-    },
-    {
-      title: "操作",
-      key: "actions",
-      width: 100,
-      align: "center",
-      render: (_: unknown, record: ColumnInfo) => (
-        <Space size={4}>
-          <Tooltip
-            title={clientReadOnly ? "只读连接无法编辑列" : "编辑列"}
-          >
-            <Button
-              type="link"
-              size="small"
-              icon={<EditOutlined />}
+      },
+      {
+        title: "可空",
+        dataIndex: "nullable",
+        key: "nullable",
+        width: 80,
+        align: "center",
+        render: (nullable: boolean) =>
+          nullable ? (
+            <Tag color="default">YES</Tag>
+          ) : (
+            <Tag color="blue">NO</Tag>
+          ),
+      },
+      {
+        title: "键",
+        dataIndex: "key",
+        key: "key",
+        width: 80,
+        align: "center",
+        render: (key: string) => {
+          if (!key) return "-";
+          const colorMap: Record<string, string> = {
+            PRI: "gold",
+            UNI: "green",
+            MUL: "cyan",
+          };
+          return <Tag color={colorMap[key] || "default"}>{key}</Tag>;
+        },
+      },
+      {
+        title: "默认值",
+        dataIndex: "default_value",
+        key: "default_value",
+        width: 140,
+        render: (value: string | null) =>
+          value !== null ? (
+            <Text style={{ fontSize: 12 }}>{value || "''"}</Text>
+          ) : (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              NULL
+            </Text>
+          ),
+      },
+      {
+        title: "额外",
+        dataIndex: "extra",
+        key: "extra",
+        width: 160,
+        render: (extra: string) =>
+          extra ? (
+            <Tag color="purple" style={{ fontSize: 11 }}>
+              {extra}
+            </Tag>
+          ) : (
+            "-"
+          ),
+      },
+      {
+        title: "注释",
+        dataIndex: "comment",
+        key: "comment",
+        ellipsis: true,
+        render: (comment: string) =>
+          comment ? (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {comment}
+            </Text>
+          ) : (
+            "-"
+          ),
+      },
+      {
+        title: "操作",
+        key: "actions",
+        width: 100,
+        align: "center",
+        render: (_: unknown, record: ColumnInfo) => (
+          <Space size={4}>
+            {canAlterColumnDefinition && (
+              <Tooltip title={clientReadOnly ? "只读连接无法编辑列" : "编辑列"}>
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<EditOutlined />}
+                  aria-label="编辑列"
+                  disabled={structureReadOnly}
+                  onClick={() => handleOpenColumnEdit(record)}
+                />
+              </Tooltip>
+            )}
+            <Popconfirm
+              title={`确定删除列 "${record.name}" 吗?`}
+              description="此操作不可撤销，列数据将永久丢失"
+              onConfirm={() => handleDropColumn(record.name)}
+              okText="删除"
+              cancelText="取消"
+              okButtonProps={{ danger: true }}
               disabled={structureReadOnly}
-              onClick={() => handleOpenColumnEdit(record)}
-            />
-          </Tooltip>
-          <Popconfirm
-            title={`确定删除列 "${record.name}" 吗?`}
-            description="此操作不可撤销，列数据将永久丢失"
-            onConfirm={() => handleDropColumn(record.name)}
-            okText="删除"
-            cancelText="取消"
-            okButtonProps={{ danger: true }}
-            disabled={structureReadOnly}
-          >
-            <Tooltip title={clientReadOnly ? "只读连接无法删除列" : "删除列"}>
-              <Button
-                type="link"
-                size="small"
-                danger
-                icon={<DeleteOutlined />}
-                disabled={structureReadOnly}
-              />
-            </Tooltip>
-          </Popconfirm>
-        </Space>
-      ),
-    },
+            >
+              <Tooltip title={clientReadOnly ? "只读连接无法删除列" : "删除列"}>
+                <Button
+                  type="link"
+                  size="small"
+                  danger
+                  icon={<DeleteOutlined />}
+                  aria-label="删除列"
+                  disabled={structureReadOnly}
+                />
+              </Tooltip>
+            </Popconfirm>
+          </Space>
+        ),
+      },
     ];
 
     const withoutActionsForView = isView
@@ -621,6 +700,7 @@ export function TableStructure() {
     isView,
     dragSortEnabled,
     structureReadOnly,
+    canAlterColumnDefinition,
     clientReadOnly,
     handleOpenColumnEdit,
     handleDropColumn,
@@ -703,9 +783,7 @@ export function TableStructure() {
         }
         extra={
           !isView && (
-            <Tooltip
-              title={clientReadOnly ? "只读连接无法新增列" : undefined}
-            >
+            <Tooltip title={clientReadOnly ? "只读连接无法新增列" : undefined}>
               <Button
                 type="primary"
                 size="small"
@@ -718,7 +796,12 @@ export function TableStructure() {
             </Tooltip>
           )
         }
-        style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+        }}
         styles={{
           body: {
             flex: 1,
@@ -751,7 +834,9 @@ export function TableStructure() {
                   loading={structureLoading}
                   pagination={false}
                   size="small"
-                  scroll={tableScrollY != null ? { y: tableScrollY } : undefined}
+                  scroll={
+                    tableScrollY != null ? { y: tableScrollY } : undefined
+                  }
                   style={{ fontSize: 13 }}
                   components={{
                     body: {
@@ -828,7 +913,11 @@ export function TableStructure() {
 
       {/* 列编辑/新增 Modal */}
       <Modal
-        title={columnModalMode === "edit" ? `编辑列 "${editingColumnName}"` : "新增列"}
+        title={
+          columnModalMode === "edit"
+            ? `编辑列 "${editingColumnName}"`
+            : "新增列"
+        }
         open={columnModalOpen}
         onOk={handleColumnSave}
         onCancel={() => setColumnModalOpen(false)}
@@ -856,7 +945,10 @@ export function TableStructure() {
               options={dataTypeOptions}
               showSearch
               filterOption={(input, option) => {
-                const opt = option as { value?: string; options?: { value: string; label: string }[] };
+                const opt = option as {
+                  value?: string;
+                  options?: { value: string; label: string }[];
+                };
                 if (opt.value) {
                   return opt.value.toLowerCase().includes(input.toLowerCase());
                 }
@@ -916,49 +1008,33 @@ export function TableStructure() {
               );
             }}
           </Form.Item>
-          <Form.Item
-            name="nullable"
-            label="允许 NULL"
-            valuePropName="checked"
-          >
+          <Form.Item name="nullable" label="允许 NULL" valuePropName="checked">
             <Switch />
           </Form.Item>
-          {columnModalMode === "edit" && (
-            <Form.Item
-              name="is_primary"
-              label="主键"
-              valuePropName="checked"
-            >
+          {columnModalMode === "edit" && !isSqlite && (
+            <Form.Item name="is_primary" label="主键" valuePropName="checked">
               <Switch />
             </Form.Item>
           )}
-          <Form.Item
-            name="default_value"
-            label="默认值"
-          >
+          <Form.Item name="default_value" label="默认值">
             <SafeInput placeholder="留空表示无默认值, 输入 NULL 表示默认 NULL, CURRENT_TIMESTAMP 等" />
           </Form.Item>
-          <Form.Item
-            name="extra"
-            label="额外属性"
-          >
-            <Select
-              placeholder="选择额外属性"
-              options={extraOptions}
-              allowClear
-            />
-          </Form.Item>
-          <Form.Item
-            name="comment"
-            label="注释"
-          >
-            <SafeInput placeholder="列注释 (可选)" />
-          </Form.Item>
-          {columnModalMode === "add" && (
-            <Form.Item
-              name="after_column"
-              label="位置 (在哪个列之后)"
-            >
+          {!isSqlite && (
+            <Form.Item name="extra" label="额外属性">
+              <Select
+                placeholder="选择额外属性"
+                options={extraOptions}
+                allowClear
+              />
+            </Form.Item>
+          )}
+          {!isSqlite && (
+            <Form.Item name="comment" label="注释">
+              <SafeInput placeholder="列注释 (可选)" />
+            </Form.Item>
+          )}
+          {columnModalMode === "add" && !isSqlite && (
+            <Form.Item name="after_column" label="位置 (在哪个列之后)">
               <Select
                 placeholder="默认添加到末尾"
                 allowClear

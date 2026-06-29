@@ -788,15 +788,27 @@ export async function queryFullRows(
   database: string,
   table: string,
   primaryKeyColumn: string,
-  primaryKeyValues: unknown[]
+  primaryKeyValues: unknown[],
+  primaryKeys?: Record<string, unknown>[]
 ): Promise<QueryResult> {
-  return invoke<QueryResult>("query_full_rows", {
+  const args: {
+    connId: string;
+    database: string;
+    table: string;
+    primaryKeyColumn: string;
+    primaryKeyValues: unknown[];
+    primaryKeys?: Record<string, unknown>[];
+  } = {
     connId,
     database,
     table,
     primaryKeyColumn,
     primaryKeyValues,
-  });
+  };
+  if (primaryKeys !== undefined) {
+    args.primaryKeys = primaryKeys;
+  }
+  return invoke<QueryResult>("query_full_rows", args);
 }
 
 /**

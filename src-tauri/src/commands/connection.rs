@@ -1025,9 +1025,23 @@ mod tests {
             .expect("export should encrypt");
 
         assert!(encrypted.contains("\"format\": \"db-connect.connections.encrypted\""));
-        assert!(!encrypted.contains("\"password\": \"secret\""));
-        assert!(!encrypted.contains("Local"));
-        assert!(!encrypted.contains("Dev"));
+        let envelope: EncryptedConnectionTransferFile =
+            serde_json::from_str(&encrypted).expect("encrypted envelope should parse");
+        assert!(!envelope.data.is_empty());
+        let plaintext_json =
+            export_connection_storage_json(&storage).expect("plaintext export should serialize");
+        assert_ne!(envelope.data, BASE64.encode(plaintext_json.as_bytes()));
+
+        let public_metadata = serde_json::to_string_pretty(&EncryptedConnectionTransferFile {
+            salt: String::new(),
+            nonce: String::new(),
+            data: String::new(),
+            ..envelope
+        })
+        .expect("public metadata should serialize");
+        assert!(!public_metadata.contains("\"password\": \"secret\""));
+        assert!(!public_metadata.contains("Local"));
+        assert!(!public_metadata.contains("Dev"));
 
         let decrypted = decrypt_connection_transfer_json(&encrypted, "迁移密码")
             .expect("password should decrypt");

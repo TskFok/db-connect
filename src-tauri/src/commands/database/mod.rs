@@ -685,8 +685,8 @@ pub async fn rename_table(
         DatabasePoolHandle::Postgres(handle) => {
             return postgres_ddl::rename_table(&handle.pool, &database, &old_name, &new_name).await;
         }
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
+        DatabasePoolHandle::Sqlite(handle) => {
+            return sqlite::rename_table(&handle.pool, &database, &old_name, &new_name).await;
         }
     };
 
@@ -767,8 +767,8 @@ pub async fn get_primary_keys(
         DatabasePoolHandle::Postgres(handle) => {
             return postgres::fetch_primary_keys(&handle.pool, &database, &table).await;
         }
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        DatabasePoolHandle::Sqlite(handle) => {
+            return sqlite::get_primary_keys(&handle.pool, &database, &table).await;
         }
     };
 
@@ -808,8 +808,8 @@ pub async fn drop_table(
         DatabasePoolHandle::Postgres(handle) => {
             return postgres_ddl::drop_table(&handle.pool, &database, &table).await;
         }
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
+        DatabasePoolHandle::Sqlite(handle) => {
+            return sqlite::drop_table(&handle.pool, &database, &table).await;
         }
     };
 
@@ -842,8 +842,8 @@ pub async fn truncate_table(
         DatabasePoolHandle::Postgres(handle) => {
             return postgres_ddl::truncate_table(&handle.pool, &database, &table).await;
         }
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
+        DatabasePoolHandle::Sqlite(handle) => {
+            return sqlite::truncate_table(&handle.pool, &database, &table).await;
         }
     };
 
@@ -884,8 +884,8 @@ pub async fn create_table(
         DatabasePoolHandle::Postgres(handle) => {
             return postgres_ddl::create_table(&handle.pool, &database, &request).await;
         }
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
+        DatabasePoolHandle::Sqlite(handle) => {
+            return sqlite::create_table(&handle.pool, &database, &request).await;
         }
     };
 

@@ -21,21 +21,19 @@ import {
   POSTGRES_DATA_TYPES,
   POSTGRES_LENGTH_TYPES,
   POSTGRES_SCALE_TYPES,
+  SQLITE_DATA_TYPES,
+  SQLITE_LENGTH_TYPES,
+  SQLITE_SCALE_TYPES,
 } from "../../utils/columnTypeUtils";
 import { formColumnToDef } from "../../utils/createTableFormUtils";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { getDatabaseCapabilities } from "../../utils/databaseCapabilities";
+import { normalizeDatabaseType } from "../../utils/connectionConfig";
 
 const { Text } = Typography;
 
 /** 常用 MySQL 引擎列表 */
-const ENGINE_OPTIONS = [
-  "InnoDB",
-  "MyISAM",
-  "MEMORY",
-  "CSV",
-  "ARCHIVE",
-];
+const ENGINE_OPTIONS = ["InnoDB", "MyISAM", "MEMORY", "CSV", "ARCHIVE"];
 
 /** 常用额外属性列表（MySQL） */
 const MYSQL_EXTRA_OPTIONS = [
@@ -72,13 +70,31 @@ export function CreateTableModal({
     () => getDatabaseCapabilities(activeConnection?.config.database_type),
     [activeConnection?.config.database_type]
   );
+  const databaseType = normalizeDatabaseType(
+    activeConnection?.config.database_type
+  );
+  const isSqlite = databaseType === "sqlite";
   const showEngine = capabilities.storageEngine;
-  const dataTypeOptions = showEngine ? MYSQL_DATA_TYPES : POSTGRES_DATA_TYPES;
-  const lengthSet = showEngine ? LENGTH_TYPES : POSTGRES_LENGTH_TYPES;
-  const scaleSet = showEngine ? SCALE_TYPES : POSTGRES_SCALE_TYPES;
+  const dataTypeOptions = isSqlite
+    ? SQLITE_DATA_TYPES
+    : showEngine
+      ? MYSQL_DATA_TYPES
+      : POSTGRES_DATA_TYPES;
+  const lengthSet = isSqlite
+    ? SQLITE_LENGTH_TYPES
+    : showEngine
+      ? LENGTH_TYPES
+      : POSTGRES_LENGTH_TYPES;
+  const scaleSet = isSqlite
+    ? SQLITE_SCALE_TYPES
+    : showEngine
+      ? SCALE_TYPES
+      : POSTGRES_SCALE_TYPES;
   const unsignedSet = showEngine ? UNSIGNED_TYPES : new Set<string>();
-  const extraOptions = showEngine ? MYSQL_EXTRA_OPTIONS : POSTGRES_EXTRA_OPTIONS;
-  const defaultDataType = showEngine ? "varchar" : "varchar";
+  const extraOptions = showEngine
+    ? MYSQL_EXTRA_OPTIONS
+    : POSTGRES_EXTRA_OPTIONS;
+  const defaultDataType = isSqlite ? "TEXT" : "varchar";
   const idDefault = showEngine
     ? {
         name: "id",
@@ -92,19 +108,32 @@ export function CreateTableModal({
         extra: "auto_increment",
         comment: "",
       }
-    : {
-        // PostgreSQL 默认主键使用 bigserial（隐含 NOT NULL + 自动序列）
-        name: "id",
-        data_type: "bigserial",
-        length: "",
-        scale: "",
-        unsigned: false,
-        nullable: false,
-        is_primary: true,
-        default_value: "",
-        extra: "",
-        comment: "",
-      };
+    : isSqlite
+      ? {
+          name: "id",
+          data_type: "INTEGER",
+          length: "",
+          scale: "",
+          unsigned: false,
+          nullable: false,
+          is_primary: true,
+          default_value: "",
+          extra: "",
+          comment: "",
+        }
+      : {
+          // PostgreSQL 默认主键使用 bigserial（隐含 NOT NULL + 自动序列）
+          name: "id",
+          data_type: "bigserial",
+          length: "",
+          scale: "",
+          unsigned: false,
+          nullable: false,
+          is_primary: true,
+          default_value: "",
+          extra: "",
+          comment: "",
+        };
   const [form] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -115,16 +144,26 @@ export function CreateTableModal({
       setSubmitting(true);
       setError(null);
 
-      const columns: CreateTableColumnDef[] = (
+      const rawColumns: CreateTableColumnDef[] = (
         values.columns as Record<string, unknown>[]
       ).map(formColumnToDef);
+      const columns = isSqlite
+        ? rawColumns.map((col) => ({
+            ...col,
+            extra: "",
+            comment: "",
+          }))
+        : rawColumns;
 
       const primaryKeys: string[] = (values.columns || [])
         .map((col: Record<string, unknown>) => ({
           name: ((col.name as string) || "").trim(),
           isPrimary: col.is_primary === true,
         }))
-        .filter((col: { name: string; isPrimary: boolean }) => col.isPrimary && col.name.length > 0)
+        .filter(
+          (col: { name: string; isPrimary: boolean }) =>
+            col.isPrimary && col.name.length > 0
+        )
         .map((col: { name: string; isPrimary: boolean }) => col.name);
 
       const request: CreateTableRequest = {
@@ -133,7 +172,7 @@ export function CreateTableModal({
         primary_keys: primaryKeys,
         // PostgreSQL 不需要 engine，后端读取此字段在 PG 路径下被忽略
         engine: showEngine ? values.engine || "InnoDB" : "",
-        comment: (values.comment || "").trim(),
+        comment: isSqlite ? "" : (values.comment || "").trim(),
       };
 
       await onCreateTable(connId, database, request);
@@ -199,7 +238,11 @@ export function CreateTableModal({
         }}
       >
         {/* 基本信息 */}
-        <Space size={16} align="start" style={{ width: "100%", marginBottom: 8 }}>
+        <Space
+          size={16}
+          align="start"
+          style={{ width: "100%", marginBottom: 8 }}
+        >
           <Form.Item
             name="table_name"
             label="表名"
@@ -216,11 +259,7 @@ export function CreateTableModal({
           </Form.Item>
 
           {showEngine && (
-            <Form.Item
-              name="engine"
-              label="存储引擎"
-              style={{ width: 160 }}
-            >
+            <Form.Item name="engine" label="存储引擎" style={{ width: 160 }}>
               <Select
                 options={ENGINE_OPTIONS.map((e) => ({ label: e, value: e }))}
                 showSearch
@@ -228,9 +267,11 @@ export function CreateTableModal({
             </Form.Item>
           )}
 
-          <Form.Item name="comment" label="表注释" style={{ width: 300 }}>
-            <SafeInput placeholder="可选" />
-          </Form.Item>
+          {!isSqlite && (
+            <Form.Item name="comment" label="表注释" style={{ width: 300 }}>
+              <SafeInput placeholder="可选" />
+            </Form.Item>
+          )}
         </Space>
 
         {/* 列定义 */}
@@ -271,12 +312,12 @@ export function CreateTableModal({
                   <span style={{ width: 130 }}>类型 *</span>
                   <span style={{ width: 70 }}>长度</span>
                   <span style={{ width: 70 }}>小数位</span>
-                  <span style={{ width: 50 }}>UNSIGNED</span>
+                  {!isSqlite && <span style={{ width: 50 }}>UNSIGNED</span>}
                   <span style={{ width: 50 }}>可空</span>
                   <span style={{ width: 50 }}>主键</span>
                   <span style={{ width: 100 }}>默认值</span>
-                  <span style={{ width: 110 }}>额外</span>
-                  <span style={{ width: 260 }}>注释</span>
+                  {!isSqlite && <span style={{ width: 110 }}>额外</span>}
+                  {!isSqlite && <span style={{ width: 260 }}>注释</span>}
                 </div>
 
                 <div style={{ maxHeight: 320, overflow: "auto" }}>
@@ -322,15 +363,24 @@ export function CreateTableModal({
                             options={dataTypeOptions}
                             showSearch
                             filterOption={(input, option) => {
-                              const opt = option as { value?: string; options?: { value: string; label: string }[] };
+                              const opt = option as {
+                                value?: string;
+                                options?: { value: string; label: string }[];
+                              };
                               if (opt.value) {
-                                return opt.value.toLowerCase().includes(input.toLowerCase());
+                                return opt.value
+                                  .toLowerCase()
+                                  .includes(input.toLowerCase());
                               }
                               if (opt.options) {
                                 return opt.options.some(
                                   (o) =>
-                                    o.value.toLowerCase().includes(input.toLowerCase()) ||
-                                    o.label.toLowerCase().includes(input.toLowerCase())
+                                    o.value
+                                      .toLowerCase()
+                                      .includes(input.toLowerCase()) ||
+                                    o.label
+                                      .toLowerCase()
+                                      .includes(input.toLowerCase())
                                 );
                               }
                               return false;
@@ -376,21 +426,31 @@ export function CreateTableModal({
                         </Form.Item>
 
                         {/* UNSIGNED */}
-                        <Form.Item
-                          {...restField}
-                          name={[name, "unsigned"]}
-                          valuePropName="checked"
-                          style={{ marginBottom: 0, width: 50, textAlign: "center" }}
-                        >
-                          <Checkbox disabled={!showUnsigned} />
-                        </Form.Item>
+                        {!isSqlite && (
+                          <Form.Item
+                            {...restField}
+                            name={[name, "unsigned"]}
+                            valuePropName="checked"
+                            style={{
+                              marginBottom: 0,
+                              width: 50,
+                              textAlign: "center",
+                            }}
+                          >
+                            <Checkbox disabled={!showUnsigned} />
+                          </Form.Item>
+                        )}
 
                         {/* 可空 */}
                         <Form.Item
                           {...restField}
                           name={[name, "nullable"]}
                           valuePropName="checked"
-                          style={{ marginBottom: 0, width: 50, textAlign: "center" }}
+                          style={{
+                            marginBottom: 0,
+                            width: 50,
+                            textAlign: "center",
+                          }}
                         >
                           <Switch size="small" />
                         </Form.Item>
@@ -400,7 +460,11 @@ export function CreateTableModal({
                           {...restField}
                           name={[name, "is_primary"]}
                           valuePropName="checked"
-                          style={{ marginBottom: 0, width: 50, textAlign: "center" }}
+                          style={{
+                            marginBottom: 0,
+                            width: 50,
+                            textAlign: "center",
+                          }}
                         >
                           <Switch size="small" />
                         </Form.Item>
@@ -415,26 +479,30 @@ export function CreateTableModal({
                         </Form.Item>
 
                         {/* 额外属性 */}
-                        <Form.Item
-                          {...restField}
-                          name={[name, "extra"]}
-                          style={{ marginBottom: 0, width: 110 }}
-                        >
-                          <Select
-                            placeholder="额外"
-                            options={extraOptions}
-                            allowClear
-                          />
-                        </Form.Item>
+                        {!isSqlite && (
+                          <Form.Item
+                            {...restField}
+                            name={[name, "extra"]}
+                            style={{ marginBottom: 0, width: 110 }}
+                          >
+                            <Select
+                              placeholder="额外"
+                              options={extraOptions}
+                              allowClear
+                            />
+                          </Form.Item>
+                        )}
 
                         {/* 注释 */}
-                        <Form.Item
-                          {...restField}
-                          name={[name, "comment"]}
-                          style={{ marginBottom: 0, width: 260 }}
-                        >
-                          <SafeInput placeholder="注释" />
-                        </Form.Item>
+                        {!isSqlite && (
+                          <Form.Item
+                            {...restField}
+                            name={[name, "comment"]}
+                            style={{ marginBottom: 0, width: 260 }}
+                          >
+                            <SafeInput placeholder="注释" />
+                          </Form.Item>
+                        )}
 
                         {/* 删除行 */}
                         {fields.length > 1 && (
@@ -459,7 +527,7 @@ export function CreateTableModal({
                     add({
                       name: "",
                       data_type: defaultDataType,
-                      length: "255",
+                      length: isSqlite ? "" : "255",
                       scale: "",
                       unsigned: false,
                       nullable: true,
@@ -479,7 +547,6 @@ export function CreateTableModal({
             )}
           </Form.List>
         </Form.Item>
-
       </Form>
     </Modal>
   );

@@ -1,8 +1,8 @@
 //! 列级操作命令：新增 / 修改 / 删除列，以及列定义 SQL 片段构建。
 
 use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
-use crate::db::postgres_ddl;
 use crate::db::sql_utils::{esc_id, esc_str, validate_column_extra, validate_column_type};
+use crate::db::{postgres_ddl, sqlite};
 use crate::models::types::{AddColumnRequest, AlterColumnPlacement, AlterColumnRequest};
 use crate::AppState;
 use mysql_async::prelude::*;
@@ -55,17 +55,20 @@ pub async fn alter_column(
     table: String,
     request: AlterColumnRequest,
 ) -> Result<(), String> {
-    validate_column_type(&request.column_type)?;
-    validate_column_extra(&request.extra)?;
-
     let pool_handle = {
         let mut manager = state.connection_manager.lock().await;
         manager.get_database_pool_for_write(&conn_id)?
     };
 
     let pool = match pool_handle {
-        DatabasePoolHandle::MySql(pool) => pool,
+        DatabasePoolHandle::MySql(pool) => {
+            validate_column_type(&request.column_type)?;
+            validate_column_extra(&request.extra)?;
+            pool
+        }
         DatabasePoolHandle::Postgres(handle) => {
+            validate_column_type(&request.column_type)?;
+            validate_column_extra(&request.extra)?;
             // PostgreSQL 不支持像 MySQL 那样的 FIRST/AFTER 列重排；存在 column_placement 时返回明确提示。
             if request.column_placement.is_some() {
                 return Err(
@@ -75,7 +78,7 @@ pub async fn alter_column(
             return postgres_ddl::alter_column(&handle.pool, &database, &table, &request).await;
         }
         DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+            return Err("SQLite 暂不支持修改列定义，请通过新建表迁移数据完成该操作".to_string());
         }
     };
 
@@ -206,22 +209,26 @@ pub async fn add_column(
     table: String,
     request: AddColumnRequest,
 ) -> Result<(), String> {
-    validate_column_type(&request.column_type)?;
-    validate_column_extra(&request.extra)?;
-
     let pool_handle = {
         let mut manager = state.connection_manager.lock().await;
         manager.get_database_pool_for_write(&conn_id)?
     };
 
     let pool = match pool_handle {
-        DatabasePoolHandle::MySql(pool) => pool,
+        DatabasePoolHandle::MySql(pool) => {
+            validate_column_type(&request.column_type)?;
+            validate_column_extra(&request.extra)?;
+            pool
+        }
         DatabasePoolHandle::Postgres(handle) => {
+            validate_column_type(&request.column_type)?;
+            validate_column_extra(&request.extra)?;
             // PostgreSQL 总是末尾添加列；`after_column` 在 PG 下不生效，提前丢弃避免误导。
             return postgres_ddl::add_column(&handle.pool, &database, &table, &request).await;
         }
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        DatabasePoolHandle::Sqlite(handle) => {
+            validate_column_type(&request.column_type)?;
+            return sqlite::add_column(&handle.pool, &database, &table, &request).await;
         }
     };
 
@@ -275,8 +282,8 @@ pub async fn drop_column(
         DatabasePoolHandle::Postgres(handle) => {
             return postgres_ddl::drop_column(&handle.pool, &database, &table, &column_name).await;
         }
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        DatabasePoolHandle::Sqlite(handle) => {
+            return sqlite::drop_column(&handle.pool, &database, &table, &column_name).await;
         }
     };
 

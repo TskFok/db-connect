@@ -753,8 +753,8 @@ pub async fn insert_row(
         DatabasePoolHandle::Postgres(handle) => {
             return postgres::insert_row(&handle.pool, &database, &table, values).await;
         }
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
+        DatabasePoolHandle::Sqlite(handle) => {
+            return sqlite::insert_row(&handle.pool, &database, &table, values).await;
         }
     };
 
@@ -917,8 +917,9 @@ pub async fn update_row(
             return postgres::update_row(&handle.pool, &database, &table, primary_keys, updates)
                 .await;
         }
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
+        DatabasePoolHandle::Sqlite(handle) => {
+            return sqlite::update_row(&handle.pool, &database, &table, primary_keys, updates)
+                .await;
         }
     };
 
@@ -976,8 +977,15 @@ pub async fn batch_update_rows(
                 .collect();
             return postgres::batch_update_rows(&handle.pool, &database, &table, pg_rows).await;
         }
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
+        DatabasePoolHandle::Sqlite(handle) => {
+            let sqlite_rows: Vec<sqlite::SqliteRowUpdate> = rows
+                .into_iter()
+                .map(|r| sqlite::SqliteRowUpdate {
+                    primary_keys: r.primary_keys,
+                    updates: r.updates,
+                })
+                .collect();
+            return sqlite::batch_update_rows(&handle.pool, &database, &table, sqlite_rows).await;
         }
     };
 
@@ -1039,8 +1047,8 @@ pub async fn delete_rows(
         DatabasePoolHandle::Postgres(handle) => {
             return postgres::delete_rows(&handle.pool, &database, &table, primary_keys).await;
         }
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
+        DatabasePoolHandle::Sqlite(handle) => {
+            return sqlite::delete_rows(&handle.pool, &database, &table, primary_keys).await;
         }
     };
 
@@ -1065,6 +1073,7 @@ pub async fn query_full_rows(
     table: String,
     primary_key_column: String,
     primary_key_values: Vec<JsonValue>,
+    primary_keys: Option<Vec<HashMap<String, JsonValue>>>,
 ) -> Result<QueryResult, String> {
     let pool_handle = {
         let mut manager = state.connection_manager.lock().await;
@@ -1083,8 +1092,24 @@ pub async fn query_full_rows(
             )
             .await;
         }
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_unsupported_error());
+        DatabasePoolHandle::Sqlite(handle) => {
+            if let Some(primary_keys) = primary_keys {
+                return sqlite::query_full_rows_by_primary_keys(
+                    &handle.pool,
+                    &database,
+                    &table,
+                    primary_keys,
+                )
+                .await;
+            }
+            return sqlite::query_full_rows(
+                &handle.pool,
+                &database,
+                &table,
+                &primary_key_column,
+                primary_key_values,
+            )
+            .await;
         }
     };
 
