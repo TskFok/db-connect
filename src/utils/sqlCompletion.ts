@@ -190,8 +190,47 @@ export const SQLITE_KEYWORDS = [
   "DETACH",
 ];
 
+/** SQL Server 常用关键词（用于补全） */
+export const SQLSERVER_KEYWORDS = [
+  ...MYSQL_KEYWORDS.filter(
+    (kw) =>
+      ![
+        "AUTO_INCREMENT",
+        "CHANGE",
+        "CHARSET",
+        "DESCRIBE",
+        "ENGINE",
+        "FIRST",
+        "IF",
+        "MODIFY",
+        "REPLACE",
+        "USE",
+      ].includes(kw)
+  ),
+  "TOP",
+  "OFFSET",
+  "FETCH",
+  "FETCH NEXT",
+  "ROW",
+  "ROWS",
+  "WITH",
+  "MERGE",
+  "OUTPUT",
+  "NVARCHAR",
+  "NCHAR",
+  "BIT",
+  "MONEY",
+  "UNIQUEIDENTIFIER",
+  "DATETIME2",
+  "DATETIMEOFFSET",
+  "SYSNAME",
+  "GO",
+  "SET SHOWPLAN_TEXT",
+  "SET SHOWPLAN_XML",
+];
+
 /** SQL 方言：决定标识符引用方式与关键词集合 */
-export type SqlDialect = "mysql" | "postgres" | "sqlite";
+export type SqlDialect = "mysql" | "postgres" | "sqlite" | "sqlserver";
 
 export interface SqlCompletionOptions {
   /** 数据库方言，默认 mysql */
@@ -202,14 +241,18 @@ export interface SqlCompletionOptions {
 export function getSqlKeywords(dialect: SqlDialect = "mysql"): string[] {
   if (dialect === "postgres") return POSTGRES_KEYWORDS;
   if (dialect === "sqlite") return SQLITE_KEYWORDS;
+  if (dialect === "sqlserver") return SQLSERVER_KEYWORDS;
   return MYSQL_KEYWORDS;
 }
 
-/** 按方言对标识符加引号：MySQL 反引号、PostgreSQL 双引号 */
+/** 按方言对标识符加引号：MySQL 反引号、PostgreSQL/SQLite 双引号、SQL Server 方括号 */
 export function quoteIdentifier(
   name: string,
   dialect: SqlDialect = "mysql"
 ): string {
+  if (dialect === "sqlserver") {
+    return "[" + name.replace(/\]/g, "]]") + "]";
+  }
   if (dialect === "postgres" || dialect === "sqlite") {
     return '"' + name.replace(/"/g, '""') + '"';
   }
@@ -247,8 +290,11 @@ export function buildSqlSuggestions(
       ? "PostgreSQL 关键词"
       : dialect === "sqlite"
         ? "SQLite 关键词"
-        : "MySQL 关键词";
-  const dbDetail = dialect === "postgres" ? "schema" : "数据库";
+        : dialect === "sqlserver"
+          ? "SQL Server 关键词"
+          : "MySQL 关键词";
+  const dbDetail =
+    dialect === "postgres" || dialect === "sqlserver" ? "schema" : "数据库";
 
   const suggestions: Monaco.languages.CompletionItem[] = [];
 

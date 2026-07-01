@@ -1,11 +1,17 @@
+use crate::db::dialect::SQLSERVER_DIALECT;
 use crate::db::sql_utils::{
-    sqlserver_count_query, sqlserver_id, sqlserver_paginated_select, sqlserver_str,
-    validate_where_clause,
+    sqlserver_count_query, sqlserver_id, sqlserver_paginated_select,
+    sqlserver_sql_editor_allowed_on_read_only_connection, sqlserver_str, validate_where_clause,
 };
-use crate::models::types::{ColumnInfo, ConnectionConfig, QueryResult, TableInfo};
+use crate::models::types::{
+    ColumnInfo, ConnectionConfig, QueryResult, SessionInfo, SqlCompletionColumn,
+    SqlCompletionMetadata, SqlCompletionTable, SqlExecuteResult, TableInfo,
+};
 use bb8::{Pool, PooledConnection};
 use bb8_tiberius::ConnectionManager as SqlServerConnectionManager;
+use futures_util::TryStreamExt;
 use serde_json::Value as JsonValue;
+use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 use tiberius::{AuthMethod, ColumnData, Config as TiberiusConfig, EncryptionLevel, Row};
 
@@ -15,6 +21,7 @@ type SqlServerPooledConnection<'a> = PooledConnection<'a, SqlServerConnectionMan
 const JS_MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
 const JS_MIN_SAFE_INTEGER: i64 = -9_007_199_254_740_991;
 const DAYS_0001_TO_1970: i64 = 719_162;
+const MAX_EXECUTE_SQL_SELECT_ROWS: usize = 100_000;
 
 #[derive(Clone)]
 pub struct SqlServerPoolHandle {
@@ -533,6 +540,317 @@ pub async fn query_table_data(
     })
 }
 
+pub async fn run_sql_on_pool(
+    pool: &SqlServerPool,
+    sql: &str,
+    read_only: bool,
+    start: Instant,
+) -> Result<SqlExecuteResult, String> {
+    if read_only && !sqlserver_sql_editor_allowed_on_read_only_connection(sql) {
+        return Err(
+            "当前连接为只读模式，仅允许 SELECT/WITH SELECT/EXPLAIN/SHOWPLAN 等读操作".to_string(),
+        );
+    }
+
+    let mut client = get_client_with_retry(pool).await?;
+    if SQLSERVER_DIALECT.sql_editor_returns_result_set(sql) {
+        return materialize_limited_sql(&mut client, sql, start).await;
+    }
+
+    if read_only {
+        return Err("当前连接为只读模式，不允许执行 DML/DDL".to_string());
+    }
+
+    let params: [&dyn tiberius::ToSql; 0] = [];
+    let affected = client
+        .execute(sql, &params)
+        .await
+        .map_err(|e| normalize_sqlserver_error("执行 SQL 失败", e.to_string()))?
+        .total();
+    let elapsed = start.elapsed().as_millis() as u64;
+
+    Ok(SqlExecuteResult {
+        result_type: "modify".to_string(),
+        columns: None,
+        rows: None,
+        affected_rows: Some(affected),
+        message: format!("执行成功, 影响 {} 行 (耗时 {}ms)", affected, elapsed),
+        execution_time_ms: elapsed,
+    })
+}
+
+async fn materialize_limited_sql(
+    client: &mut SqlServerPooledConnection<'_>,
+    sql: &str,
+    start: Instant,
+) -> Result<SqlExecuteResult, String> {
+    let mut stream = client
+        .simple_query(sql)
+        .await
+        .map_err(|e| normalize_sqlserver_error("执行查询失败", e.to_string()))?;
+
+    let columns = stream
+        .columns()
+        .await
+        .map_err(|e| normalize_sqlserver_error("读取查询列失败", e.to_string()))?
+        .map(|columns| {
+            columns
+                .iter()
+                .map(|column| column.name().to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let mut rows = Vec::new();
+    let mut row_stream = stream.into_row_stream();
+    while let Some(row) = row_stream
+        .try_next()
+        .await
+        .map_err(|e| normalize_sqlserver_error("读取查询结果失败", e.to_string()))?
+    {
+        if rows.len() >= MAX_EXECUTE_SQL_SELECT_ROWS {
+            return Err(format!(
+                "查询结果超过最大行数 {}（与 Excel 导出行上限一致），请使用 TOP、OFFSET/FETCH 或缩小范围后重试",
+                MAX_EXECUTE_SQL_SELECT_ROWS
+            ));
+        }
+        rows.push(row_to_json(&row));
+    }
+
+    let elapsed = start.elapsed().as_millis() as u64;
+    let row_count = rows.len();
+    Ok(SqlExecuteResult {
+        result_type: "select".to_string(),
+        columns: Some(columns),
+        rows: Some(rows),
+        affected_rows: None,
+        message: format!("返回 {} 行 (耗时 {}ms)", row_count, elapsed),
+        execution_time_ms: elapsed,
+    })
+}
+
+fn row_to_json(row: &Row) -> Vec<JsonValue> {
+    row.cells()
+        .map(|(_, value)| sqlserver_column_data_to_json(value))
+        .collect()
+}
+
+pub(crate) fn sql_completion_metadata_sql(schema: &str) -> String {
+    format!(
+        "SELECT o.name AS table_name, \
+                c.name AS column_name, \
+                ty.name AS type_name, \
+                CAST(c.max_length AS int) AS max_length, \
+                CAST(c.precision AS int) AS precision_value, \
+                CAST(c.scale AS int) AS scale_value, \
+                CAST(COALESCE(ty.is_user_defined, 0) AS bit) AS is_user_defined \
+         FROM sys.objects o \
+         JOIN sys.schemas s ON s.schema_id = o.schema_id \
+         LEFT JOIN sys.columns c ON c.object_id = o.object_id \
+         LEFT JOIN sys.types ty ON ty.user_type_id = c.user_type_id \
+         WHERE s.name = N{} \
+           AND o.type IN ('U', 'V') \
+           AND o.is_ms_shipped = 0 \
+         ORDER BY o.name, c.column_id",
+        sqlserver_str(schema)
+    )
+}
+
+pub async fn get_sql_completion_metadata(
+    pool: &SqlServerPool,
+    database: Option<String>,
+) -> Result<SqlCompletionMetadata, String> {
+    let databases = list_schemas(pool).await?;
+    let Some(schema) = database
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+    else {
+        return Ok(SqlCompletionMetadata {
+            databases,
+            tables: Vec::new(),
+            columns: Vec::new(),
+        });
+    };
+
+    let mut client = get_client_with_retry(pool).await?;
+    let rows = client
+        .simple_query(sql_completion_metadata_sql(&schema))
+        .await
+        .map_err(|e| normalize_sqlserver_error("查询 SQL 补全元数据失败", e.to_string()))?
+        .into_first_result()
+        .await
+        .map_err(|e| normalize_sqlserver_error("读取 SQL 补全元数据失败", e.to_string()))?;
+
+    let mut seen_tables = BTreeSet::new();
+    let mut tables = Vec::new();
+    let mut columns = Vec::new();
+
+    for row in rows {
+        let table_name = row_string(&row, "table_name");
+        if table_name.is_empty() {
+            continue;
+        }
+        if seen_tables.insert(table_name.clone()) {
+            tables.push(SqlCompletionTable {
+                name: table_name.clone(),
+            });
+        }
+        let Some(column_name) = row.get::<&str, _>("column_name").map(str::to_string) else {
+            continue;
+        };
+        let data_type = row.get::<&str, _>("type_name").map(|type_name| {
+            format_sqlserver_column_type(
+                type_name,
+                row.get::<i32, _>("max_length"),
+                row.get::<i32, _>("precision_value"),
+                row.get::<i32, _>("scale_value"),
+                row.get::<bool, _>("is_user_defined").unwrap_or(false),
+            )
+        });
+        columns.push(SqlCompletionColumn {
+            table: table_name,
+            name: column_name,
+            data_type,
+        });
+    }
+
+    Ok(SqlCompletionMetadata {
+        databases,
+        tables,
+        columns,
+    })
+}
+
+pub(crate) fn session_info_sql() -> &'static str {
+    "SELECT CONVERT(nvarchar(max), @@VERSION) AS version, \
+            CONVERT(nvarchar(256), @@SERVERNAME) AS hostname, \
+            DB_NAME() AS database_name, \
+            CAST(@@SPID AS bigint) AS connection_id, \
+            CAST(CASE WHEN DATABASEPROPERTYEX(DB_NAME(), 'Updateability') = 'READ_ONLY' THEN 1 ELSE 0 END AS bit) AS server_read_only, \
+            CONVERT(nvarchar(16), DATENAME(TzOffset, SYSDATETIMEOFFSET())) AS time_zone"
+}
+
+pub(crate) fn grant_write_capable_sql() -> &'static str {
+    "SELECT CAST(CASE WHEN EXISTS ( \
+                SELECT 1 \
+                FROM fn_my_permissions(NULL, 'DATABASE') \
+                WHERE permission_name IN ( \
+                    'ALTER', 'CONTROL', 'CREATE TABLE', 'CREATE VIEW', 'CREATE PROCEDURE', \
+                    'DELETE', 'EXECUTE', 'INSERT', 'REFERENCES', 'TAKE OWNERSHIP', 'UPDATE' \
+                ) \
+            ) THEN 1 ELSE 0 END AS bit) AS grant_write_capable"
+}
+
+pub async fn get_session_info(
+    pool: &SqlServerPool,
+    _database: Option<String>,
+    read_only: bool,
+) -> Result<SessionInfo, String> {
+    let mut client = get_client_with_retry(pool).await?;
+    let row = client
+        .simple_query(session_info_sql())
+        .await
+        .map_err(|e| normalize_sqlserver_error("读取会话信息失败", e.to_string()))?
+        .into_row()
+        .await
+        .map_err(|e| normalize_sqlserver_error("解析会话信息失败", e.to_string()))?
+        .ok_or_else(|| "无法读取 SQL Server 会话信息".to_string())?;
+
+    let server_read_only = read_only || row.get::<bool, _>("server_read_only").unwrap_or(false);
+    let grant_write_capable = if server_read_only {
+        false
+    } else {
+        fetch_grant_write_capable(&mut client).await
+    };
+
+    Ok(SessionInfo {
+        version: row_string(&row, "version"),
+        hostname: row_string(&row, "hostname"),
+        server_read_only,
+        max_execution_time_ms: 0,
+        time_zone: row_string(&row, "time_zone"),
+        database: row
+            .get::<&str, _>("database_name")
+            .map(str::to_string)
+            .filter(|s| !s.is_empty()),
+        connection_id: row
+            .get::<i64, _>("connection_id")
+            .and_then(|v| u64::try_from(v).ok())
+            .unwrap_or(0),
+        grant_write_capable,
+    })
+}
+
+async fn fetch_grant_write_capable(client: &mut SqlServerPooledConnection<'_>) -> bool {
+    let row = match client.simple_query(grant_write_capable_sql()).await {
+        Ok(stream) => match stream.into_row().await {
+            Ok(row) => row,
+            Err(_) => return true,
+        },
+        Err(_) => return true,
+    };
+    row.and_then(|row| row.get::<bool, _>("grant_write_capable"))
+        .unwrap_or(true)
+}
+
+#[cfg(test)]
+pub(crate) fn build_showplan_text_sql(sql: &str) -> String {
+    let trimmed = sql.trim().trim_end_matches(';').trim();
+    format!(
+        "SET SHOWPLAN_TEXT ON;\n{};\nSET SHOWPLAN_TEXT OFF;",
+        trimmed
+    )
+}
+
+pub async fn explain_sql_on_pool(
+    pool: &SqlServerPool,
+    sql: &str,
+    analyze: bool,
+    start: Instant,
+) -> Result<SqlExecuteResult, String> {
+    if analyze {
+        return Err("SQL Server 暂不支持 EXPLAIN ANALYZE".to_string());
+    }
+
+    let trimmed = sql.trim().trim_end_matches(';').trim();
+    if trimmed.is_empty() {
+        return Err("SQL 语句不能为空".to_string());
+    }
+
+    let mut client = get_client_with_retry(pool).await?;
+    drain_simple_query(&mut client, "SET SHOWPLAN_TEXT ON", "开启执行计划失败").await?;
+    let result = materialize_limited_sql(&mut client, trimmed, start).await;
+    let close_result =
+        drain_simple_query(&mut client, "SET SHOWPLAN_TEXT OFF", "关闭执行计划失败").await;
+
+    match (result, close_result) {
+        (Ok(result), Ok(())) => Ok(result),
+        (Err(err), _) => Err(err),
+        (Ok(_), Err(err)) => Err(err),
+    }
+}
+
+async fn drain_simple_query(
+    client: &mut SqlServerPooledConnection<'_>,
+    sql: &str,
+    context: &str,
+) -> Result<(), String> {
+    client
+        .simple_query(sql)
+        .await
+        .map_err(|e| normalize_sqlserver_error(context, e.to_string()))?
+        .into_results()
+        .await
+        .map_err(|e| normalize_sqlserver_error(context, e.to_string()))?;
+    Ok(())
+}
+
+pub async fn cancel_query() -> Result<bool, String> {
+    Err("SQL Server 暂不支持取消当前查询".to_string())
+}
+
 fn build_where_sql(where_clause: &Option<String>) -> Result<String, String> {
     match where_clause {
         Some(w) if !w.trim().is_empty() => {
@@ -932,5 +1250,49 @@ mod tests {
             ))),
             serde_json::json!("[binary 3 bytes]")
         );
+    }
+
+    #[test]
+    fn completion_metadata_sql_uses_single_catalog_query() {
+        let sql = sql_completion_metadata_sql("dbo");
+
+        assert!(sql.contains("FROM sys.objects o"));
+        assert!(sql.contains("JOIN sys.schemas s"));
+        assert!(sql.contains("LEFT JOIN sys.columns c"));
+        assert!(sql.contains("LEFT JOIN sys.types ty"));
+        assert!(sql.contains("WHERE s.name = N'dbo'"));
+        assert!(sql.contains("o.type IN ('U', 'V')"));
+        assert!(sql.contains("ORDER BY o.name, c.column_id"));
+    }
+
+    #[test]
+    fn session_info_sql_reads_sqlserver_metadata() {
+        let sql = session_info_sql();
+
+        assert!(sql.contains("@@VERSION"));
+        assert!(sql.contains("@@SERVERNAME"));
+        assert!(sql.contains("DB_NAME()"));
+        assert!(sql.contains("@@SPID"));
+        assert!(sql.contains("DATABASEPROPERTYEX(DB_NAME(), 'Updateability')"));
+    }
+
+    #[test]
+    fn grant_write_capable_sql_uses_fn_my_permissions_once() {
+        let sql = grant_write_capable_sql();
+
+        assert!(sql.contains("fn_my_permissions"));
+        assert!(sql.contains("INSERT"));
+        assert!(sql.contains("UPDATE"));
+        assert!(sql.contains("DELETE"));
+    }
+
+    #[test]
+    fn explain_sql_wraps_statement_with_showplan_text_without_analyze() {
+        let sql = build_showplan_text_sql("SELECT * FROM dbo.users");
+
+        assert!(sql.starts_with("SET SHOWPLAN_TEXT ON;"));
+        assert!(sql.contains("SELECT * FROM dbo.users"));
+        assert!(sql.ends_with("SET SHOWPLAN_TEXT OFF;"));
+        assert!(!sql.contains("ANALYZE"));
     }
 }

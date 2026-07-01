@@ -18,6 +18,7 @@ use tokio::sync::Mutex;
 pub enum RunningQuery {
     MySqlThread(u64),
     Postgres(Box<PostgresCancelHandle>),
+    SqlServerUnsupported,
 }
 
 pub struct AppState {

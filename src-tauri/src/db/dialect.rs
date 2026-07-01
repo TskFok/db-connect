@@ -465,6 +465,247 @@ impl SqlServerDialect {
             where_sql
         )
     }
+
+    pub fn sql_editor_allowed_on_read_only_connection(&self, sql: &str) -> bool {
+        self.sql_editor_returns_result_set(sql)
+    }
+
+    pub fn sql_editor_returns_result_set(&self, sql: &str) -> bool {
+        let upper = self.trim_leading_statement_separators(sql).to_uppercase();
+        if upper.is_empty() {
+            return false;
+        }
+        if self.showplan_statement_is_readonly(&upper) {
+            return true;
+        }
+        if self.starts_with_keyword(&upper, "WITH") {
+            let Some(main_select_idx) = self.with_statement_main_select_start(&upper) else {
+                return false;
+            };
+            return !self.with_statement_contains_write(&upper)
+                && !self.select_statement_contains_write(&upper[main_select_idx..]);
+        }
+        if self.starts_with_keyword(&upper, "SELECT") {
+            return !self.select_statement_contains_write(&upper);
+        }
+        self.starts_with_keyword(&upper, "EXPLAIN")
+    }
+
+    fn trim_leading_statement_separators<'a>(&self, sql: &'a str) -> &'a str {
+        sql.trim_start().trim_start_matches(';').trim_start()
+    }
+
+    fn showplan_statement_is_readonly(&self, upper_sql: &str) -> bool {
+        let statements = upper_sql
+            .split(';')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>();
+        if statements.len() < 3 {
+            return false;
+        }
+
+        let first = statements.first().copied().unwrap_or_default();
+        let last = statements.last().copied().unwrap_or_default();
+        let showplan_text = first == "SET SHOWPLAN_TEXT ON" && last == "SET SHOWPLAN_TEXT OFF";
+        let showplan_xml = first == "SET SHOWPLAN_XML ON" && last == "SET SHOWPLAN_XML OFF";
+        if !showplan_text && !showplan_xml {
+            return false;
+        }
+
+        let inner = statements[1..statements.len() - 1].join("; ");
+        self.sql_editor_returns_result_set(&inner)
+    }
+
+    fn select_statement_contains_write(&self, upper_sql: &str) -> bool {
+        let normalized = upper_sql.split_whitespace().collect::<Vec<_>>().join(" ");
+        let padded = format!(" {} ", normalized);
+        padded.contains(" INTO ")
+    }
+
+    fn with_statement_contains_write(&self, upper_sql: &str) -> bool {
+        let normalized = upper_sql.split_whitespace().collect::<Vec<_>>().join(" ");
+        let compact = normalized.replace("( ", "(");
+        [
+            " AS (INSERT ",
+            " AS (UPDATE ",
+            " AS (DELETE ",
+            " AS (MERGE ",
+            " AS MATERIALIZED (INSERT ",
+            " AS MATERIALIZED (UPDATE ",
+            " AS MATERIALIZED (DELETE ",
+            " AS MATERIALIZED (MERGE ",
+            " AS NOT MATERIALIZED (INSERT ",
+            " AS NOT MATERIALIZED (UPDATE ",
+            " AS NOT MATERIALIZED (DELETE ",
+            " AS NOT MATERIALIZED (MERGE ",
+        ]
+        .iter()
+        .any(|marker| compact.contains(marker))
+    }
+
+    fn with_statement_main_select_start(&self, upper_sql: &str) -> Option<usize> {
+        let Some(mut idx) = self.consume_keyword(upper_sql, 0, "WITH") else {
+            return None;
+        };
+
+        loop {
+            idx = self.skip_ws(upper_sql, idx);
+            let Some(next) = self.skip_identifier(upper_sql, idx) else {
+                return None;
+            };
+            idx = self.skip_ws(upper_sql, next);
+
+            if upper_sql.as_bytes().get(idx) == Some(&b'(') {
+                let Some(next) = self.skip_balanced_parentheses(upper_sql, idx) else {
+                    return None;
+                };
+                idx = self.skip_ws(upper_sql, next);
+            }
+
+            let Some(next) = self.consume_keyword(upper_sql, idx, "AS") else {
+                return None;
+            };
+            idx = self.skip_ws(upper_sql, next);
+
+            if upper_sql.as_bytes().get(idx) != Some(&b'(') {
+                return None;
+            }
+            let Some(next) = self.skip_balanced_parentheses(upper_sql, idx) else {
+                return None;
+            };
+            idx = self.skip_ws(upper_sql, next);
+
+            if upper_sql.as_bytes().get(idx) == Some(&b',') {
+                idx += 1;
+                continue;
+            }
+            break;
+        }
+
+        let main_sql = upper_sql[idx..].trim_start();
+        if self.starts_with_keyword(main_sql, "SELECT") {
+            Some(upper_sql.len() - main_sql.len())
+        } else {
+            None
+        }
+    }
+
+    fn starts_with_keyword(&self, sql: &str, keyword: &str) -> bool {
+        self.consume_keyword(sql, 0, keyword).is_some()
+    }
+
+    fn consume_keyword(&self, sql: &str, idx: usize, keyword: &str) -> Option<usize> {
+        let rest = sql.get(idx..)?;
+        if !rest.starts_with(keyword) {
+            return None;
+        }
+        let end = idx + keyword.len();
+        match sql.as_bytes().get(end) {
+            Some(b) if b.is_ascii_alphanumeric() || *b == b'_' => None,
+            _ => Some(end),
+        }
+    }
+
+    fn skip_ws(&self, sql: &str, mut idx: usize) -> usize {
+        let bytes = sql.as_bytes();
+        while bytes.get(idx).is_some_and(|b| b.is_ascii_whitespace()) {
+            idx += 1;
+        }
+        idx
+    }
+
+    fn skip_identifier(&self, sql: &str, idx: usize) -> Option<usize> {
+        match sql.as_bytes().get(idx)? {
+            b'"' | b'\'' => self.skip_quoted(sql, idx, *sql.as_bytes().get(idx)?),
+            b'[' => self.skip_bracket_quoted(sql, idx),
+            _ => {
+                let bytes = sql.as_bytes();
+                let mut end = idx;
+                while bytes
+                    .get(end)
+                    .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'$')
+                {
+                    end += 1;
+                }
+                if end == idx {
+                    None
+                } else {
+                    Some(end)
+                }
+            }
+        }
+    }
+
+    fn skip_balanced_parentheses(&self, sql: &str, idx: usize) -> Option<usize> {
+        let bytes = sql.as_bytes();
+        if bytes.get(idx) != Some(&b'(') {
+            return None;
+        }
+
+        let mut depth = 0usize;
+        let mut i = idx;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'\'' | b'"' => {
+                    i = self.skip_quoted(sql, i, bytes[i])?;
+                    continue;
+                }
+                b'[' => {
+                    i = self.skip_bracket_quoted(sql, i)?;
+                    continue;
+                }
+                b'(' => depth += 1,
+                b')' => {
+                    depth = depth.checked_sub(1)?;
+                    if depth == 0 {
+                        return Some(i + 1);
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
+    fn skip_quoted(&self, sql: &str, idx: usize, quote: u8) -> Option<usize> {
+        let bytes = sql.as_bytes();
+        if bytes.get(idx) != Some(&quote) {
+            return None;
+        }
+        let mut i = idx + 1;
+        while i < bytes.len() {
+            if bytes[i] == quote {
+                if bytes.get(i + 1) == Some(&quote) {
+                    i += 2;
+                    continue;
+                }
+                return Some(i + 1);
+            }
+            i += 1;
+        }
+        None
+    }
+
+    fn skip_bracket_quoted(&self, sql: &str, idx: usize) -> Option<usize> {
+        let bytes = sql.as_bytes();
+        if bytes.get(idx) != Some(&b'[') {
+            return None;
+        }
+        let mut i = idx + 1;
+        while i < bytes.len() {
+            if bytes[i] == b']' {
+                if bytes.get(i + 1) == Some(&b']') {
+                    i += 2;
+                    continue;
+                }
+                return Some(i + 1);
+            }
+            i += 1;
+        }
+        None
+    }
 }
 
 pub const SQLSERVER_DIALECT: SqlServerDialect = SqlServerDialect;
@@ -634,5 +875,39 @@ mod tests {
             SQLSERVER_DIALECT.count_query("sales", "orders", " WHERE [status] = 'paid'"),
             "SELECT COUNT_BIG(*) as cnt FROM [sales].[orders] WHERE [status] = 'paid'"
         );
+    }
+
+    #[test]
+    fn sqlserver_read_only_sql_editor_allows_safe_read_statements_only() {
+        assert!(SQLSERVER_DIALECT.sql_editor_allowed_on_read_only_connection("SELECT 1"));
+        assert!(SQLSERVER_DIALECT
+            .sql_editor_allowed_on_read_only_connection("WITH x AS (SELECT 1) SELECT * FROM x"));
+        assert!(
+            SQLSERVER_DIALECT.sql_editor_allowed_on_read_only_connection(
+                "SET SHOWPLAN_TEXT ON; SELECT * FROM users; SET SHOWPLAN_TEXT OFF"
+            )
+        );
+        assert!(SQLSERVER_DIALECT
+            .sql_editor_allowed_on_read_only_connection("SELECT * FROM sys.tables"));
+
+        for sql in [
+            "INSERT INTO users(id) VALUES (1)",
+            "UPDATE users SET name = 'x'",
+            "DELETE FROM users",
+            "MERGE dbo.users AS target USING dbo.tmp AS source ON 1 = 1 WHEN MATCHED THEN UPDATE SET name = source.name",
+            "TRUNCATE TABLE users",
+            "DROP TABLE users",
+            "ALTER TABLE users ADD note nvarchar(100)",
+            "CREATE TABLE users(id int)",
+            "EXEC sp_who2",
+            "WITH changed AS (UPDATE users SET name = 'x' OUTPUT inserted.id) SELECT * FROM changed",
+            "WITH x AS (SELECT 1) DELETE FROM users",
+            "WITH x AS (SELECT 1 AS id) SELECT * INTO new_users FROM x",
+        ] {
+            assert!(
+                !SQLSERVER_DIALECT.sql_editor_allowed_on_read_only_connection(sql),
+                "{sql} should be rejected on read-only connections"
+            );
+        }
     }
 }

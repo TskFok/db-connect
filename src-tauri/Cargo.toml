@@ -26,6 +26,7 @@ tiberius = { version = "0.12.3", default-features = false, features = ["tds73", 
 bb8 = "0.9"
 bb8-tiberius = { version = "0.16.0", default-features = false, features = ["with-tokio", "tds73"] }
 native-tls = "0.2"
+futures-util = "0.3"
 tokio = { version = "1", features = ["full"] }
 uuid = { version = "1", features = ["v4"] }
 aes-gcm = "0.10"

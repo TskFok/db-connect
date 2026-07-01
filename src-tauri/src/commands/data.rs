@@ -1338,7 +1338,25 @@ pub async fn execute_sql(
             let start = Instant::now();
             sqlite::run_sql_on_pool(&handle.pool, &sql, read_only, start).await
         }
-        DatabasePoolHandle::SqlServer(_) => Err(DatabasePoolHandle::sqlserver_unsupported_error()),
+        DatabasePoolHandle::SqlServer(handle) => {
+            let registered_id = execution_id.clone();
+            if let Some(eid) = &registered_id {
+                state
+                    .running_queries
+                    .lock()
+                    .await
+                    .insert(eid.clone(), RunningQuery::SqlServerUnsupported);
+            }
+
+            let start = Instant::now();
+            let result = sqlserver::run_sql_on_pool(&handle.pool, &sql, read_only, start).await;
+
+            if let Some(eid) = registered_id {
+                state.running_queries.lock().await.remove(&eid);
+            }
+
+            result
+        }
     }
 }
 
@@ -1357,6 +1375,16 @@ pub async fn cancel_query(
     };
 
     let Some(running) = running else {
+        let is_sqlserver = {
+            let manager = state.connection_manager.lock().await;
+            matches!(
+                manager.pool_for_ping(&conn_id),
+                Some(DatabasePoolHandle::SqlServer(_))
+            )
+        };
+        if is_sqlserver {
+            return sqlserver::cancel_query().await;
+        }
         // 查询可能已经执行完毕
         return Ok(false);
     };
@@ -1383,6 +1411,9 @@ pub async fn cancel_query(
         }
         RunningQuery::Postgres(handle) => {
             (*handle).cancel().await?;
+        }
+        RunningQuery::SqlServerUnsupported => {
+            return sqlserver::cancel_query().await;
         }
     }
 
@@ -1439,8 +1470,8 @@ pub async fn get_session_info(
         DatabasePoolHandle::Sqlite(handle) => {
             return sqlite::get_session_info(&handle.pool, database, None, read_only).await;
         }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            return sqlserver::get_session_info(&handle.pool, database, read_only).await;
         }
     };
 
@@ -1539,7 +1570,11 @@ pub async fn explain_sql(
             let start = Instant::now();
             sqlite::explain_sql_on_pool(&handle.pool, trimmed, analyze, start).await
         }
-        DatabasePoolHandle::SqlServer(_) => Err(DatabasePoolHandle::sqlserver_unsupported_error()),
+        DatabasePoolHandle::SqlServer(handle) => {
+            validate_sql_input(trimmed)?;
+            let start = Instant::now();
+            sqlserver::explain_sql_on_pool(&handle.pool, trimmed, analyze, start).await
+        }
     }
 }
 

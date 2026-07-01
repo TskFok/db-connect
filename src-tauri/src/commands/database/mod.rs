@@ -334,7 +334,9 @@ pub async fn get_sql_completion_metadata(
         DatabasePoolHandle::Sqlite(handle) => {
             sqlite::get_sql_completion_metadata(&handle.pool, database).await
         }
-        DatabasePoolHandle::SqlServer(_) => Err(DatabasePoolHandle::sqlserver_unsupported_error()),
+        DatabasePoolHandle::SqlServer(handle) => {
+            sqlserver::get_sql_completion_metadata(&handle.pool, database).await
+        }
     }
 }
 

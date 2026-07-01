@@ -143,6 +143,10 @@ pub fn sqlserver_count_query(schema: &str, table: &str, where_sql: &str) -> Stri
     SQLSERVER_DIALECT.count_query(schema, table, where_sql)
 }
 
+pub fn sqlserver_sql_editor_allowed_on_read_only_connection(sql: &str) -> bool {
+    SQLSERVER_DIALECT.sql_editor_allowed_on_read_only_connection(sql)
+}
+
 #[cfg(test)]
 mod sqlserver_tests {
     use super::*;
@@ -171,6 +175,16 @@ mod sqlserver_tests {
             sqlserver_count_query("dbo", "users", ""),
             "SELECT COUNT_BIG(*) as cnt FROM [dbo].[users]"
         );
+    }
+
+    #[test]
+    fn sqlserver_helper_exposes_read_only_sql_guard() {
+        assert!(sqlserver_sql_editor_allowed_on_read_only_connection(
+            "SELECT * FROM sys.objects"
+        ));
+        assert!(!sqlserver_sql_editor_allowed_on_read_only_connection(
+            "EXEC sp_who2"
+        ));
     }
 }
 

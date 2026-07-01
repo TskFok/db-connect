@@ -209,7 +209,9 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
         ? "postgres"
         : databaseType === "sqlite"
           ? "sqlite"
-          : "mysql";
+          : databaseType === "sqlserver"
+            ? "sqlserver"
+            : "mysql";
   }, [databaseType]);
 
   useEffect(() => {

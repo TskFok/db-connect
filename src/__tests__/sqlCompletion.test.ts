@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   MYSQL_KEYWORDS,
   POSTGRES_KEYWORDS,
+  SQLSERVER_KEYWORDS,
   SQLITE_KEYWORDS,
   buildSqlSuggestions,
   getSqlKeywords,
@@ -116,11 +117,25 @@ describe("sqlCompletion", () => {
     });
   });
 
+  describe("SQLSERVER_KEYWORDS", () => {
+    it("应包含 SQL Server 常用关键词且去掉 MySQL 专属关键词", () => {
+      expect(SQLSERVER_KEYWORDS).toContain("TOP");
+      expect(SQLSERVER_KEYWORDS).toContain("OFFSET");
+      expect(SQLSERVER_KEYWORDS).toContain("FETCH NEXT");
+      expect(SQLSERVER_KEYWORDS).toContain("NVARCHAR");
+      expect(SQLSERVER_KEYWORDS).toContain("UNIQUEIDENTIFIER");
+      expect(SQLSERVER_KEYWORDS).toContain("SYSNAME");
+      expect(SQLSERVER_KEYWORDS).not.toContain("ENGINE");
+      expect(SQLSERVER_KEYWORDS).not.toContain("AUTO_INCREMENT");
+    });
+  });
+
   describe("getSqlKeywords", () => {
     it("按方言返回对应关键词集合", () => {
       expect(getSqlKeywords("mysql")).toBe(MYSQL_KEYWORDS);
       expect(getSqlKeywords("postgres")).toBe(POSTGRES_KEYWORDS);
       expect(getSqlKeywords("sqlite")).toBe(SQLITE_KEYWORDS);
+      expect(getSqlKeywords("sqlserver")).toBe(SQLSERVER_KEYWORDS);
       // 默认 mysql
       expect(getSqlKeywords()).toBe(MYSQL_KEYWORDS);
     });
@@ -140,6 +155,11 @@ describe("sqlCompletion", () => {
     it("SQLite 使用双引号并转义双引号", () => {
       expect(quoteIdentifier("users", "sqlite")).toBe('"users"');
       expect(quoteIdentifier('we"ird', "sqlite")).toBe('"we""ird"');
+    });
+
+    it("SQL Server 使用方括号并转义右方括号", () => {
+      expect(quoteIdentifier("users", "sqlserver")).toBe("[users]");
+      expect(quoteIdentifier("we]ird", "sqlserver")).toBe("[we]]ird]");
     });
   });
 
@@ -195,6 +215,21 @@ describe("sqlCompletion", () => {
       expect(db?.insertText).toBe('"app"');
       expect(col?.insertText).toBe('"users"."id"');
       expect(suggestions.some((s) => s.label === "PRAGMA")).toBe(true);
+    });
+
+    it("SQL Server 方言下标识符使用方括号并提供 SQL Server 关键词", () => {
+      const suggestions = buildSqlSuggestions(
+        fakeMonaco,
+        "",
+        schema,
+        fakeRange,
+        { dialect: "sqlserver" }
+      );
+      const db = suggestions.find((s) => s.label === "app");
+      const col = suggestions.find((s) => s.label === "users.id");
+      expect(db?.insertText).toBe("[app]");
+      expect(col?.insertText).toBe("[users].[id]");
+      expect(suggestions.some((s) => s.label === "TOP")).toBe(true);
     });
 
     it("前缀过滤大小写不敏感地匹配表名", () => {
