@@ -3,7 +3,7 @@ use crate::db::sql_utils::{
     esc_id, esc_str, mysql_count_query, mysql_paginated_select,
     mysql_sql_editor_allowed_on_read_only_connection, validate_where_clause,
 };
-use crate::db::{postgres, sqlite};
+use crate::db::{postgres, sqlite, sqlserver};
 use crate::models::types::{QueryResult, SessionInfo, SqlExecuteResult};
 use crate::{AppState, RunningQuery};
 use mysql_async::prelude::*;
@@ -488,8 +488,9 @@ pub async fn query_table_count(
         DatabasePoolHandle::Sqlite(handle) => {
             return sqlite::query_table_count(&handle.pool, &database, &table, where_clause).await;
         }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            return sqlserver::query_table_count(&handle.pool, &database, &table, where_clause)
+                .await;
         }
     };
 
@@ -566,6 +567,17 @@ fn build_sqlite_order_by_sql(sort_fields: &Option<Vec<TableSortField>>) -> Strin
     sqlite::build_order_by_sql(&borrowed)
 }
 
+fn build_sqlserver_order_by_sql(sort_fields: &Option<Vec<TableSortField>>) -> String {
+    let Some(fields) = sort_fields else {
+        return String::new();
+    };
+    let borrowed: Vec<(&str, &str)> = fields
+        .iter()
+        .map(|f| (f.column.as_str(), f.order.as_str()))
+        .collect();
+    sqlserver::build_order_by_sql(&borrowed)
+}
+
 /// 查询表数据 (分页)
 ///
 /// `select_columns`: 可选的列列表。传入时仅查询指定列（自动合并主键列以保证删除/修改功能正常）；
@@ -622,8 +634,20 @@ pub async fn query_table_data(
             )
             .await;
         }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            let order_sql = build_sqlserver_order_by_sql(&sort_fields);
+            return sqlserver::query_table_data(
+                &handle.pool,
+                &database,
+                &table,
+                page,
+                page_size,
+                order_sql,
+                where_clause,
+                select_columns,
+                skip_count,
+            )
+            .await;
         }
     };
 

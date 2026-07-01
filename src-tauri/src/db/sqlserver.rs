@@ -1,10 +1,20 @@
-use crate::models::types::ConnectionConfig;
-use bb8::Pool;
+use crate::db::sql_utils::{
+    sqlserver_count_query, sqlserver_id, sqlserver_paginated_select, sqlserver_str,
+    validate_where_clause,
+};
+use crate::models::types::{ColumnInfo, ConnectionConfig, QueryResult, TableInfo};
+use bb8::{Pool, PooledConnection};
 use bb8_tiberius::ConnectionManager as SqlServerConnectionManager;
-use std::time::Duration;
-use tiberius::{AuthMethod, Config as TiberiusConfig, EncryptionLevel};
+use serde_json::Value as JsonValue;
+use std::time::{Duration, Instant};
+use tiberius::{AuthMethod, ColumnData, Config as TiberiusConfig, EncryptionLevel, Row};
 
 pub type SqlServerPool = Pool<SqlServerConnectionManager>;
+type SqlServerPooledConnection<'a> = PooledConnection<'a, SqlServerConnectionManager>;
+
+const JS_MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
+const JS_MIN_SAFE_INTEGER: i64 = -9_007_199_254_740_991;
+const DAYS_0001_TO_1970: i64 = 719_162;
 
 #[derive(Clone)]
 pub struct SqlServerPoolHandle {
@@ -131,6 +141,681 @@ pub async fn ping_pool(pool: &SqlServerPool) -> bool {
     )
 }
 
+async fn get_client_with_retry(
+    pool: &SqlServerPool,
+) -> Result<SqlServerPooledConnection<'_>, String> {
+    pool.get()
+        .await
+        .map_err(|e| normalize_sqlserver_error("获取连接失败", e.to_string()))
+}
+
+pub(crate) fn list_schemas_sql() -> &'static str {
+    "SELECT name \
+     FROM sys.schemas \
+     WHERE name NOT IN ('sys', 'INFORMATION_SCHEMA') \
+     ORDER BY name"
+}
+
+pub async fn list_schemas(pool: &SqlServerPool) -> Result<Vec<String>, String> {
+    let mut client = get_client_with_retry(pool).await?;
+    let rows = client
+        .simple_query(list_schemas_sql())
+        .await
+        .map_err(|e| normalize_sqlserver_error("查询 schema 列表失败", e.to_string()))?
+        .into_first_result()
+        .await
+        .map_err(|e| normalize_sqlserver_error("读取 schema 列表失败", e.to_string()))?;
+
+    Ok(rows
+        .iter()
+        .filter_map(|row| row.get::<&str, _>("name").map(str::to_string))
+        .collect())
+}
+
+fn list_tables_sql(schema: &str) -> String {
+    let schema = sqlserver_str(schema);
+    format!(
+        "WITH objects AS ( \
+           SELECT t.object_id, t.name, CAST('TABLE' AS varchar(5)) AS table_type \
+           FROM sys.tables t \
+           JOIN sys.schemas s ON s.schema_id = t.schema_id \
+           WHERE s.name = N{} AND t.is_ms_shipped = 0 \
+           UNION ALL \
+           SELECT v.object_id, v.name, CAST('VIEW' AS varchar(5)) AS table_type \
+           FROM sys.views v \
+           JOIN sys.schemas s ON s.schema_id = v.schema_id \
+           WHERE s.name = N{} AND v.is_ms_shipped = 0 \
+         ), stats AS ( \
+           SELECT object_id, \
+                  SUM(CASE WHEN index_id IN (0, 1) THEN row_count ELSE 0 END) AS rows_est, \
+                  SUM(in_row_data_page_count + lob_used_page_count + row_overflow_used_page_count) * 8192 AS data_length, \
+                  SUM(CASE WHEN used_page_count > in_row_data_page_count + lob_used_page_count + row_overflow_used_page_count \
+                           THEN used_page_count - in_row_data_page_count - lob_used_page_count - row_overflow_used_page_count \
+                           ELSE 0 END) * 8192 AS index_length \
+           FROM sys.dm_db_partition_stats \
+           GROUP BY object_id \
+         ) \
+         SELECT o.name, o.table_type, \
+                CASE WHEN o.table_type = 'TABLE' THEN 'SQL Server' ELSE NULL END AS engine, \
+                CASE WHEN o.table_type = 'TABLE' THEN CAST(COALESCE(st.rows_est, 0) AS bigint) ELSE NULL END AS rows_est, \
+                CASE WHEN o.table_type = 'TABLE' THEN CAST(COALESCE(st.data_length, 0) AS bigint) ELSE NULL END AS data_length, \
+                CASE WHEN o.table_type = 'TABLE' THEN CAST(COALESCE(st.index_length, 0) AS bigint) ELSE NULL END AS index_length, \
+                COALESCE(CONVERT(nvarchar(4000), ep.value), N'') AS comment \
+         FROM objects o \
+         LEFT JOIN stats st ON st.object_id = o.object_id \
+         LEFT JOIN sys.extended_properties ep \
+           ON ep.class = 1 AND ep.major_id = o.object_id AND ep.minor_id = 0 AND ep.name = N'MS_Description' \
+         ORDER BY o.name",
+        schema, schema
+    )
+}
+
+pub async fn list_tables(pool: &SqlServerPool, schema: &str) -> Result<Vec<TableInfo>, String> {
+    let mut client = get_client_with_retry(pool).await?;
+    let rows = client
+        .simple_query(list_tables_sql(schema))
+        .await
+        .map_err(|e| normalize_sqlserver_error("查询表列表失败", e.to_string()))?
+        .into_first_result()
+        .await
+        .map_err(|e| normalize_sqlserver_error("读取表列表失败", e.to_string()))?;
+
+    Ok(rows
+        .iter()
+        .map(|row| TableInfo {
+            name: row_string(row, "name"),
+            table_type: row_string(row, "table_type"),
+            engine: row.get::<&str, _>("engine").map(str::to_string),
+            rows: i64_to_u64(row.get::<i64, _>("rows_est")),
+            data_length: i64_to_u64(row.get::<i64, _>("data_length")),
+            index_length: i64_to_u64(row.get::<i64, _>("index_length")),
+            comment: row_string(row, "comment"),
+        })
+        .collect())
+}
+
+fn table_structure_sql(schema: &str, table: &str) -> String {
+    format!(
+        "WITH pk AS ( \
+           SELECT ic.object_id, ic.column_id \
+           FROM sys.indexes i \
+           JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id \
+           WHERE i.is_primary_key = 1 \
+         ) \
+         SELECT c.name AS column_name, \
+                ty.name AS type_name, \
+                CAST(c.max_length AS int) AS max_length, \
+                CAST(c.precision AS int) AS precision_value, \
+                CAST(c.scale AS int) AS scale_value, \
+                c.is_nullable, \
+                CASE WHEN pk.column_id IS NULL THEN '' ELSE 'PRI' END AS key_name, \
+                dc.definition AS default_value, \
+                CASE WHEN ident.column_id IS NULL THEN CAST(0 AS bit) ELSE CAST(1 AS bit) END AS is_identity, \
+                comp.definition AS computed_definition, \
+                CAST(ty.is_user_defined AS bit) AS is_user_defined, \
+                COALESCE(CONVERT(nvarchar(4000), ep.value), N'') AS comment \
+         FROM sys.columns c \
+         JOIN sys.objects o ON o.object_id = c.object_id \
+         JOIN sys.schemas s ON s.schema_id = o.schema_id \
+         JOIN sys.types ty ON ty.user_type_id = c.user_type_id \
+         LEFT JOIN sys.default_constraints dc \
+           ON dc.parent_object_id = c.object_id AND dc.parent_column_id = c.column_id \
+         LEFT JOIN sys.identity_columns ident \
+           ON ident.object_id = c.object_id AND ident.column_id = c.column_id \
+         LEFT JOIN sys.computed_columns comp \
+           ON comp.object_id = c.object_id AND comp.column_id = c.column_id \
+         LEFT JOIN pk ON pk.object_id = c.object_id AND pk.column_id = c.column_id \
+         LEFT JOIN sys.extended_properties ep \
+           ON ep.class = 1 AND ep.major_id = c.object_id AND ep.minor_id = c.column_id AND ep.name = N'MS_Description' \
+         WHERE s.name = N{} AND o.name = N{} AND o.type IN ('U', 'V') \
+         ORDER BY c.column_id",
+        sqlserver_str(schema),
+        sqlserver_str(table)
+    )
+}
+
+pub async fn get_table_structure(
+    pool: &SqlServerPool,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<ColumnInfo>, String> {
+    let mut client = get_client_with_retry(pool).await?;
+    let rows = client
+        .simple_query(table_structure_sql(schema, table))
+        .await
+        .map_err(|e| normalize_sqlserver_error("查询表结构失败", e.to_string()))?
+        .into_first_result()
+        .await
+        .map_err(|e| normalize_sqlserver_error("读取表结构失败", e.to_string()))?;
+
+    Ok(rows
+        .iter()
+        .map(|row| {
+            let type_name = row_string(row, "type_name");
+            ColumnInfo {
+                name: row_string(row, "column_name"),
+                column_type: format_sqlserver_column_type(
+                    &type_name,
+                    row.get::<i32, _>("max_length"),
+                    row.get::<i32, _>("precision_value"),
+                    row.get::<i32, _>("scale_value"),
+                    row.get::<bool, _>("is_user_defined").unwrap_or(false),
+                ),
+                nullable: row.get::<bool, _>("is_nullable").unwrap_or(false),
+                key: row_string(row, "key_name"),
+                default_value: row.get::<&str, _>("default_value").map(str::to_string),
+                extra: build_sqlserver_column_extra(
+                    row.get::<bool, _>("is_identity").unwrap_or(false),
+                    row.get::<&str, _>("computed_definition")
+                        .map(str::to_string),
+                ),
+                comment: row_string(row, "comment"),
+            }
+        })
+        .collect())
+}
+
+pub(crate) fn format_sqlserver_column_type(
+    type_name: &str,
+    max_length: Option<i32>,
+    precision: Option<i32>,
+    scale: Option<i32>,
+    _is_user_defined: bool,
+) -> String {
+    let lower = type_name.to_ascii_lowercase();
+    match lower.as_str() {
+        "nchar" | "nvarchar" => match max_length {
+            Some(-1) => format!("{}(max)", type_name),
+            Some(n) if n >= 0 => format!("{}({})", type_name, n / 2),
+            _ => type_name.to_string(),
+        },
+        "char" | "varchar" | "binary" | "varbinary" => match max_length {
+            Some(-1) => format!("{}(max)", type_name),
+            Some(n) if n >= 0 => format!("{}({})", type_name, n),
+            _ => type_name.to_string(),
+        },
+        "decimal" | "numeric" => match (precision, scale) {
+            (Some(p), Some(s)) => format!("{}({},{})", type_name, p, s),
+            _ => type_name.to_string(),
+        },
+        "datetime2" | "datetimeoffset" | "time" => match scale {
+            Some(s) => format!("{}({})", type_name, s),
+            _ => type_name.to_string(),
+        },
+        _ => type_name.to_string(),
+    }
+}
+
+pub(crate) fn build_sqlserver_column_extra(
+    is_identity: bool,
+    computed_definition: Option<String>,
+) -> String {
+    let mut parts = Vec::new();
+    if is_identity {
+        parts.push("identity".to_string());
+    }
+    if let Some(definition) = computed_definition
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        parts.push(format!("computed AS {}", definition));
+    }
+    parts.join(" ")
+}
+
+pub fn build_order_by_sql(fields: &[(&str, &str)]) -> String {
+    if fields.is_empty() {
+        return String::new();
+    }
+    let mut parts = Vec::new();
+    for (column, order) in fields {
+        let col = column.trim();
+        if col.is_empty() {
+            continue;
+        }
+        let safe_order = if order.to_uppercase() == "DESC" {
+            "DESC"
+        } else {
+            "ASC"
+        };
+        parts.push(format!("{} {}", sqlserver_id(col), safe_order));
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" ORDER BY {}", parts.join(", "))
+    }
+}
+
+pub async fn query_table_count(
+    pool: &SqlServerPool,
+    schema: &str,
+    table: &str,
+    where_clause: Option<String>,
+) -> Result<u64, String> {
+    let where_sql = build_where_sql(&where_clause)?;
+    let count_sql = sqlserver_count_query(schema, table, &where_sql);
+    let mut client = get_client_with_retry(pool).await?;
+    let row = client
+        .simple_query(count_sql)
+        .await
+        .map_err(|e| normalize_sqlserver_error("查询总数失败", e.to_string()))?
+        .into_row()
+        .await
+        .map_err(|e| normalize_sqlserver_error("读取总数失败", e.to_string()))?;
+
+    Ok(row
+        .and_then(|row| i64_to_u64(row.get::<i64, _>("cnt")))
+        .unwrap_or(0))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn query_table_data(
+    pool: &SqlServerPool,
+    schema: &str,
+    table: &str,
+    page: u32,
+    page_size: u32,
+    order_sql: String,
+    where_clause: Option<String>,
+    select_columns: Option<Vec<String>>,
+    skip_count: Option<bool>,
+) -> Result<QueryResult, String> {
+    let start = Instant::now();
+    let where_sql = build_where_sql(&where_clause)?;
+    let mut client = get_client_with_retry(pool).await?;
+
+    let total = if skip_count == Some(true) {
+        0
+    } else {
+        let count_sql = sqlserver_count_query(schema, table, &where_sql);
+        let row = client
+            .simple_query(count_sql)
+            .await
+            .map_err(|e| normalize_sqlserver_error("查询总数失败", e.to_string()))?
+            .into_row()
+            .await
+            .map_err(|e| normalize_sqlserver_error("读取总数失败", e.to_string()))?;
+        row.and_then(|row| i64_to_u64(row.get::<i64, _>("cnt")))
+            .unwrap_or(0)
+    };
+
+    let mut pk_cols: Option<Vec<String>> = None;
+    let mut selected_columns_for_empty_result: Option<Vec<String>> = None;
+    let select_part = match &select_columns {
+        Some(cols) if !cols.is_empty() => {
+            let fetched_pk = fetch_primary_keys_on_client(&mut client, schema, table).await?;
+            let mut merged = cols.clone();
+            for pk in &fetched_pk {
+                if !merged.iter().any(|c| c == pk) {
+                    merged.push(pk.clone());
+                }
+            }
+            pk_cols = Some(fetched_pk);
+            selected_columns_for_empty_result = Some(merged.clone());
+            merged
+                .iter()
+                .map(|c| sqlserver_id(c))
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+        _ => "*".to_string(),
+    };
+
+    let order_sql = if order_sql.trim().is_empty() {
+        let pk = match &pk_cols {
+            Some(cols) => cols.clone(),
+            None => {
+                let fetched = fetch_primary_keys_on_client(&mut client, schema, table).await?;
+                fetched
+            }
+        };
+        if !pk.is_empty() {
+            format!(
+                " ORDER BY {}",
+                pk.iter()
+                    .map(|c| format!("{} ASC", sqlserver_id(c)))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        } else {
+            let columns = fetch_column_names_on_client(&mut client, schema, table).await?;
+            if columns.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " ORDER BY {}",
+                    columns
+                        .iter()
+                        .map(|c| format!("{} ASC", sqlserver_id(c)))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        }
+    } else {
+        order_sql
+    };
+
+    let offset = page.saturating_sub(1) as u64 * page_size as u64;
+    let data_sql = sqlserver_paginated_select(
+        &select_part,
+        schema,
+        table,
+        &where_sql,
+        &order_sql,
+        page_size as u64,
+        offset,
+    );
+
+    let rows = client
+        .simple_query(data_sql)
+        .await
+        .map_err(|e| normalize_sqlserver_error("查询数据失败", e.to_string()))?
+        .into_first_result()
+        .await
+        .map_err(|e| normalize_sqlserver_error("读取数据失败", e.to_string()))?;
+    let (mut columns, rows) = rows_to_columns_and_json(&rows);
+
+    if columns.is_empty() && rows.is_empty() {
+        columns = match selected_columns_for_empty_result {
+            Some(cols) => cols,
+            None => fetch_column_names_on_client(&mut client, schema, table).await?,
+        };
+    }
+
+    Ok(QueryResult {
+        columns,
+        rows,
+        total,
+        execution_time_ms: start.elapsed().as_millis() as u64,
+    })
+}
+
+fn build_where_sql(where_clause: &Option<String>) -> Result<String, String> {
+    match where_clause {
+        Some(w) if !w.trim().is_empty() => {
+            validate_where_clause(w)?;
+            Ok(format!(" WHERE {}", w))
+        }
+        _ => Ok(String::new()),
+    }
+}
+
+async fn fetch_primary_keys_on_client(
+    client: &mut SqlServerPooledConnection<'_>,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<String>, String> {
+    let sql = format!(
+        "SELECT c.name \
+         FROM sys.indexes i \
+         JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id \
+         JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id \
+         JOIN sys.objects o ON o.object_id = i.object_id \
+         JOIN sys.schemas s ON s.schema_id = o.schema_id \
+         WHERE i.is_primary_key = 1 AND s.name = N{} AND o.name = N{} \
+         ORDER BY ic.key_ordinal",
+        sqlserver_str(schema),
+        sqlserver_str(table)
+    );
+    let rows = client
+        .simple_query(sql)
+        .await
+        .map_err(|e| normalize_sqlserver_error("查询主键信息失败", e.to_string()))?
+        .into_first_result()
+        .await
+        .map_err(|e| normalize_sqlserver_error("读取主键信息失败", e.to_string()))?;
+    Ok(rows
+        .iter()
+        .filter_map(|row| row.get::<&str, _>("name").map(str::to_string))
+        .collect())
+}
+
+async fn fetch_column_names_on_client(
+    client: &mut SqlServerPooledConnection<'_>,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<String>, String> {
+    let sql = format!(
+        "SELECT c.name \
+         FROM sys.columns c \
+         JOIN sys.objects o ON o.object_id = c.object_id \
+         JOIN sys.schemas s ON s.schema_id = o.schema_id \
+         WHERE s.name = N{} AND o.name = N{} AND o.type IN ('U', 'V') \
+         ORDER BY c.column_id",
+        sqlserver_str(schema),
+        sqlserver_str(table)
+    );
+    let rows = client
+        .simple_query(sql)
+        .await
+        .map_err(|e| normalize_sqlserver_error("获取列信息失败", e.to_string()))?
+        .into_first_result()
+        .await
+        .map_err(|e| normalize_sqlserver_error("读取列信息失败", e.to_string()))?;
+    Ok(rows
+        .iter()
+        .filter_map(|row| row.get::<&str, _>("name").map(str::to_string))
+        .collect())
+}
+
+fn rows_to_columns_and_json(rows: &[Row]) -> (Vec<String>, Vec<Vec<JsonValue>>) {
+    let columns = rows
+        .first()
+        .map(|row| {
+            row.columns()
+                .iter()
+                .map(|column| column.name().to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let json_rows = rows
+        .iter()
+        .map(|row| {
+            row.cells()
+                .map(|(_, value)| sqlserver_column_data_to_json(value))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    (columns, json_rows)
+}
+
+pub(crate) fn sqlserver_column_data_to_json(value: &ColumnData<'static>) -> JsonValue {
+    match value {
+        ColumnData::U8(Some(v)) => serde_json::json!(*v),
+        ColumnData::U8(None)
+        | ColumnData::I16(None)
+        | ColumnData::I32(None)
+        | ColumnData::I64(None)
+        | ColumnData::F32(None)
+        | ColumnData::F64(None)
+        | ColumnData::Bit(None)
+        | ColumnData::String(None)
+        | ColumnData::Guid(None)
+        | ColumnData::Binary(None)
+        | ColumnData::Numeric(None)
+        | ColumnData::Xml(None)
+        | ColumnData::DateTime(None)
+        | ColumnData::SmallDateTime(None)
+        | ColumnData::Time(None)
+        | ColumnData::Date(None)
+        | ColumnData::DateTime2(None)
+        | ColumnData::DateTimeOffset(None) => JsonValue::Null,
+        ColumnData::I16(Some(v)) => serde_json::json!(*v),
+        ColumnData::I32(Some(v)) => serde_json::json!(*v),
+        ColumnData::I64(Some(v)) => i64_to_json(*v),
+        ColumnData::F32(Some(v)) => serde_json::json!(*v),
+        ColumnData::F64(Some(v)) => serde_json::json!(*v),
+        ColumnData::Bit(Some(v)) => serde_json::json!(*v),
+        ColumnData::String(Some(v)) => JsonValue::String(v.to_string()),
+        ColumnData::Guid(Some(v)) => JsonValue::String(v.to_string()),
+        ColumnData::Binary(Some(v)) => JsonValue::String(format!("[binary {} bytes]", v.len())),
+        ColumnData::Numeric(Some(v)) => JsonValue::String(sqlserver_numeric_to_string(*v)),
+        ColumnData::Xml(Some(v)) => JsonValue::String(v.as_ref().as_ref().to_string()),
+        ColumnData::DateTime(Some(v)) => JsonValue::String(format_sqlserver_datetime(*v)),
+        ColumnData::SmallDateTime(Some(v)) => {
+            JsonValue::String(format_sqlserver_small_datetime(*v))
+        }
+        ColumnData::Time(Some(v)) => JsonValue::String(format_sqlserver_time(*v)),
+        ColumnData::Date(Some(v)) => JsonValue::String(format_sqlserver_date(*v)),
+        ColumnData::DateTime2(Some(v)) => JsonValue::String(format_sqlserver_datetime2(*v)),
+        ColumnData::DateTimeOffset(Some(v)) => {
+            JsonValue::String(format_sqlserver_datetimeoffset(*v))
+        }
+    }
+}
+
+fn row_string(row: &Row, column: &str) -> String {
+    row.get::<&str, _>(column)
+        .map(str::to_string)
+        .unwrap_or_default()
+}
+
+fn i64_to_u64(value: Option<i64>) -> Option<u64> {
+    value.and_then(|v| u64::try_from(v).ok())
+}
+
+fn i64_to_json(value: i64) -> JsonValue {
+    if (JS_MIN_SAFE_INTEGER..=JS_MAX_SAFE_INTEGER).contains(&value) {
+        serde_json::json!(value)
+    } else {
+        JsonValue::String(value.to_string())
+    }
+}
+
+fn sqlserver_numeric_to_string(value: tiberius::numeric::Numeric) -> String {
+    let scale = value.scale() as u32;
+    let raw = value.value();
+    if scale == 0 {
+        return raw.to_string();
+    }
+    let sign = if raw < 0 { "-" } else { "" };
+    let abs = if raw < 0 { -raw } else { raw };
+    let pow = 10i128.pow(scale);
+    let int_part = abs / pow;
+    let dec_part = abs % pow;
+    format!(
+        "{}{}.{:0width$}",
+        sign,
+        int_part,
+        dec_part,
+        width = scale as usize
+    )
+}
+
+fn format_sqlserver_date(value: tiberius::time::Date) -> String {
+    let (year, month, day) = civil_from_days(value.days() as i64 - DAYS_0001_TO_1970);
+    format!("{:04}-{:02}-{:02}", year, month, day)
+}
+
+fn format_sqlserver_time(value: tiberius::time::Time) -> String {
+    let scale = value.scale();
+    let pow = 10u64.pow(scale as u32);
+    let increments = value.increments();
+    let total_seconds = increments / pow;
+    let frac = increments % pow;
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+    if scale == 0 {
+        format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
+    } else {
+        format!(
+            "{:02}:{:02}:{:02}.{:0width$}",
+            hours,
+            minutes,
+            seconds,
+            frac,
+            width = scale as usize
+        )
+    }
+}
+
+fn format_sqlserver_datetime2(value: tiberius::time::DateTime2) -> String {
+    format!(
+        "{} {}",
+        format_sqlserver_date(value.date()),
+        format_sqlserver_time(value.time())
+    )
+}
+
+fn format_sqlserver_datetimeoffset(value: tiberius::time::DateTimeOffset) -> String {
+    let offset = value.offset();
+    let sign = if offset < 0 { '-' } else { '+' };
+    let abs = offset.abs();
+    format!(
+        "{} {}{:02}:{:02}",
+        format_sqlserver_datetime2(value.datetime2()),
+        sign,
+        abs / 60,
+        abs % 60
+    )
+}
+
+fn format_sqlserver_datetime(value: tiberius::time::DateTime) -> String {
+    let base_days = days_since_year1(1900, 1, 1);
+    let (year, month, day) = civil_from_days(base_days + value.days() as i64 - DAYS_0001_TO_1970);
+    let total_millis = value.seconds_fragments() as u64 * 1000 / 300;
+    let total_seconds = total_millis / 1000;
+    let millis = total_millis % 1000;
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+    if millis == 0 {
+        format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+            year, month, day, hours, minutes, seconds
+        )
+    } else {
+        format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}",
+            year, month, day, hours, minutes, seconds, millis
+        )
+    }
+}
+
+fn format_sqlserver_small_datetime(value: tiberius::time::SmallDateTime) -> String {
+    let base_days = days_since_year1(1900, 1, 1);
+    let (year, month, day) = civil_from_days(base_days + value.days() as i64 - DAYS_0001_TO_1970);
+    let total_seconds = value.seconds_fragments() as u64 * 60;
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:00",
+        year, month, day, hours, minutes
+    )
+}
+
+fn days_since_year1(year: i32, month: u32, day: u32) -> i64 {
+    days_from_civil(year, month, day) + DAYS_0001_TO_1970
+}
+
+fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
+    let year = year as i64 - i64::from(month <= 2);
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let yoe = year - era * 400;
+    let mp = month as i64 + if month > 2 { -3 } else { 9 };
+    let doy = (153 * mp + 2) / 5 + day as i64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+fn civil_from_days(days_since_1970: i64) -> (i32, u32, u32) {
+    let z = days_since_1970 + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + i64::from(month <= 2);
+    (year as i32, month as u32, day as u32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,5 +875,62 @@ mod tests {
         let msg = normalize_sqlserver_error("连接测试失败", "Login failed");
 
         assert_eq!(msg, "SQL Server 连接测试失败: Login failed");
+    }
+
+    #[test]
+    fn list_schemas_sql_filters_system_schemas_and_orders_by_name() {
+        let sql = list_schemas_sql();
+
+        assert!(sql.contains("FROM sys.schemas"));
+        assert!(sql.contains("name NOT IN ('sys', 'INFORMATION_SCHEMA')"));
+        assert!(sql.contains("ORDER BY name"));
+    }
+
+    #[test]
+    fn format_sqlserver_column_type_includes_lengths_precision_and_max() {
+        assert_eq!(
+            format_sqlserver_column_type("nvarchar", Some(200), None, None, false),
+            "nvarchar(100)"
+        );
+        assert_eq!(
+            format_sqlserver_column_type("varchar", Some(-1), None, None, false),
+            "varchar(max)"
+        );
+        assert_eq!(
+            format_sqlserver_column_type("decimal", Some(9), Some(18), Some(4), false),
+            "decimal(18,4)"
+        );
+    }
+
+    #[test]
+    fn build_sqlserver_column_extra_combines_identity_and_computed() {
+        assert_eq!(
+            build_sqlserver_column_extra(true, Some("[price] * [qty]".to_string())),
+            "identity computed AS [price] * [qty]"
+        );
+    }
+
+    #[test]
+    fn sqlserver_value_to_json_preserves_large_int_decimal_and_binary() {
+        assert_eq!(
+            sqlserver_column_data_to_json(&tiberius::ColumnData::I64(Some(42))),
+            serde_json::json!(42)
+        );
+        assert_eq!(
+            sqlserver_column_data_to_json(&tiberius::ColumnData::I64(Some(9_007_199_254_740_992))),
+            serde_json::json!("9007199254740992")
+        );
+        assert_eq!(
+            sqlserver_column_data_to_json(&tiberius::ColumnData::Numeric(Some(
+                tiberius::numeric::Numeric::new_with_scale(12345, 2),
+            ))),
+            serde_json::json!("123.45")
+        );
+        assert_eq!(
+            sqlserver_column_data_to_json(&tiberius::ColumnData::Binary(Some(
+                std::borrow::Cow::Borrowed(&[1, 2, 3]),
+            ))),
+            serde_json::json!("[binary 3 bytes]")
+        );
     }
 }

@@ -7,7 +7,7 @@ use crate::db::postgres_ddl;
 use crate::db::sql_utils::{
     esc_id, esc_str, validate_column_extra, validate_column_type, validate_engine_name,
 };
-use crate::db::{postgres, sqlite};
+use crate::db::{postgres, sqlite, sqlserver};
 use crate::models::types::{
     ColumnInfo, CreateTableRequest, DatabaseInfo, SqlCompletionColumn, SqlCompletionMetadata,
     SqlCompletionTable, TableInfo,
@@ -33,8 +33,8 @@ pub async fn list_databases(
         DatabasePoolHandle::MySql(pool) => pool,
         DatabasePoolHandle::Postgres(handle) => return postgres::list_schemas(&handle.pool).await,
         DatabasePoolHandle::Sqlite(handle) => return sqlite::list_databases(&handle.pool).await,
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            return sqlserver::list_schemas(&handle.pool).await
         }
     };
 
@@ -68,8 +68,8 @@ pub async fn list_tables(
         DatabasePoolHandle::Sqlite(handle) => {
             return sqlite::list_tables(&handle.pool, &database).await;
         }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            return sqlserver::list_tables(&handle.pool, &database).await;
         }
     };
 
@@ -136,8 +136,8 @@ pub async fn get_table_structure(
         DatabasePoolHandle::Sqlite(handle) => {
             return sqlite::get_table_structure(&handle.pool, &database, &table).await;
         }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            return sqlserver::get_table_structure(&handle.pool, &database, &table).await;
         }
     };
 

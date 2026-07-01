@@ -1,4 +1,4 @@
-use crate::db::dialect::{MYSQL_DIALECT, POSTGRES_DIALECT, SQLITE_DIALECT};
+use crate::db::dialect::{MYSQL_DIALECT, POSTGRES_DIALECT, SQLITE_DIALECT, SQLSERVER_DIALECT};
 
 /// Escape a MySQL identifier by doubling internal backticks and wrapping in backticks.
 /// Prevents SQL injection through identifier names (database, table, column, index, trigger).
@@ -109,6 +109,69 @@ pub fn sqlite_paginated_select(
 
 pub fn sqlite_count_query(schema: &str, table: &str, where_sql: &str) -> String {
     SQLITE_DIALECT.count_query(schema, table, where_sql)
+}
+
+pub fn sqlserver_id(name: &str) -> String {
+    SQLSERVER_DIALECT.identifier(name)
+}
+
+pub fn sqlserver_str(value: &str) -> String {
+    SQLSERVER_DIALECT.string_literal(value)
+}
+
+pub fn sqlserver_paginated_select(
+    columns_sql: &str,
+    schema: &str,
+    table: &str,
+    where_sql: &str,
+    order_sql: &str,
+    limit: u64,
+    offset: u64,
+) -> String {
+    SQLSERVER_DIALECT.paginated_select(
+        columns_sql,
+        schema,
+        table,
+        where_sql,
+        order_sql,
+        limit,
+        offset,
+    )
+}
+
+pub fn sqlserver_count_query(schema: &str, table: &str, where_sql: &str) -> String {
+    SQLSERVER_DIALECT.count_query(schema, table, where_sql)
+}
+
+#[cfg(test)]
+mod sqlserver_tests {
+    use super::*;
+
+    #[test]
+    fn sqlserver_helpers_escape_identifier_and_literal() {
+        assert_eq!(sqlserver_id("a]b"), "[a]]b]");
+        assert_eq!(sqlserver_str("Bob's"), "'Bob''s'");
+    }
+
+    #[test]
+    fn sqlserver_helpers_build_paginated_select_and_count() {
+        assert_eq!(
+            sqlserver_paginated_select(
+                "[id]",
+                "dbo",
+                "users",
+                " WHERE [id] > 10",
+                " ORDER BY [id] ASC",
+                25,
+                50,
+            ),
+            "SELECT [id] FROM [dbo].[users] WHERE [id] > 10 ORDER BY [id] ASC OFFSET 50 ROWS FETCH NEXT 25 ROWS ONLY"
+        );
+        assert_eq!(
+            sqlserver_count_query("dbo", "users", ""),
+            "SELECT COUNT_BIG(*) as cnt FROM [dbo].[users]"
+        );
+    }
 }
 
 /// 去掉 DDL 中 `` `schema_name`. `` 形式的库名限定，便于导入到任意目标库（由客户端先 `USE` 或导入时指定库）。

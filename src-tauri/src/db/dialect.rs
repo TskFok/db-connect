@@ -7,6 +7,9 @@ pub struct PostgresDialect;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SqliteDialect;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SqlServerDialect;
+
 impl MySqlDialect {
     pub fn identifier(&self, name: &str) -> String {
         format!("`{}`", name.replace('`', "``"))
@@ -415,6 +418,57 @@ impl SqliteDialect {
 
 pub const SQLITE_DIALECT: SqliteDialect = SqliteDialect;
 
+impl SqlServerDialect {
+    pub fn identifier(&self, name: &str) -> String {
+        format!("[{}]", name.replace(']', "]]"))
+    }
+
+    pub fn string_literal(&self, value: &str) -> String {
+        format!("'{}'", value.replace('\'', "''"))
+    }
+
+    pub fn table_ref(&self, schema: &str, table: &str) -> String {
+        format!("{}.{}", self.identifier(schema), self.identifier(table))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn paginated_select(
+        &self,
+        columns_sql: &str,
+        schema: &str,
+        table: &str,
+        where_sql: &str,
+        order_sql: &str,
+        limit: u64,
+        offset: u64,
+    ) -> String {
+        let order_sql = if order_sql.trim().is_empty() {
+            " ORDER BY (SELECT 0)"
+        } else {
+            order_sql
+        };
+        format!(
+            "SELECT {} FROM {}{}{} OFFSET {} ROWS FETCH NEXT {} ROWS ONLY",
+            columns_sql,
+            self.table_ref(schema, table),
+            where_sql,
+            order_sql,
+            offset,
+            limit
+        )
+    }
+
+    pub fn count_query(&self, schema: &str, table: &str, where_sql: &str) -> String {
+        format!(
+            "SELECT COUNT_BIG(*) as cnt FROM {}{}",
+            self.table_ref(schema, table),
+            where_sql
+        )
+    }
+}
+
+pub const SQLSERVER_DIALECT: SqlServerDialect = SqlServerDialect;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -535,6 +589,50 @@ mod tests {
             !POSTGRES_DIALECT.sql_editor_allowed_on_read_only_connection(
                 "WITH changed AS (UPDATE users SET name = 'x' RETURNING id) SELECT * FROM changed"
             )
+        );
+    }
+
+    #[test]
+    fn sqlserver_identifier_uses_brackets_and_escapes_closing_brackets() {
+        assert_eq!(SQLSERVER_DIALECT.identifier("user"), "[user]");
+        assert_eq!(SQLSERVER_DIALECT.identifier("a]b"), "[a]]b]");
+    }
+
+    #[test]
+    fn sqlserver_string_literal_escapes_single_quotes() {
+        assert_eq!(SQLSERVER_DIALECT.string_literal("it's"), "'it''s'");
+        assert_eq!(SQLSERVER_DIALECT.string_literal(r"a\b"), r"'a\b'");
+    }
+
+    #[test]
+    fn sqlserver_paginated_select_uses_offset_fetch() {
+        assert_eq!(
+            SQLSERVER_DIALECT.paginated_select(
+                "[id], [name]",
+                "dbo",
+                "users",
+                " WHERE [active] = 1",
+                " ORDER BY [id] DESC",
+                20,
+                40,
+            ),
+            "SELECT [id], [name] FROM [dbo].[users] WHERE [active] = 1 ORDER BY [id] DESC OFFSET 40 ROWS FETCH NEXT 20 ROWS ONLY"
+        );
+    }
+
+    #[test]
+    fn sqlserver_paginated_select_adds_fallback_order_when_empty() {
+        assert_eq!(
+            SQLSERVER_DIALECT.paginated_select("*", "dbo", "users", "", "", 10, 0),
+            "SELECT * FROM [dbo].[users] ORDER BY (SELECT 0) OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY"
+        );
+    }
+
+    #[test]
+    fn sqlserver_count_query_counts_schema_table_with_where() {
+        assert_eq!(
+            SQLSERVER_DIALECT.count_query("sales", "orders", " WHERE [status] = 'paid'"),
+            "SELECT COUNT_BIG(*) as cnt FROM [sales].[orders] WHERE [status] = 'paid'"
         );
     }
 }

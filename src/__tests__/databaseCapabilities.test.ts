@@ -73,12 +73,12 @@ describe("getDatabaseCapabilities", () => {
     expect(caps.databaseObjectNoun).toBe("database");
   });
 
-  it("SQL Server Phase 1 只开放连接层，暂不开放浏览、编辑、导入导出和对象管理", () => {
+  it("SQL Server Phase 2 开放只读表浏览，仍关闭编辑、DDL、导入导出和对象管理", () => {
     const caps = getDatabaseCapabilities("sqlserver");
 
     expect(caps.sqlEditor).toBe(false);
     expect(caps.databaseManagement).toBe(false);
-    expect(caps.tableBrowsing).toBe(false);
+    expect(caps.tableBrowsing).toBe(true);
     expect(caps.tableDataEditing).toBe(false);
     expect(caps.schemaManagement).toBe(false);
     expect(caps.routineManagement).toBe(false);

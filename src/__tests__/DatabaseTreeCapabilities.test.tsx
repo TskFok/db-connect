@@ -54,6 +54,18 @@ const postgresConnection = {
   },
 };
 
+const sqlserverConnection = {
+  connId: "mssql-1",
+  config: {
+    id: "mssql-profile",
+    name: "SQL Server",
+    host: "localhost",
+    port: 1433,
+    username: "sa",
+    database_type: "sqlserver" as const,
+  },
+};
+
 describe("DatabaseTree capabilities", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -94,9 +106,39 @@ describe("DatabaseTree capabilities", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("SQL Server Phase 2 会自动加载 schema 树", async () => {
+    useDatabaseStore.setState({
+      activeConnId: "mssql-1",
+      connectionStates: {
+        "mssql-1": {
+          ...emptyConnState(),
+          databases: [],
+          tables: {},
+        },
+      },
+    });
+    useConnectionStore.setState({
+      activeConnections: { "mssql-1": sqlserverConnection },
+      activeConnId: "mssql-1",
+      activeConnection: sqlserverConnection,
+    });
+    mockApi.listDatabases.mockResolvedValue(["dbo"]);
+
+    render(<DatabaseTree />);
+
+    await waitFor(() => {
+      expect(mockApi.listDatabases).toHaveBeenCalledWith("mssql-1");
+    });
+    expect(
+      screen.queryByText("当前数据库类型暂不支持对象浏览")
+    ).not.toBeInTheDocument();
+  });
+
   it("PostgreSQL MVP 阶段显示 schema/table 但隐藏收藏入口", () => {
     useFavoriteStore.setState({
-      favorites: [{ connectionId: "pg-profile", database: "app", table: "users" }],
+      favorites: [
+        { connectionId: "pg-profile", database: "app", table: "users" },
+      ],
     });
     useDatabaseStore.setState({
       activeConnId: "pg-1",
@@ -141,6 +183,8 @@ describe("DatabaseTree capabilities", () => {
 
     expect(screen.getByText("app")).toBeInTheDocument();
     expect(screen.getByText("users")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /收藏/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /收藏/ })
+    ).not.toBeInTheDocument();
   });
 });

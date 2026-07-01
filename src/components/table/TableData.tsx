@@ -47,7 +47,10 @@ import {
 } from "@ant-design/icons";
 import type { ColumnsType, ColumnType } from "antd/es/table";
 import { useShallow } from "zustand/react/shallow";
-import { useTableDataStore, type PendingChange } from "../../stores/tableDataStore";
+import {
+  useTableDataStore,
+  type PendingChange,
+} from "../../stores/tableDataStore";
 import { useDatabaseStore } from "../../stores/databaseStore";
 import { useConnectionStore } from "../../stores/connectionStore";
 import {
@@ -63,7 +66,10 @@ import {
 import { queryFullRows } from "../../services/tauriCommands";
 import { copyTextWithBreadcrumb } from "../../utils/crashBreadcrumbs";
 import { WhereFilterBuilder } from "./WhereFilterBuilder";
-import { type WhereFilterConfig, isStringColumnType } from "../../utils/whereFilterUtils";
+import {
+  type WhereFilterConfig,
+  isStringColumnType,
+} from "../../utils/whereFilterUtils";
 import { VirtualDataTable } from "./VirtualDataTable";
 import {
   buildRowSelectionKey,
@@ -108,7 +114,10 @@ const { Text } = Typography;
 const TABLE_PAGE_SIZE_MAX = 10000;
 
 /** 稳定的空设置引用，避免 Zustand selector 因返回新对象导致无限重渲染 */
-const EMPTY_TABLE_SETTINGS = { columnWidths: {} as Record<string, number>, hiddenColumns: [] as string[] };
+const EMPTY_TABLE_SETTINGS = {
+  columnWidths: {} as Record<string, number>,
+  hiddenColumns: [] as string[],
+};
 const EMPTY_SELECTED_ROW_KEYS: string[] = [];
 /** 行选择列宽度（行+列虚拟化由 VirtualDataTable 内部统一处理，通过 rowSelection.columnWidth 透传） */
 const ROW_SELECTION_COL_WIDTH = 48;
@@ -130,8 +139,10 @@ function SortIndicator({
   title?: string;
   onClick: (e: ReactMouseEvent<HTMLSpanElement>) => void;
 }) {
-  const upColor = active && direction === "ASC" ? "#1677ff" : "var(--text-muted)";
-  const downColor = active && direction === "DESC" ? "#1677ff" : "var(--text-muted)";
+  const upColor =
+    active && direction === "ASC" ? "#1677ff" : "var(--text-muted)";
+  const downColor =
+    active && direction === "DESC" ? "#1677ff" : "var(--text-muted)";
   return (
     <span
       role="button"
@@ -182,15 +193,19 @@ function SortIndicator({
 export function TableData() {
   const activeConnection = useConnectionStore((s) => s.activeConnection);
   const clientReadOnly = useClientReadOnly();
-  const { selectedDatabase, selectedTable, tableStructure, tableContentActiveTab } =
-    useDatabaseStore(
-      useShallow((s) => ({
-        selectedDatabase: s.selectedDatabase,
-        selectedTable: s.selectedTable,
-        tableStructure: s.tableStructure,
-        tableContentActiveTab: s.tableContentActiveTab,
-      }))
-    );
+  const {
+    selectedDatabase,
+    selectedTable,
+    tableStructure,
+    tableContentActiveTab,
+  } = useDatabaseStore(
+    useShallow((s) => ({
+      selectedDatabase: s.selectedDatabase,
+      selectedTable: s.selectedTable,
+      tableStructure: s.tableStructure,
+      tableContentActiveTab: s.tableContentActiveTab,
+    }))
+  );
   const {
     columns,
     rows,
@@ -318,7 +333,8 @@ export function TableData() {
         ? noPrimaryKeyDisabledReason
         : "";
   const rowOperationsAllowed = baseDataEditingAllowed && hasPrimaryKeyForEdits;
-  const rowSelectionScopeKey = connId && database && table ? `${connId}|${database}|${table}` : "";
+  const rowSelectionScopeKey =
+    connId && database && table ? `${connId}|${database}|${table}` : "";
   const selectedRowKeys = useMemo(
     () =>
       rowSelectionScopeKey
@@ -334,9 +350,7 @@ export function TableData() {
         ? (rowSelectionCache[rowSelectionScopeKey] ?? [])
         : [];
       const resolvedKeys =
-        typeof nextKeys === "function"
-          ? nextKeys(currentKeys)
-          : nextKeys;
+        typeof nextKeys === "function" ? nextKeys(currentKeys) : nextKeys;
 
       if (sameRowSelectionKeys(currentKeys, resolvedKeys)) {
         return;
@@ -349,7 +363,15 @@ export function TableData() {
 
       setRowSelection(connId, database, table, resolvedKeys);
     },
-    [clearRowSelection, connId, database, rowSelectionCache, rowSelectionScopeKey, setRowSelection, table]
+    [
+      clearRowSelection,
+      connId,
+      database,
+      rowSelectionCache,
+      rowSelectionScopeKey,
+      setRowSelection,
+      table,
+    ]
   );
 
   // 固定 rowKey / rowSelection 引用，避免每次 render 生成新对象破坏 VirtualDataTable 的 memo
@@ -374,9 +396,13 @@ export function TableData() {
   );
 
   // 列宽与列可见性：使用稳定的 config.id 作为 key（connId 每次连接都是新 UUID，无法跨会话持久化）
-  const tableKey = stableConnId && database && table ? `${stableConnId}|${database}|${table}` : "";
-  const storedSettings = useTableColumnSettingsStore((s: { settings: Record<string, TableColumnSettings> }) =>
-    tableKey ? (s.settings[tableKey] ?? EMPTY_TABLE_SETTINGS) : null
+  const tableKey =
+    stableConnId && database && table
+      ? `${stableConnId}|${database}|${table}`
+      : "";
+  const storedSettings = useTableColumnSettingsStore(
+    (s: { settings: Record<string, TableColumnSettings> }) =>
+      tableKey ? (s.settings[tableKey] ?? EMPTY_TABLE_SETTINGS) : null
   );
   const {
     setColumnWidth: setStoreColumnWidth,
@@ -451,7 +477,8 @@ export function TableData() {
 
   // 获取主键列（memoized）
   const primaryKeyColumns = useMemo(
-    () => tableStructure?.filter((c) => c.key === "PRI").map((c) => c.name) ?? [],
+    () =>
+      tableStructure?.filter((c) => c.key === "PRI").map((c) => c.name) ?? [],
     [tableStructure]
   );
   const primaryKeyColumn = primaryKeyColumns[0] ?? "";
@@ -468,7 +495,11 @@ export function TableData() {
   const pendingChanges = useMemo(
     () =>
       connId && database && table
-        ? new Map(Object.entries(pendingChangesCache[`${connId}|${database}|${table}`] ?? {}))
+        ? new Map(
+            Object.entries(
+              pendingChangesCache[`${connId}|${database}|${table}`] ?? {}
+            )
+          )
         : new Map<string, PendingChange>(),
     [connId, database, table, pendingChangesCache]
   );
@@ -480,7 +511,8 @@ export function TableData() {
     if (n === 0 && whereClause.trim()) return 1;
     return n;
   }, [filterRows, whereClause]);
-  const hasActiveFilter = enabledFilterCount > 0 && whereClause.trim().length > 0;
+  const hasActiveFilter =
+    enabledFilterCount > 0 && whereClause.trim().length > 0;
 
   // 筛选弹窗（点击工具栏筛选图标打开；保存后应用筛选）
   const [filterModalOpen, setFilterModalOpen] = useState(false);
@@ -656,7 +688,8 @@ export function TableData() {
   // tableStructure 就绪后，如果有隐藏列且首次加载使用了 SELECT *，则用优化列重新加载。仅在数据 tab 时加载
   const hasReloadedForColumns = useRef(false);
   useEffect(() => {
-    if (!connId || !database || !table || tableContentActiveTab !== "data") return;
+    if (!connId || !database || !table || tableContentActiveTab !== "data")
+      return;
     if (hasReloadedForColumns.current) return;
     if (restoredFromCacheRef.current) {
       hasReloadedForColumns.current = true;
@@ -676,7 +709,8 @@ export function TableData() {
   // 分页/排序/筛选变化时重新加载 & 清空待提交。表切换会同时恢复 page/whereClause 等查询状态，
   // 但那属于切表恢复上下文，不应清理任何表的待提交修改。
   useEffect(() => {
-    const currentTableKey = connId && database && table ? `${connId}|${database}|${table}` : "";
+    const currentTableKey =
+      connId && database && table ? `${connId}|${database}|${table}` : "";
     const nextQueryState = {
       tableKey: currentTableKey,
       page,
@@ -810,22 +844,35 @@ export function TableData() {
   }, [clearPendingChanges, connId, database, table]);
 
   // 从 review Modal 中移除一条修改
-  const handleRemovePending = useCallback((key: string) => {
-    if (!connId || !database || !table) return;
-    removePendingChange(connId, database, table, key);
-  }, [connId, database, removePendingChange, table]);
+  const handleRemovePending = useCallback(
+    (key: string) => {
+      if (!connId || !database || !table) return;
+      removePendingChange(connId, database, table, key);
+    },
+    [connId, database, removePendingChange, table]
+  );
 
   // 在 review Modal 中修改某条记录的新值
-  const handleUpdatePendingValue = useCallback((key: string, newValue: unknown) => {
-    if (!connId || !database || !table) return;
-    const change = pendingChanges.get(key);
-    if (!change) return;
-    if (newValue === change.oldValue) {
-      removePendingChange(connId, database, table, key);
-      return;
-    }
-    setPendingChange(connId, database, table, key, { ...change, newValue });
-  }, [connId, database, pendingChanges, removePendingChange, setPendingChange, table]);
+  const handleUpdatePendingValue = useCallback(
+    (key: string, newValue: unknown) => {
+      if (!connId || !database || !table) return;
+      const change = pendingChanges.get(key);
+      if (!change) return;
+      if (newValue === change.oldValue) {
+        removePendingChange(connId, database, table, key);
+        return;
+      }
+      setPendingChange(connId, database, table, key, { ...change, newValue });
+    },
+    [
+      connId,
+      database,
+      pendingChanges,
+      removePendingChange,
+      setPendingChange,
+      table,
+    ]
+  );
 
   // 批量提交所有待提交修改：每行合并为一次 update（多列合并为一条 SQL），
   // 整批在后端单个事务中执行——要么全部成功，要么整批回滚，避免部分提交。
@@ -833,7 +880,10 @@ export function TableData() {
     if (pendingChanges.size === 0) return;
     if (!connId || !database || !table) return;
 
-    const byRow = new Map<string, { primaryKeys: Record<string, unknown>; updates: Record<string, unknown> }>();
+    const byRow = new Map<
+      string,
+      { primaryKeys: Record<string, unknown>; updates: Record<string, unknown> }
+    >();
     let skippedNoPk = 0;
     for (const [, change] of pendingChanges) {
       if (Object.keys(change.primaryKeys).length === 0) {
@@ -900,17 +950,33 @@ export function TableData() {
   const toggleColumnVisibility = useCallback(
     (colName: string) => {
       const wasHidden = hiddenColumns.has(colName);
-      storeToggleColumnVisibility(stableConnId, database, table, colName, hiddenColumns);
+      storeToggleColumnVisibility(
+        stableConnId,
+        database,
+        table,
+        colName,
+        hiddenColumns
+      );
       if (wasHidden && connId && database && table) {
         const newHidden = new Set(hiddenColumns);
         newHidden.delete(colName);
-        const newSelectCols = newHidden.size === 0
-          ? undefined
-          : allColumnNames.filter((c) => !newHidden.has(c));
+        const newSelectCols =
+          newHidden.size === 0
+            ? undefined
+            : allColumnNames.filter((c) => !newHidden.has(c));
         loadData(connId, database, table, newSelectCols);
       }
     },
-    [stableConnId, database, table, hiddenColumns, storeToggleColumnVisibility, connId, allColumnNames, loadData]
+    [
+      stableConnId,
+      database,
+      table,
+      hiddenColumns,
+      storeToggleColumnVisibility,
+      connId,
+      allColumnNames,
+      loadData,
+    ]
   );
 
   // 使用 ref 保存频繁变化的数据，避免 tableColumns 的 useMemo 因 pendingChanges 变化频繁重建
@@ -965,8 +1031,9 @@ export function TableData() {
     () =>
       columns.map((colName) => {
         const colWidth = columnWidths[colName] ?? DEFAULT_COL_WIDTH;
-        const columnComment =
-          tableStructure?.find((c) => c.name === colName)?.comment;
+        const columnComment = tableStructure?.find(
+          (c) => c.name === colName
+        )?.comment;
         const sortIdx = sortFields.findIndex((f) => f.column === colName);
         const sortEntry = sortIdx >= 0 ? sortFields[sortIdx]! : undefined;
         const isSortActive = !!sortEntry;
@@ -974,7 +1041,13 @@ export function TableData() {
           sortFields.length > 1 && sortIdx >= 0 ? sortIdx + 1 : undefined;
         const colDef: ColumnType<Record<string, unknown>> = {
           title: (
-            <span style={{ display: "inline-flex", alignItems: "center", minWidth: 0 }}>
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                minWidth: 0,
+              }}
+            >
               <Tooltip title={columnComment || "无注释"}>
                 <span
                   style={{
@@ -987,7 +1060,11 @@ export function TableData() {
                   }}
                 >
                   {primaryKeyColumns.includes(colName) && (
-                    <span style={{ color: "#faad14", fontSize: 10, flexShrink: 0 }}>PK</span>
+                    <span
+                      style={{ color: "#faad14", fontSize: 10, flexShrink: 0 }}
+                    >
+                      PK
+                    </span>
                   )}
                   <span
                     style={{
@@ -1069,7 +1146,9 @@ export function TableData() {
                 cellKey={`${rowKey}:${colName}`}
                 fieldLabel={colName}
                 readOnly={!rowOperationsAllowed}
-                forceStringSemantics={isStringColumnType(columnTypesByName[colName] ?? "")}
+                forceStringSemantics={isStringColumnType(
+                  columnTypesByName[colName] ?? ""
+                )}
                 onTabNavigate={handleTabNavigate}
                 displayText={renderedText}
                 onEdit={(newValue) => {
@@ -1146,7 +1225,13 @@ export function TableData() {
       const next = prev.filter((key) => validSelectionKeys.has(key));
       return sameRowSelectionKeys(prev, next) ? prev : next;
     });
-  }, [activeTableKey, clientReadOnly, dataSource, rowSelectionScopeKey, setSelectedRowKeysForCurrentScope]);
+  }, [
+    activeTableKey,
+    clientReadOnly,
+    dataSource,
+    rowSelectionScopeKey,
+    setSelectedRowKeysForCurrentScope,
+  ]);
 
   // 底部分页条（页码由 Pagination 控制，每页行数由 InputNumber 自定义）
   const handlePaginationBarChange = useCallback(
@@ -1189,23 +1274,25 @@ export function TableData() {
           const quoteIdentifier = (value: string) =>
             currentDatabaseType === "postgres"
               ? `"${String(value).replace(/"/g, '""')}"`
-              : `\`${String(value).replace(/`/g, "``")}\``;
-          const selectPart = selectColumns && selectColumns.length > 0
-            ? selectColumns.map((c) => quoteIdentifier(c)).join(", ")
-            : "*";
-          const wherePart = whereClause.trim()
-            ? ` WHERE ${whereClause}`
-            : "";
+              : currentDatabaseType === "sqlserver"
+                ? `[${String(value).replace(/]/g, "]]")}]`
+                : `\`${String(value).replace(/`/g, "``")}\``;
+          const selectPart =
+            selectColumns && selectColumns.length > 0
+              ? selectColumns.map((c) => quoteIdentifier(c)).join(", ")
+              : "*";
+          const wherePart = whereClause.trim() ? ` WHERE ${whereClause}` : "";
           const orderPart =
             sortFields.length > 0
               ? ` ORDER BY ${sortFields
-                  .map(
-                    (f) =>
-                      `${quoteIdentifier(String(f.column))} ${f.order}`
-                  )
+                  .map((f) => `${quoteIdentifier(String(f.column))} ${f.order}`)
                   .join(", ")}`
               : "";
           const offset = (page - 1) * pageSize;
+          if (currentDatabaseType === "sqlserver") {
+            const sqlServerOrderPart = orderPart || " ORDER BY (SELECT 0)";
+            return `SELECT ${selectPart} FROM ${quoteIdentifier(database)}.${quoteIdentifier(table)}${wherePart}${sqlServerOrderPart} OFFSET ${offset} ROWS FETCH NEXT ${pageSize} ROWS ONLY`;
+          }
           return `SELECT ${selectPart} FROM ${quoteIdentifier(database)}.${quoteIdentifier(table)}${wherePart}${orderPart} LIMIT ${pageSize} OFFSET ${offset}`;
         })()
       : "";
@@ -1274,9 +1361,7 @@ export function TableData() {
   const getSelectedRows = useCallback((): Record<string, unknown>[] => {
     if (selectedRowKeys.length === 0) return [];
     const keySet = new Set(selectedRowKeys);
-    return dataSource.filter((r) =>
-      keySet.has(String(r._selectionKey))
-    );
+    return dataSource.filter((r) => keySet.has(String(r._selectionKey)));
   }, [selectedRowKeys, dataSource]);
 
   // 复制为 INSERT 语句 (基于勾选的行)
@@ -1339,7 +1424,9 @@ export function TableData() {
           insertColumns = fullResult.columns;
           insertRows = fullResult.rows.map((row) => {
             const obj: Record<string, unknown> = {};
-            fullResult.columns.forEach((col, i) => { obj[col] = row[i]; });
+            fullResult.columns.forEach((col, i) => {
+              obj[col] = row[i];
+            });
             return obj;
           });
         } catch (e) {
@@ -1378,7 +1465,17 @@ export function TableData() {
         messageApi.error("复制到剪贴板失败");
       }
     },
-    [getSelectedRows, table, columns, primaryKeyColumns, primaryKeyColumn, hiddenColumns, connId, database, messageApi]
+    [
+      getSelectedRows,
+      table,
+      columns,
+      primaryKeyColumns,
+      primaryKeyColumn,
+      hiddenColumns,
+      connId,
+      database,
+      messageApi,
+    ]
   );
 
   // 复制为 JSON 数组：仅包含当前在列设置中显示的列（与表格可见列一致），值含未提交的单元格编辑
@@ -1416,7 +1513,15 @@ export function TableData() {
     } catch {
       messageApi.error("复制到剪贴板失败");
     }
-  }, [database, getSelectedRows, messageApi, pendingChanges, primaryKeyColumns, table, visibleColNames]);
+  }, [
+    database,
+    getSelectedRows,
+    messageApi,
+    pendingChanges,
+    primaryKeyColumns,
+    table,
+    visibleColNames,
+  ]);
 
   const handleExportPageExcel = useCallback(async () => {
     if (!database || !table) return;
@@ -1508,7 +1613,13 @@ export function TableData() {
           <Popover
             trigger="click"
             title={
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
                 <span>列显示设置</span>
                 <Space size={4}>
                   <Button
@@ -1527,7 +1638,14 @@ export function TableData() {
                   <Button
                     type="link"
                     size="small"
-                    onClick={() => setStoreHiddenColumns(stableConnId, database, table, allColumnNames)}
+                    onClick={() =>
+                      setStoreHiddenColumns(
+                        stableConnId,
+                        database,
+                        table,
+                        allColumnNames
+                      )
+                    }
                   >
                     全部隐藏
                   </Button>
@@ -1547,16 +1665,18 @@ export function TableData() {
                   />
                 )}
                 <div style={{ maxHeight: 360, overflowY: "auto" }}>
-                  {searchColumns(allColumnNames, columnSearchText).map((col) => (
-                    <div key={col} style={{ padding: "2px 0" }}>
-                      <Checkbox
-                        checked={!hiddenColumns.has(col)}
-                        onChange={() => toggleColumnVisibility(col)}
-                      >
-                        <Text style={{ fontSize: 12 }}>{col}</Text>
-                      </Checkbox>
-                    </div>
-                  ))}
+                  {searchColumns(allColumnNames, columnSearchText).map(
+                    (col) => (
+                      <div key={col} style={{ padding: "2px 0" }}>
+                        <Checkbox
+                          checked={!hiddenColumns.has(col)}
+                          onChange={() => toggleColumnVisibility(col)}
+                        >
+                          <Text style={{ fontSize: 12 }}>{col}</Text>
+                        </Checkbox>
+                      </div>
+                    )
+                  )}
                 </div>
               </div>
             }
@@ -1675,21 +1795,33 @@ export function TableData() {
                               restoredFromCacheRef.current = false;
                               shiftSortFieldPriority(idx, -1);
                             }}
-                            style={{ width: 20, height: 20, minWidth: 20, padding: 0 }}
+                            style={{
+                              width: 20,
+                              height: 20,
+                              minWidth: 20,
+                              padding: 0,
+                            }}
                           />
                         </Tooltip>
                         <Tooltip title="降低优先级">
                           <Button
                             type="text"
                             size="small"
-                            icon={<ArrowDownOutlined style={{ fontSize: 10 }} />}
+                            icon={
+                              <ArrowDownOutlined style={{ fontSize: 10 }} />
+                            }
                             disabled={idx === sortFields.length - 1}
                             aria-label={`将「${f.column}」在排序中后移`}
                             onClick={() => {
                               restoredFromCacheRef.current = false;
                               shiftSortFieldPriority(idx, 1);
                             }}
-                            style={{ width: 20, height: 20, minWidth: 20, padding: 0 }}
+                            style={{
+                              width: 20,
+                              height: 20,
+                              minWidth: 20,
+                              padding: 0,
+                            }}
                           />
                         </Tooltip>
                       </span>
@@ -1717,9 +1849,7 @@ export function TableData() {
           >
             显示不可见字符
           </Checkbox>
-          <Tooltip
-            title={dataEditingAllowed ? "新增行" : insertDisabledReason}
-          >
+          <Tooltip title={dataEditingAllowed ? "新增行" : insertDisabledReason}>
             <Button
               icon={<PlusOutlined />}
               size="small"
@@ -1765,18 +1895,16 @@ export function TableData() {
           )}
           {pendingCount > 0 && (
             <>
-              <Tooltip
-                title={
-                  rowEditDisabledReason ||
-                  undefined
-                }
-              >
+              <Tooltip title={rowEditDisabledReason || undefined}>
                 <Badge count={pendingCount} size="small" offset={[-4, 0]}>
                   <Button
                     icon={<CheckOutlined />}
                     size="small"
                     type="primary"
-                    style={{ backgroundColor: "#52c41a", borderColor: "#52c41a" }}
+                    style={{
+                      backgroundColor: "#52c41a",
+                      borderColor: "#52c41a",
+                    }}
                     disabled={!rowOperationsAllowed}
                     onClick={() => setReviewModalOpen(true)}
                   >
@@ -1795,8 +1923,9 @@ export function TableData() {
               </Tooltip>
             </>
           )}
-          {capabilities.tableDataEditing && selectedRowKeys.length > 0 && (
-            rowOperationsAllowed ? (
+          {capabilities.tableDataEditing &&
+            selectedRowKeys.length > 0 &&
+            (rowOperationsAllowed ? (
               <Popconfirm
                 title={`确定删除选中的 ${selectedRowKeys.length} 行?`}
                 onConfirm={handleDelete}
@@ -1814,7 +1943,9 @@ export function TableData() {
                 </Button>
               </Popconfirm>
             ) : (
-              <Tooltip title={rowEditDisabledReason || noPrimaryKeyDisabledReason}>
+              <Tooltip
+                title={rowEditDisabledReason || noPrimaryKeyDisabledReason}
+              >
                 {/* Tooltip 需要可聚焦的子元素来承载 disabled 状态 */}
                 <span>
                   <Button
@@ -1828,8 +1959,7 @@ export function TableData() {
                   </Button>
                 </span>
               </Tooltip>
-            )
-          )}
+            ))}
         </Space>
 
         {/* 筛选入口已移动到工具栏右侧的筛选图标按钮 */}
@@ -1849,7 +1979,9 @@ export function TableData() {
           columns={tableStructure?.map((c) => c.name) ?? columns}
           columnTypes={
             tableStructure
-              ? Object.fromEntries(tableStructure.map((c) => [c.name, c.column_type]))
+              ? Object.fromEntries(
+                  tableStructure.map((c) => [c.name, c.column_type])
+                )
               : undefined
           }
           databaseType={currentDatabaseType}
@@ -2000,36 +2132,38 @@ export function TableData() {
             gap: 12,
           }}
         >
-        <Space size={4} align="center">
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            每页
-          </Text>
-          <InputNumber
-            min={1}
-            max={TABLE_PAGE_SIZE_MAX}
-            precision={0}
+          <Space size={4} align="center">
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              每页
+            </Text>
+            <InputNumber
+              min={1}
+              max={TABLE_PAGE_SIZE_MAX}
+              precision={0}
+              size="small"
+              value={pageSize}
+              aria-label="每页行数"
+              style={{ width: 88 }}
+              onChange={handleCustomPageSizeChange}
+            />
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              条
+            </Text>
+          </Space>
+          <Pagination
             size="small"
-            value={pageSize}
-            aria-label="每页行数"
-            style={{ width: 88 }}
-            onChange={handleCustomPageSizeChange}
+            current={page}
+            pageSize={pageSize}
+            total={total}
+            showQuickJumper
+            showSizeChanger={false}
+            showTotal={() =>
+              totalCountLoading
+                ? "正在统计行数…"
+                : `共 ${total.toLocaleString()} 行`
+            }
+            onChange={handlePaginationBarChange}
           />
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            条
-          </Text>
-        </Space>
-        <Pagination
-          size="small"
-          current={page}
-          pageSize={pageSize}
-          total={total}
-          showQuickJumper
-          showSizeChanger={false}
-          showTotal={() =>
-            totalCountLoading ? "正在统计行数…" : `共 ${total.toLocaleString()} 行`
-          }
-          onChange={handlePaginationBarChange}
-        />
         </div>
       </div>
 
@@ -2139,119 +2273,124 @@ export function TableData() {
           <Alert type="info" message="没有待提交的修改" showIcon />
         ) : (
           <>
-          <Table
-            dataSource={Array.from(pendingChanges.entries()).map(
-              ([key, change]) => ({ key, ...change })
-            )}
-            rowKey="key"
-            size="small"
-            pagination={false}
-            scroll={{ y: 400 }}
-            columns={[
-              {
-                title: "行标识",
-                dataIndex: "primaryKeys",
-                key: "pk",
-                width: 140,
-                render: (pks: Record<string, unknown>) => (
-                  <Text style={{ fontSize: 11 }}>
-                    {Object.entries(pks)
-                      .map(([k, v]) => `${k}=${v}`)
-                      .join(", ")}
-                  </Text>
-                ),
-              },
-              {
-                title: "列名",
-                dataIndex: "colName",
-                key: "colName",
-                width: 120,
-                render: (name: string) => <Text code>{name}</Text>,
-              },
-              {
-                title: "原始值",
-                dataIndex: "oldValue",
-                key: "oldValue",
-                width: 130,
-                render: (v: unknown) => (
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    {showInvisibleChars && typeof v === "string"
-                      ? visualizeInvisibleChars(displayVal(v))
-                      : displayVal(v)}
-                  </Text>
-                ),
-              },
-              {
-                title: "新值",
-                key: "newValue",
-                width: 160,
-                render: (
-                  _: unknown,
-                  record: PendingChange & { key: string }
-                ) => (
-                  <SafeInput
-                    size="small"
-                    value={
-                      record.newValue === null ? "" : String(record.newValue)
-                    }
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      const val = normalizeValue(raw, record.oldValue, {
-                        forceString: isStringColumnType(
-                          columnTypesByName[record.colName] ?? ""
-                        ),
-                      });
-                      handleUpdatePendingValue(record.key, val);
-                    }}
-                    style={{ fontSize: 12 }}
-                  />
-                ),
-              },
-              {
-                title: "",
-                key: "action",
-                width: 50,
-                render: (_: unknown, record: { key: string }) => (
-                  <Tooltip title="移除此项修改">
-                    <Button
-                      type="link"
+            <Table
+              dataSource={Array.from(pendingChanges.entries()).map(
+                ([key, change]) => ({ key, ...change })
+              )}
+              rowKey="key"
+              size="small"
+              pagination={false}
+              scroll={{ y: 400 }}
+              columns={[
+                {
+                  title: "行标识",
+                  dataIndex: "primaryKeys",
+                  key: "pk",
+                  width: 140,
+                  render: (pks: Record<string, unknown>) => (
+                    <Text style={{ fontSize: 11 }}>
+                      {Object.entries(pks)
+                        .map(([k, v]) => `${k}=${v}`)
+                        .join(", ")}
+                    </Text>
+                  ),
+                },
+                {
+                  title: "列名",
+                  dataIndex: "colName",
+                  key: "colName",
+                  width: 120,
+                  render: (name: string) => <Text code>{name}</Text>,
+                },
+                {
+                  title: "原始值",
+                  dataIndex: "oldValue",
+                  key: "oldValue",
+                  width: 130,
+                  render: (v: unknown) => (
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {showInvisibleChars && typeof v === "string"
+                        ? visualizeInvisibleChars(displayVal(v))
+                        : displayVal(v)}
+                    </Text>
+                  ),
+                },
+                {
+                  title: "新值",
+                  key: "newValue",
+                  width: 160,
+                  render: (
+                    _: unknown,
+                    record: PendingChange & { key: string }
+                  ) => (
+                    <SafeInput
                       size="small"
-                      danger
-                      icon={<DeleteOutlined />}
-                      onClick={() => handleRemovePending(record.key)}
-                      style={{ padding: 0, minWidth: 0 }}
+                      value={
+                        record.newValue === null ? "" : String(record.newValue)
+                      }
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        const val = normalizeValue(raw, record.oldValue, {
+                          forceString: isStringColumnType(
+                            columnTypesByName[record.colName] ?? ""
+                          ),
+                        });
+                        handleUpdatePendingValue(record.key, val);
+                      }}
+                      style={{ fontSize: 12 }}
                     />
-                  </Tooltip>
-                ),
-              },
-            ]}
-          />
-          <div style={{ marginTop: 16 }}>
-            <Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>即将执行的 SQL：</Text>
-            <pre
-              style={{
-                margin: 0,
-                padding: 12,
-                background: "var(--bg-secondary)",
-                borderRadius: 4,
-                fontSize: 12,
-                maxHeight: 120,
-                overflow: "auto",
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-all",
-              }}
-            >
-              <code>
-                {generateUpdateStatements(
-                  database,
-                  table,
-                  Array.from(pendingChanges.values()).filter(
-                    (c) => Object.keys(c.primaryKeys).length > 0
-                  )
-                )}
-              </code>
-            </pre>
-          </div>
+                  ),
+                },
+                {
+                  title: "",
+                  key: "action",
+                  width: 50,
+                  render: (_: unknown, record: { key: string }) => (
+                    <Tooltip title="移除此项修改">
+                      <Button
+                        type="link"
+                        size="small"
+                        danger
+                        icon={<DeleteOutlined />}
+                        onClick={() => handleRemovePending(record.key)}
+                        style={{ padding: 0, minWidth: 0 }}
+                      />
+                    </Tooltip>
+                  ),
+                },
+              ]}
+            />
+            <div style={{ marginTop: 16 }}>
+              <Text
+                type="secondary"
+                style={{ fontSize: 12, display: "block", marginBottom: 4 }}
+              >
+                即将执行的 SQL：
+              </Text>
+              <pre
+                style={{
+                  margin: 0,
+                  padding: 12,
+                  background: "var(--bg-secondary)",
+                  borderRadius: 4,
+                  fontSize: 12,
+                  maxHeight: 120,
+                  overflow: "auto",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-all",
+                }}
+              >
+                <code>
+                  {generateUpdateStatements(
+                    database,
+                    table,
+                    Array.from(pendingChanges.values()).filter(
+                      (c) => Object.keys(c.primaryKeys).length > 0
+                    )
+                  )}
+                </code>
+              </pre>
+            </div>
           </>
         )}
       </Modal>

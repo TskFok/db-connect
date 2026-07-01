@@ -109,7 +109,7 @@ const SQLITE_CAPABILITIES: DatabaseCapabilities = {
 const SQLSERVER_CAPABILITIES: DatabaseCapabilities = {
   sqlEditor: false,
   databaseManagement: false,
-  tableBrowsing: false,
+  tableBrowsing: true,
   tableDataEditing: false,
   schemaManagement: false,
   routineManagement: false,

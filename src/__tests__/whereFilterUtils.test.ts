@@ -218,7 +218,7 @@ describe("whereFilterUtils", () => {
         columnTypes,
         "postgres"
       );
-      expect(clause).toBe("\"name\" LIKE '%\\\"quoted%'");
+      expect(clause).toBe('"name" LIKE \'%\\"quoted%\'');
     });
 
     it("SQLite 方言应使用双引号标识符和单引号字符串转义", () => {
@@ -229,6 +229,16 @@ describe("whereFilterUtils", () => {
         "sqlite"
       );
       expect(clause).toBe("\"name\" = 'O''Brien'");
+    });
+
+    it("SQL Server 方言应使用方括号标识符和单引号字符串转义", () => {
+      const clause = buildWhereClause(
+        { column: "name", operator: "=", value: "O'Brien" },
+        allowedColumns,
+        columnTypes,
+        "sqlserver"
+      );
+      expect(clause).toBe("[name] = 'O''Brien'");
     });
   });
 
@@ -270,7 +280,7 @@ describe("whereFilterUtils", () => {
         columnTypes,
         "sqlite"
       );
-      expect(clause).toBe("(\"status\" = 1) OR (\"name\" LIKE '%Alice%')");
+      expect(clause).toBe('("status" = 1) OR ("name" LIKE \'%Alice%\')');
     });
 
     it("禁用条件不参与分组与构建", () => {
@@ -326,6 +336,9 @@ describe("whereFilterUtils", () => {
   describe("isStringColumnType", () => {
     it("应识别 varchar 为字符串类型", () => {
       expect(isStringColumnType("varchar(255)")).toBe(true);
+    });
+    it("应识别 nvarchar 为字符串类型", () => {
+      expect(isStringColumnType("nvarchar(100)")).toBe(true);
     });
     it("应识别 text 为字符串类型", () => {
       expect(isStringColumnType("text")).toBe(true);
@@ -407,7 +420,7 @@ describe("whereFilterUtils", () => {
         columnTypes,
         "postgres"
       );
-      expect(clause).toBe("(\"status\" = 1) OR (\"name\" = 'Alice')");
+      expect(clause).toBe('("status" = 1) OR ("name" = \'Alice\')');
     });
   });
 

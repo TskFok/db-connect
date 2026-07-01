@@ -51,6 +51,9 @@ function escapeIdentifierForDialect(
   if (dialect === "postgres" || dialect === "sqlite") {
     return `"${name.replace(/"/g, '""')}"`;
   }
+  if (dialect === "sqlserver") {
+    return `[${name.replace(/]/g, "]]")}]`;
+  }
   return escapeIdentifier(name);
 }
 
@@ -58,7 +61,11 @@ function escapeStringForDialect(
   value: string,
   dialect: WhereSqlDialect = "mysql"
 ): string {
-  if (dialect === "postgres" || dialect === "sqlite") {
+  if (
+    dialect === "postgres" ||
+    dialect === "sqlite" ||
+    dialect === "sqlserver"
+  ) {
     return value.replace(/'/g, "''");
   }
   return escapeSqlString(value);
@@ -85,8 +92,11 @@ export function isStringColumnType(columnType: string): boolean {
   const lower = columnType.toLowerCase();
   const stringTypes = [
     "char",
+    "nchar",
     "varchar",
+    "nvarchar",
     "text",
+    "ntext",
     "tinytext",
     "mediumtext",
     "longtext",
@@ -152,7 +162,10 @@ export function buildWhereClause(
   const v = value.trim();
   if (!v) {
     // 空字符串：字符串列生成 = ''；LIKE 无类型信息时也允许 ''（与列类型推断一致）
-    if (operator === "LIKE" || columnSupportsEmptyStringValue(column, columnTypes)) {
+    if (
+      operator === "LIKE" ||
+      columnSupportsEmptyStringValue(column, columnTypes)
+    ) {
       return `${col} ${operator} ''`;
     }
     return "";
