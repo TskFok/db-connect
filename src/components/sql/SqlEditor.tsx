@@ -25,6 +25,7 @@ import {
   InfoCircleOutlined,
   FileSearchOutlined,
   StopOutlined,
+  AlignLeftOutlined,
 } from "@ant-design/icons";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
@@ -59,6 +60,7 @@ import {
 } from "../../utils/excelExport";
 import { listDangerousSqlStatements } from "../../utils/dangerousSql";
 import { supportsExplainAnalyze } from "../../utils/mysqlVersion";
+import { formatSql } from "../../utils/sqlFormat";
 
 const { Text } = Typography;
 
@@ -341,6 +343,32 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
         ? (ed.getModel()?.getValueInRange(selection) ?? "")
         : ed.getValue();
     return sql.trim();
+  }, []);
+
+  const handleFormatSql = useCallback(() => {
+    const ed = editorRef.current;
+    const model = ed?.getModel();
+    if (!ed || !model) return;
+
+    const selection = ed.getSelection();
+    const hasSelection = !!selection && !selection.isEmpty();
+    const sql = hasSelection
+      ? (model.getValueInRange(selection) ?? "")
+      : model.getValue();
+
+    if (!sql.trim()) {
+      message.warning("请先输入或选中要美化的 SQL");
+      return;
+    }
+
+    try {
+      const formatted = formatSql(sql, { dialect: dialectRef.current });
+      const range = hasSelection ? selection! : model.getFullModelRange();
+      ed.executeEdits("format-sql", [{ range, text: formatted }]);
+      ed.focus();
+    } catch (e) {
+      message.error(`SQL 格式化失败: ${String(e)}`);
+    }
   }, []);
 
   const doExplain = useCallback(
@@ -711,6 +739,14 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
               icon={<SaveOutlined />}
               onClick={handleSaveSql}
               disabled={!connId || !activeConnection}
+            />
+          </Tooltip>
+          <Tooltip title="美化当前语句或选中内容">
+            <Button
+              type="default"
+              size="small"
+              icon={<AlignLeftOutlined />}
+              onClick={handleFormatSql}
             />
           </Tooltip>
           {!tabId && (
