@@ -428,6 +428,19 @@ export interface ImportSqlStatementFailure {
   error: string;
 }
 
+/** SQL 文件导入前识别出的高危语句摘要 */
+export interface DangerousSqlStatementPreview {
+  statement_index: number;
+  statement_preview: string;
+}
+
+/** SQL 文件导入预检结果 */
+export interface PreviewSqlFileImportResult {
+  statements_total: number;
+  dangerous_statements_total: number;
+  dangerous_statements: DangerousSqlStatementPreview[];
+}
+
 /** 自文件导入 SQL 的执行结果（失败条目不中断整体导入） */
 export interface ImportSqlFileResult {
   statements_total: number;

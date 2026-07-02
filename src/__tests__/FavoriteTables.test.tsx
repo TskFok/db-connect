@@ -1,4 +1,13 @@
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  beforeAll,
+  afterAll,
+  afterEach,
+} from "vitest";
 import {
   render,
   screen,
@@ -53,14 +62,12 @@ describe("FavoriteTables", () => {
   let getComputedSpy: ReturnType<typeof vi.spyOn>;
 
   beforeAll(() => {
-    getComputedSpy = vi
-      .spyOn(window, "getComputedStyle")
-      .mockImplementation(
-        (): CSSStyleDeclaration =>
-          ({
-            getPropertyValue: () => "",
-          }) as unknown as CSSStyleDeclaration
-      );
+    getComputedSpy = vi.spyOn(window, "getComputedStyle").mockImplementation(
+      (): CSSStyleDeclaration =>
+        ({
+          getPropertyValue: () => "",
+        }) as unknown as CSSStyleDeclaration
+    );
   });
 
   afterAll(() => {
@@ -107,11 +114,56 @@ describe("FavoriteTables", () => {
     expect(screen.getByPlaceholderText(/搜索库名或表名/)).toBeInTheDocument();
   });
 
+  it("SQL Server 使用 schema 文案，且未保存连接时不会串到同 host/port 的 MySQL 收藏", () => {
+    const sqlserverConnection = {
+      connId: "mssql-1",
+      config: {
+        name: "SQL Server 临时连接",
+        host: "localhost",
+        port: 1433,
+        username: "sa",
+        database_type: "sqlserver" as const,
+        database: "appdb",
+      },
+    };
+    useConnectionStore.setState({
+      activeConnections: { "mssql-1": sqlserverConnection },
+      activeConnId: "mssql-1",
+      activeConnection: sqlserverConnection,
+    });
+    useFavoriteStore.setState({
+      favorites: [
+        {
+          connectionId: "session:mysql|localhost|1433|root|appdb",
+          database: "myapp",
+          table: "users",
+        },
+        {
+          connectionId: "session:sqlserver|localhost|1433|sa|appdb",
+          database: "dbo",
+          table: "users",
+        },
+      ],
+    });
+
+    render(<FavoriteTables />);
+    fireEvent.click(screen.getByRole("button", { name: /收藏/ }));
+
+    expect(
+      screen.getByPlaceholderText(/搜索 schema 或表名/)
+    ).toBeInTheDocument();
+    expect(screen.getByText("dbo.users")).toBeInTheDocument();
+    expect(screen.queryByText("myapp.users")).not.toBeInTheDocument();
+    expect(screen.queryByText(/搜索库名或表名/)).not.toBeInTheDocument();
+  });
+
   it("无收藏时下拉显示空状态", () => {
     render(<FavoriteTables />);
     fireEvent.click(screen.getByRole("button", { name: /收藏/ }));
     expect(screen.getByText("暂无收藏")).toBeInTheDocument();
-    expect(screen.getByText(/在数据库树中点击表旁的星标可添加收藏/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/在数据库树中点击表旁的星标可添加收藏/)
+    ).toBeInTheDocument();
   });
 
   it("有收藏时下拉显示收藏列表", () => {
@@ -130,7 +182,8 @@ describe("FavoriteTables", () => {
             table_type: "TABLE",
             engine: "InnoDB",
             rows: 100,
-            data_length: 0, index_length: null,
+            data_length: 0,
+            index_length: null,
             comment: "用户表",
           },
           {
@@ -138,7 +191,8 @@ describe("FavoriteTables", () => {
             table_type: "TABLE",
             engine: "InnoDB",
             rows: 50,
-            data_length: 0, index_length: null,
+            data_length: 0,
+            index_length: null,
             comment: "订单表",
           },
         ],
@@ -152,8 +206,12 @@ describe("FavoriteTables", () => {
     expect(screen.getByText("myapp.orders")).toBeInTheDocument();
     expect(screen.getByText("用户表")).toBeInTheDocument();
     expect(screen.getByText("订单表")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "打开全部收藏" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "取消全部收藏" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "打开全部收藏" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "取消全部收藏" })
+    ).toBeInTheDocument();
   });
 
   it("点击取消全部收藏后清空当前连接收藏并显示空状态", async () => {
@@ -184,7 +242,9 @@ describe("FavoriteTables", () => {
 
   it("取消全部收藏时在确认框点「保留」不应清空", async () => {
     useFavoriteStore.setState({
-      favorites: [{ connectionId: "conn-1", database: "myapp", table: "users" }],
+      favorites: [
+        { connectionId: "conn-1", database: "myapp", table: "users" },
+      ],
     });
     render(<FavoriteTables />);
     fireEvent.click(screen.getByRole("button", { name: /收藏/ }));
@@ -301,9 +361,7 @@ describe("FavoriteTables", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "知道了" }));
     await waitFor(() => {
-      expect(
-        screen.queryByText(/已中止批量打开/)
-      ).not.toBeInTheDocument();
+      expect(screen.queryByText(/已中止批量打开/)).not.toBeInTheDocument();
     });
   });
 
@@ -358,7 +416,8 @@ describe("FavoriteTables", () => {
             table_type: "TABLE",
             engine: "InnoDB",
             rows: 100,
-            data_length: 0, index_length: null,
+            data_length: 0,
+            index_length: null,
             comment: "用户表",
           },
           {
@@ -366,7 +425,8 @@ describe("FavoriteTables", () => {
             table_type: "TABLE",
             engine: "InnoDB",
             rows: 50,
-            data_length: 0, index_length: null,
+            data_length: 0,
+            index_length: null,
             comment: "订单表",
           },
         ],
@@ -397,7 +457,8 @@ describe("FavoriteTables", () => {
             table_type: "TABLE",
             engine: "InnoDB",
             rows: 100,
-            data_length: 0, index_length: null,
+            data_length: 0,
+            index_length: null,
             comment: "用户表",
           },
         ],
@@ -429,7 +490,8 @@ describe("FavoriteTables", () => {
             table_type: "TABLE",
             engine: "InnoDB",
             rows: 100,
-            data_length: 0, index_length: null,
+            data_length: 0,
+            index_length: null,
             comment: "用户表",
           },
           {
@@ -437,7 +499,8 @@ describe("FavoriteTables", () => {
             table_type: "TABLE",
             engine: "InnoDB",
             rows: 50,
-            data_length: 0, index_length: null,
+            data_length: 0,
+            index_length: null,
             comment: "订单表",
           },
         ],

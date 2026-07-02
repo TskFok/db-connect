@@ -73,7 +73,7 @@ describe("getDatabaseCapabilities", () => {
     expect(caps.databaseObjectNoun).toBe("database");
   });
 
-  it("SQL Server Phase 5 开放索引/外键/触发器/例程，仍不展示 MySQL EVENT 和导入导出入口", () => {
+  it("SQL Server Phase 6 开放导入导出、保存 SQL、收藏表，仍不展示 MySQL EVENT", () => {
     const caps = getDatabaseCapabilities("sqlserver");
 
     expect(caps.sqlEditor).toBe(true);
@@ -86,9 +86,9 @@ describe("getDatabaseCapabilities", () => {
     expect(caps.triggerManagement).toBe(true);
     expect(caps.indexManagement).toBe(true);
     expect(caps.foreignKeyManagement).toBe(true);
-    expect(caps.sqlFileImportExport).toBe(false);
-    expect(caps.savedSql).toBe(false);
-    expect(caps.favoriteTables).toBe(false);
+    expect(caps.sqlFileImportExport).toBe(true);
+    expect(caps.savedSql).toBe(true);
+    expect(caps.favoriteTables).toBe(true);
     expect(caps.charsetAndCollation).toBe(false);
     expect(caps.storageEngine).toBe(false);
     expect(caps.columnReordering).toBe(false);

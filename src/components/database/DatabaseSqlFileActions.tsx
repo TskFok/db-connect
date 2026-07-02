@@ -17,16 +17,74 @@ import * as api from "../../services/tauriCommands";
 import { useDatabaseStore } from "../../stores/databaseStore";
 import { useConnectionStore } from "../../stores/connectionStore";
 import {
+  buildExportSqlDescription,
   buildImportFailureDetailsText,
+  buildImportReadOnlyWarningText,
   buildImportSqlConfirmText,
   isConnectionGloballyReadOnly,
 } from "../../utils/sqlFileIoUi";
+import type { PreviewSqlFileImportResult } from "../../types";
 import {
   type SqlIoProgressPayload,
   sqlIoProgressPercent,
 } from "../../utils/sqlIoProgress";
 
 const { Text } = Typography;
+
+function confirmDangerousSqlFileImport(
+  preview: PreviewSqlFileImportResult
+): Promise<boolean> {
+  if (preview.dangerous_statements_total === 0) {
+    return Promise.resolve(true);
+  }
+
+  return new Promise((resolve) => {
+    const hiddenCount =
+      preview.dangerous_statements_total - preview.dangerous_statements.length;
+    Modal.confirm({
+      title: "确认执行高危语句",
+      width: 560,
+      content: (
+        <div>
+          <p style={{ marginBottom: 8 }}>
+            SQL 文件中包含可能造成数据或整库不可恢复丢失的语句，是否仍要导入？
+          </p>
+          <ul
+            style={{
+              paddingLeft: 20,
+              margin: 0,
+              maxHeight: 220,
+              overflow: "auto",
+            }}
+          >
+            {preview.dangerous_statements.map((stmt) => (
+              <li
+                key={stmt.statement_index}
+                style={{
+                  fontFamily: "monospace",
+                  fontSize: 12,
+                  wordBreak: "break-all",
+                }}
+              >
+                第 {stmt.statement_index} 条/批：{stmt.statement_preview}
+              </li>
+            ))}
+          </ul>
+          {hiddenCount > 0 ? (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              另有 {hiddenCount} 条高危语句未展开显示。
+            </Text>
+          ) : null}
+        </div>
+      ),
+      okText: "仍要导入",
+      okType: "danger",
+      cancelText: "取消",
+      onOk: () => resolve(true),
+      onCancel: () => resolve(false),
+    });
+  });
+}
 
 export interface DatabaseSqlFileActionsProps {
   connId: string;
@@ -46,12 +104,10 @@ export function DatabaseSqlFileActions({
   const [exporting, setExporting] = useState(false);
   const activeConnection = useConnectionStore((s) => s.activeConnection);
   const databaseType = activeConnection?.config.database_type;
-  const [importProgress, setImportProgress] = useState<SqlIoProgressPayload | null>(
-    null
-  );
-  const [exportProgress, setExportProgress] = useState<SqlIoProgressPayload | null>(
-    null
-  );
+  const [importProgress, setImportProgress] =
+    useState<SqlIoProgressPayload | null>(null);
+  const [exportProgress, setExportProgress] =
+    useState<SqlIoProgressPayload | null>(null);
   const importUnlistenRef = useRef<UnlistenFn | null>(null);
   const exportUnlistenRef = useRef<UnlistenFn | null>(null);
 
@@ -79,10 +135,7 @@ export function DatabaseSqlFileActions({
     if (await isConnectionGloballyReadOnly(connId, database, databaseType)) {
       Modal.warning({
         title: "无法导入",
-        content:
-          databaseType === "postgres"
-            ? "当前 PostgreSQL 会话处于只读模式，无法执行写入类导入。请切换到可写连接或调整事务只读设置。"
-            : "实例处于只读（read_only / super_read_only），无法执行写入类导入。请在可写副本或主库上操作。",
+        content: buildImportReadOnlyWarningText(databaseType),
       });
       return;
     }
@@ -95,9 +148,27 @@ export function DatabaseSqlFileActions({
     const filePath = Array.isArray(chosen) ? chosen[0] : chosen;
     if (!filePath || typeof filePath !== "string") return;
 
+    let preview: PreviewSqlFileImportResult;
+    try {
+      preview = await api.previewSqlFileImport(databaseType ?? "mysql", filePath);
+    } catch (e) {
+      Modal.error({
+        title: "导入预检失败",
+        content: String(e),
+      });
+      return;
+    }
+
+    const skipDangerConfirm =
+      activeConnection?.config.skip_dangerous_sql_confirm === true;
+    if (preview.dangerous_statements_total > 0 && !skipDangerConfirm) {
+      const confirmed = await confirmDangerousSqlFileImport(preview);
+      if (!confirmed) return;
+    }
+
     Modal.confirm({
       title: "确认导入 SQL 文件",
-      content: buildImportSqlConfirmText(),
+      content: buildImportSqlConfirmText(databaseType),
       okText: "开始导入",
       okType: "danger",
       width: 480,
@@ -139,7 +210,13 @@ export function DatabaseSqlFileActions({
             Modal.error({
               title: "导入失败",
               content: (
-                <div style={{ whiteSpace: "pre-wrap", maxHeight: 360, overflow: "auto" }}>
+                <div
+                  style={{
+                    whiteSpace: "pre-wrap",
+                    maxHeight: 360,
+                    overflow: "auto",
+                  }}
+                >
                   {base}
                   {"\n\n"}
                   {buildImportFailureDetailsText(r)}
@@ -151,7 +228,13 @@ export function DatabaseSqlFileActions({
               title: "导入完成（部分失败）",
               width: 560,
               content: (
-                <div style={{ whiteSpace: "pre-wrap", maxHeight: 360, overflow: "auto" }}>
+                <div
+                  style={{
+                    whiteSpace: "pre-wrap",
+                    maxHeight: 360,
+                    overflow: "auto",
+                  }}
+                >
                   {base}
                   {"\n\n"}
                   {buildImportFailureDetailsText(r)}
@@ -168,7 +251,14 @@ export function DatabaseSqlFileActions({
         }
       },
     });
-  }, [connId, database, databaseType, disabled, cleanupImportListener]);
+  }, [
+    connId,
+    database,
+    databaseType,
+    disabled,
+    activeConnection?.config.skip_dangerous_sql_confirm,
+    cleanupImportListener,
+  ]);
 
   const handleOpenExportModal = useCallback(() => {
     if (disabled || !connId) return;
@@ -260,11 +350,7 @@ export function DatabaseSqlFileActions({
           />
         </Tooltip>
         <Tooltip
-          title={
-            importBlocked
-              ? "请先连接数据库"
-              : "导出当前数据库为 .sql"
-          }
+          title={importBlocked ? "请先连接数据库" : "导出当前数据库为 .sql"}
         >
           <Button
             type="default"
@@ -291,14 +377,20 @@ export function DatabaseSqlFileActions({
         {importParsing ? (
           <>
             <Progress percent={0} status="active" showInfo={false} />
-            <Text type="secondary" style={{ fontSize: 12, marginTop: 8, display: "block" }}>
+            <Text
+              type="secondary"
+              style={{ fontSize: 12, marginTop: 8, display: "block" }}
+            >
               正在解析 SQL 文件…
             </Text>
           </>
         ) : importExecuting && importPct !== undefined ? (
           <>
             <Progress percent={importPct} status="active" />
-            <Text type="secondary" style={{ fontSize: 12, marginTop: 8, display: "block" }}>
+            <Text
+              type="secondary"
+              style={{ fontSize: 12, marginTop: 8, display: "block" }}
+            >
               已执行 {importProgress!.current} / {importProgress!.total} 条语句
             </Text>
           </>
@@ -328,8 +420,8 @@ export function DatabaseSqlFileActions({
                 type="secondary"
                 style={{ fontSize: 12, marginTop: 8, display: "block" }}
               >
-                进度 {exportProgress.current} / {exportProgress.total}（按表、视图和对象分步；
-                大表写入较慢时数字会暂时停留）
+                进度 {exportProgress.current} / {exportProgress.total}
+                （按表、视图和对象分步； 大表写入较慢时数字会暂时停留）
               </Text>
             ) : null}
           </>
@@ -350,9 +442,7 @@ export function DatabaseSqlFileActions({
       >
         <Space direction="vertical" style={{ width: "100%" }}>
           <Text type="secondary" style={{ fontSize: 12 }}>
-            {databaseType === "postgres"
-              ? "将生成当前 schema 的 CREATE SCHEMA、表、视图、索引、外键、触发器、函数/过程定义，及可选 INSERT；导入时可先选中目标 schema 或修改导出文件中的 search_path。"
-              : "将生成表/视图的 CREATE、触发器与事件定义，及可选的 INSERT；语句使用当前默认库（无 USE 源库名、INSERT 不带库前缀），导入时在左侧选中目标库即可迁入其它库名。非 mysqldump。"}
+            {buildExportSqlDescription(databaseType)}
           </Text>
           <Checkbox
             checked={exportIncludeData}

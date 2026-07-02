@@ -2,8 +2,11 @@ use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
 use crate::db::postgres;
 use crate::db::postgres_ddl::format_pg_error;
 use crate::db::sql_script::split_sql_statements;
-use crate::db::sql_utils::{esc_id, esc_str, pg_id, pg_str, strip_export_schema_qualifiers};
+use crate::db::sql_utils::{
+    esc_id, esc_str, pg_id, pg_str, sqlserver_id, sqlserver_str, strip_export_schema_qualifiers,
+};
 use crate::db::sqlite;
+use crate::db::sqlserver;
 use crate::models::types::{
     ExportSqlFileResult, ImportSqlFileResult, ImportSqlStatementFailure, TableInfo,
 };
@@ -42,6 +45,19 @@ fn format_fs_err(context: &str, e: std::io::Error) -> String {
 struct SqlImportProgress {
     current: u32,
     total: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct DangerousSqlStatementPreview {
+    statement_index: u32,
+    statement_preview: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct PreviewSqlFileImportResult {
+    statements_total: u32,
+    dangerous_statements_total: u32,
+    dangerous_statements: Vec<DangerousSqlStatementPreview>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -87,6 +103,20 @@ async fn run_one_postgres_statement(
         .await
         .map(|_| ())
         .map_err(|e| format_pg_error("导入 SQL", e))
+}
+
+async fn run_one_sqlserver_batch(
+    client: &mut bb8::PooledConnection<'_, bb8_tiberius::ConnectionManager>,
+    batch: &str,
+) -> Result<(), String> {
+    client
+        .simple_query(batch)
+        .await
+        .map_err(|e| sqlserver::normalize_sqlserver_error("导入 SQL", e.to_string()))?
+        .into_results()
+        .await
+        .map(|_| ())
+        .map_err(|e| sqlserver::normalize_sqlserver_error("导入 SQL", e.to_string()))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,6 +175,86 @@ struct PgColumnMeta {
     comment: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SqlServerExportDataColumn {
+    name: String,
+    data_type: String,
+    is_identity: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SqlServerExportRelation {
+    name: String,
+    ddl: String,
+    columns: Vec<SqlServerExportDataColumn>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SqlServerExportObject {
+    name: String,
+    ddl: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SqlServerExportMetadata {
+    schema: String,
+    tables: Vec<SqlServerExportRelation>,
+    views: Vec<SqlServerExportObject>,
+    indexes: Vec<SqlServerExportObject>,
+    foreign_keys: Vec<SqlServerExportObject>,
+    triggers: Vec<SqlServerExportObject>,
+    routines: Vec<SqlServerExportObject>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SqlServerExportInsertBatch {
+    table: String,
+    columns: Vec<SqlServerExportDataColumn>,
+    rows: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Clone)]
+struct SqlServerColumnMeta {
+    name: String,
+    data_type: String,
+    nullable: bool,
+    default_constraint: Option<String>,
+    default_expr: Option<String>,
+    is_identity: bool,
+    identity_seed: Option<String>,
+    identity_increment: Option<String>,
+    computed_expr: Option<String>,
+    computed_persisted: bool,
+}
+
+#[derive(Debug, Clone)]
+struct SqlServerPrimaryKeyMeta {
+    name: String,
+    columns: Vec<(String, bool)>,
+}
+
+#[derive(Debug, Clone)]
+struct SqlServerIndexMeta {
+    table_name: String,
+    index_name: String,
+    unique: bool,
+    index_type: String,
+    filter_definition: Option<String>,
+    key_columns: Vec<(String, bool)>,
+    included_columns: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct SqlServerForeignKeyMeta {
+    name: String,
+    table_name: String,
+    referenced_schema: String,
+    referenced_table: String,
+    delete_action: String,
+    update_action: String,
+    columns: Vec<(String, String)>,
+}
+
 fn ensure_semicolon(sql: &str) -> String {
     let trimmed = sql.trim();
     if trimmed.ends_with(';') {
@@ -152,6 +262,153 @@ fn ensure_semicolon(sql: &str) -> String {
     } else {
         format!("{};", trimmed)
     }
+}
+
+#[derive(Debug, Default, Clone)]
+struct SqlServerBatchParseState {
+    in_single: bool,
+    in_double: bool,
+    in_bracket: bool,
+    in_block_comment: bool,
+}
+
+fn sqlserver_go_repeat_count(line: &str) -> Option<usize> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let without_comment = trimmed
+        .split_once("--")
+        .map(|(head, _)| head.trim())
+        .unwrap_or(trimmed);
+    let mut parts = without_comment.split_whitespace();
+    let first = parts.next()?;
+    if !first.eq_ignore_ascii_case("GO") {
+        return None;
+    }
+    let Some(count) = parts.next() else {
+        return Some(1);
+    };
+    if parts.next().is_some() {
+        return None;
+    }
+    let count = count.parse::<usize>().ok()?;
+    (count > 0).then_some(count)
+}
+
+fn update_sqlserver_batch_parse_state(line: &str, state: &mut SqlServerBatchParseState) {
+    let chars = line.chars().collect::<Vec<_>>();
+    let mut i = 0usize;
+    while i < chars.len() {
+        let c = chars[i];
+
+        if state.in_block_comment {
+            if c == '*' && chars.get(i + 1) == Some(&'/') {
+                state.in_block_comment = false;
+                i += 2;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+        if state.in_single {
+            if c == '\'' {
+                if chars.get(i + 1) == Some(&'\'') {
+                    i += 2;
+                } else {
+                    state.in_single = false;
+                    i += 1;
+                }
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+        if state.in_double {
+            if c == '"' {
+                if chars.get(i + 1) == Some(&'"') {
+                    i += 2;
+                } else {
+                    state.in_double = false;
+                    i += 1;
+                }
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+        if state.in_bracket {
+            if c == ']' {
+                if chars.get(i + 1) == Some(&']') {
+                    i += 2;
+                } else {
+                    state.in_bracket = false;
+                    i += 1;
+                }
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+
+        if c == '-' && chars.get(i + 1) == Some(&'-') {
+            break;
+        }
+        if c == '/' && chars.get(i + 1) == Some(&'*') {
+            state.in_block_comment = true;
+            i += 2;
+            continue;
+        }
+        match c {
+            '\'' => state.in_single = true,
+            '"' => state.in_double = true,
+            '[' => state.in_bracket = true,
+            _ => {}
+        }
+        i += 1;
+    }
+}
+
+fn split_sqlserver_batches(sql: &str) -> Vec<String> {
+    let mut batches = Vec::new();
+    let mut current = String::new();
+    let mut state = SqlServerBatchParseState::default();
+
+    for line in sql.split_inclusive('\n') {
+        let can_split =
+            !state.in_single && !state.in_double && !state.in_bracket && !state.in_block_comment;
+        if can_split {
+            if let Some(repeat) = sqlserver_go_repeat_count(line.trim_end_matches(['\r', '\n'])) {
+                let batch = current.trim();
+                if !batch.is_empty() {
+                    for _ in 0..repeat {
+                        batches.push(batch.to_string());
+                    }
+                }
+                current.clear();
+                continue;
+            }
+        }
+        update_sqlserver_batch_parse_state(line, &mut state);
+        current.push_str(line);
+    }
+
+    let tail = current.trim();
+    if !tail.is_empty() {
+        batches.push(tail.to_string());
+    }
+    batches
+}
+
+fn split_import_sql_for_database_type(database_type: &str, sql_text: &str) -> Vec<String> {
+    if database_type.trim().eq_ignore_ascii_case("sqlserver") {
+        return split_sqlserver_batches(sql_text);
+    }
+    split_sql_statements(sql_text)
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 fn starts_with_chars(chars: &[char], start: usize, expected: &str) -> bool {
@@ -500,6 +757,813 @@ fn build_postgres_export_script(
     }
 
     Ok(out)
+}
+
+fn sqlserver_nstr(value: &str) -> String {
+    format!("N{}", sqlserver_str(value))
+}
+
+fn sqlserver_base_type(data_type: &str) -> String {
+    data_type
+        .split_once('(')
+        .map(|(base, _)| base)
+        .unwrap_or(data_type)
+        .trim()
+        .to_ascii_lowercase()
+}
+
+fn sqlserver_quoted_literal_expr(column_sql: &str, convert_expr: &str) -> String {
+    format!(
+        "CASE WHEN {column_sql} IS NULL THEN N'NULL' ELSE CONCAT(N'N''', REPLACE({convert_expr}, N'''', N''''''), N'''') END"
+    )
+}
+
+fn sqlserver_insert_literal_expr(column_sql: &str, data_type: &str) -> String {
+    let base = sqlserver_base_type(data_type);
+    match base.as_str() {
+        "binary" | "varbinary" | "image" | "timestamp" | "rowversion" => format!(
+            "CASE WHEN {column_sql} IS NULL THEN N'NULL' ELSE CONVERT(nvarchar(max), sys.fn_varbintohexstr(CONVERT(varbinary(max), {column_sql}))) END"
+        ),
+        "date" => sqlserver_quoted_literal_expr(
+            column_sql,
+            &format!("CONVERT(nvarchar(max), {column_sql}, 23)"),
+        ),
+        "time" => sqlserver_quoted_literal_expr(
+            column_sql,
+            &format!("CONVERT(nvarchar(max), {column_sql}, 114)"),
+        ),
+        "datetime" | "datetime2" | "datetimeoffset" | "smalldatetime" => {
+            sqlserver_quoted_literal_expr(
+                column_sql,
+                &format!("CONVERT(nvarchar(max), {column_sql}, 126)"),
+            )
+        }
+        "char" | "varchar" | "text" | "nchar" | "nvarchar" | "ntext" | "xml"
+        | "uniqueidentifier" => {
+            sqlserver_quoted_literal_expr(column_sql, &format!("CONVERT(nvarchar(max), {column_sql})"))
+        }
+        "real" | "float" => format!(
+            "CASE WHEN {column_sql} IS NULL THEN N'NULL' ELSE CONVERT(nvarchar(max), {column_sql}, 2) END"
+        ),
+        _ => format!(
+            "CASE WHEN {column_sql} IS NULL THEN N'NULL' ELSE CONVERT(nvarchar(max), {column_sql}) END"
+        ),
+    }
+}
+
+fn sqlserver_column_definition(col: &SqlServerColumnMeta) -> String {
+    if let Some(expr) = col
+        .computed_expr
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let mut line = format!("  {} AS {}", sqlserver_id(&col.name), expr);
+        if col.computed_persisted {
+            line.push_str(" PERSISTED");
+        }
+        return line;
+    }
+
+    let mut parts = vec![format!("  {} {}", sqlserver_id(&col.name), col.data_type)];
+    if col.is_identity {
+        let seed = col.identity_seed.as_deref().unwrap_or("1");
+        let increment = col.identity_increment.as_deref().unwrap_or("1");
+        parts.push(format!("IDENTITY({},{})", seed, increment));
+    }
+    parts.push(if col.nullable { "NULL" } else { "NOT NULL" }.to_string());
+    if let Some(default_expr) = col
+        .default_expr
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if let Some(name) = col
+            .default_constraint
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            parts.push(format!(
+                "CONSTRAINT {} DEFAULT {}",
+                sqlserver_id(name),
+                default_expr
+            ));
+        } else {
+            parts.push(format!("DEFAULT {}", default_expr));
+        }
+    }
+    parts.join(" ")
+}
+
+fn build_sqlserver_table_ddl(
+    schema: &str,
+    table: &str,
+    columns: &[SqlServerColumnMeta],
+    primary_key: Option<&SqlServerPrimaryKeyMeta>,
+) -> String {
+    let mut lines = columns
+        .iter()
+        .map(sqlserver_column_definition)
+        .collect::<Vec<_>>();
+    if let Some(pk) = primary_key {
+        if !pk.columns.is_empty() {
+            let columns = pk
+                .columns
+                .iter()
+                .map(|(name, desc)| {
+                    format!(
+                        "{} {}",
+                        sqlserver_id(name),
+                        if *desc { "DESC" } else { "ASC" }
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            lines.push(format!(
+                "  CONSTRAINT {} PRIMARY KEY ({})",
+                sqlserver_id(&pk.name),
+                columns
+            ));
+        }
+    }
+    format!(
+        "CREATE TABLE {}.{} (\n{}\n)",
+        sqlserver_id(schema),
+        sqlserver_id(table),
+        lines.join(",\n")
+    )
+}
+
+fn build_sqlserver_index_ddl(schema: &str, index: &SqlServerIndexMeta) -> Option<String> {
+    if index.key_columns.is_empty() {
+        return None;
+    }
+    let index_type = match index.index_type.to_ascii_uppercase().as_str() {
+        "CLUSTERED" => "CLUSTERED",
+        "NONCLUSTERED" => "NONCLUSTERED",
+        _ => "NONCLUSTERED",
+    };
+    let keys = index
+        .key_columns
+        .iter()
+        .map(|(name, desc)| {
+            format!(
+                "{} {}",
+                sqlserver_id(name),
+                if *desc { "DESC" } else { "ASC" }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let include = if index.included_columns.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " INCLUDE ({})",
+            index
+                .included_columns
+                .iter()
+                .map(|name| sqlserver_id(name))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    let filter = index
+        .filter_definition
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| format!(" WHERE {}", s))
+        .unwrap_or_default();
+    Some(format!(
+        "CREATE {}{} INDEX {} ON {}.{} ({}){}{}",
+        if index.unique { "UNIQUE " } else { "" },
+        index_type,
+        sqlserver_id(&index.index_name),
+        sqlserver_id(schema),
+        sqlserver_id(&index.table_name),
+        keys,
+        include,
+        filter
+    ))
+}
+
+fn sqlserver_referential_action(action: &str) -> Option<String> {
+    let normalized = action.trim().replace('_', " ").to_ascii_uppercase();
+    (!normalized.is_empty() && normalized != "NO ACTION").then_some(normalized)
+}
+
+fn build_sqlserver_foreign_key_ddl(schema: &str, fk: &SqlServerForeignKeyMeta) -> String {
+    let columns = fk
+        .columns
+        .iter()
+        .map(|(column, _)| sqlserver_id(column))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let ref_columns = fk
+        .columns
+        .iter()
+        .map(|(_, column)| sqlserver_id(column))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut sql = format!(
+        "ALTER TABLE {}.{} WITH CHECK ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {}.{} ({})",
+        sqlserver_id(schema),
+        sqlserver_id(&fk.table_name),
+        sqlserver_id(&fk.name),
+        columns,
+        sqlserver_id(&fk.referenced_schema),
+        sqlserver_id(&fk.referenced_table),
+        ref_columns
+    );
+    if let Some(action) = sqlserver_referential_action(&fk.delete_action) {
+        sql.push_str(&format!(" ON DELETE {}", action));
+    }
+    if let Some(action) = sqlserver_referential_action(&fk.update_action) {
+        sql.push_str(&format!(" ON UPDATE {}", action));
+    }
+    sql
+}
+
+fn append_sqlserver_batch(out: &mut String, ddl: &str) {
+    let trimmed = ddl.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    out.push_str(&ensure_semicolon(trimmed));
+    out.push('\n');
+    out.push_str("GO\n");
+}
+
+fn build_sqlserver_export_script(
+    metadata: &SqlServerExportMetadata,
+    inserts: &[SqlServerExportInsertBatch],
+) -> Result<String, String> {
+    if metadata.schema.trim().is_empty() {
+        return Err("schema 名称不能为空".to_string());
+    }
+
+    let mut out = String::new();
+    out.push_str("-- Exported by DB Connect\n");
+    out.push_str("-- Source database type: SQL Server\n");
+    out.push_str(
+        "-- Import: run in the target database; schema-qualified objects are preserved\n\n",
+    );
+    out.push_str(&format!(
+        "IF SCHEMA_ID({}) IS NULL EXEC({});\nGO\n\n",
+        sqlserver_nstr(&metadata.schema),
+        sqlserver_nstr(&format!("CREATE SCHEMA {}", sqlserver_id(&metadata.schema)))
+    ));
+
+    if !metadata.tables.is_empty() {
+        out.push_str("/* Tables */\n");
+        for table in &metadata.tables {
+            out.push_str(&format!("/* table {} */\n", sqlserver_id(&table.name)));
+            append_sqlserver_batch(&mut out, &table.ddl);
+            out.push('\n');
+        }
+    }
+
+    if !metadata.routines.is_empty() {
+        out.push_str("/* Functions and procedures */\n");
+        for routine in &metadata.routines {
+            out.push_str(&format!("/* routine {} */\n", routine.name));
+            append_sqlserver_batch(&mut out, &routine.ddl);
+        }
+        out.push('\n');
+    }
+
+    if !inserts.is_empty() {
+        out.push_str("/* Data */\n");
+        for batch in inserts {
+            if batch.rows.is_empty() || batch.columns.is_empty() {
+                continue;
+            }
+            let table_ref = format!(
+                "{}.{}",
+                sqlserver_id(&metadata.schema),
+                sqlserver_id(&batch.table)
+            );
+            let has_identity = batch.columns.iter().any(|column| column.is_identity);
+            if has_identity {
+                out.push_str(&format!("SET IDENTITY_INSERT {} ON;\n", table_ref));
+            }
+            let cols = batch
+                .columns
+                .iter()
+                .map(|column| sqlserver_id(&column.name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            for rows in batch.rows.chunks(EXPORT_INSERT_BATCH) {
+                let values = rows
+                    .iter()
+                    .map(|row| format!("({})", row.join(", ")))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                out.push_str(&format!(
+                    "INSERT INTO {} ({}) VALUES {};\n",
+                    table_ref, cols, values
+                ));
+            }
+            if has_identity {
+                out.push_str(&format!("SET IDENTITY_INSERT {} OFF;\n", table_ref));
+            }
+            out.push_str("GO\n\n");
+        }
+    }
+
+    if !metadata.views.is_empty() {
+        out.push_str("/* Views */\n");
+        for view in &metadata.views {
+            out.push_str(&format!("/* view {} */\n", sqlserver_id(&view.name)));
+            append_sqlserver_batch(&mut out, &view.ddl);
+            out.push('\n');
+        }
+    }
+
+    if !metadata.indexes.is_empty() {
+        out.push_str("/* Indexes */\n");
+        for idx in &metadata.indexes {
+            out.push_str(&format!("/* index {} */\n", sqlserver_id(&idx.name)));
+            append_sqlserver_batch(&mut out, &idx.ddl);
+        }
+        out.push('\n');
+    }
+
+    if !metadata.foreign_keys.is_empty() {
+        out.push_str("/* Foreign keys */\n");
+        for fk in &metadata.foreign_keys {
+            out.push_str(&format!("/* foreign key {} */\n", sqlserver_id(&fk.name)));
+            append_sqlserver_batch(&mut out, &fk.ddl);
+        }
+        out.push('\n');
+    }
+
+    if !metadata.triggers.is_empty() {
+        out.push_str("/* Triggers */\n");
+        for trigger in &metadata.triggers {
+            out.push_str(&format!("/* trigger {} */\n", sqlserver_id(&trigger.name)));
+            append_sqlserver_batch(&mut out, &trigger.ddl);
+        }
+        out.push('\n');
+    }
+
+    Ok(out)
+}
+
+fn sqlserver_row_string(row: &tiberius::Row, column: &str) -> String {
+    row.get::<&str, _>(column)
+        .map(str::to_string)
+        .unwrap_or_default()
+}
+
+fn sqlserver_row_opt_string(row: &tiberius::Row, column: &str) -> Option<String> {
+    row.get::<&str, _>(column)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+async fn query_sqlserver_rows(
+    pool: &sqlserver::SqlServerPool,
+    action: &str,
+    sql: String,
+) -> Result<Vec<tiberius::Row>, String> {
+    let mut client = pool
+        .get()
+        .await
+        .map_err(|e| sqlserver::normalize_sqlserver_error("获取连接失败", e.to_string()))?;
+    let rows = client
+        .simple_query(sql)
+        .await
+        .map_err(|e| sqlserver::normalize_sqlserver_error(action, e.to_string()))?
+        .into_first_result()
+        .await
+        .map_err(|e| sqlserver::normalize_sqlserver_error(action, e.to_string()))?;
+    Ok(rows)
+}
+
+async fn load_sqlserver_export_metadata(
+    pool: &sqlserver::SqlServerPool,
+    schema: &str,
+) -> Result<SqlServerExportMetadata, String> {
+    let schema_lit = sqlserver_nstr(schema);
+    let relation_rows = query_sqlserver_rows(
+        pool,
+        "查询 SQL Server 表/视图",
+        format!(
+            "SELECT CAST(o.object_id AS int) AS object_id, o.name, o.type AS object_type, \
+                    m.definition \
+             FROM sys.objects o \
+             JOIN sys.schemas s ON s.schema_id = o.schema_id \
+             LEFT JOIN sys.sql_modules m ON m.object_id = o.object_id \
+             WHERE s.name = {schema_lit} AND o.type IN ('U', 'V') AND o.is_ms_shipped = 0 \
+             ORDER BY CASE WHEN o.type = 'U' THEN 0 ELSE 1 END, o.name"
+        ),
+    )
+    .await?;
+
+    let relations = relation_rows
+        .iter()
+        .map(|row| {
+            (
+                row.get::<i32, _>("object_id").unwrap_or(0),
+                sqlserver_row_string(row, "name"),
+                sqlserver_row_string(row, "object_type"),
+                sqlserver_row_opt_string(row, "definition"),
+            )
+        })
+        .filter(|(object_id, name, _, _)| *object_id != 0 && !name.is_empty())
+        .collect::<Vec<_>>();
+
+    let column_rows = query_sqlserver_rows(
+        pool,
+        "查询 SQL Server 列",
+        format!(
+            "SELECT CAST(t.object_id AS int) AS object_id, c.name AS column_name, \
+                    ty.name AS type_name, CAST(c.max_length AS int) AS max_length, \
+                    CAST(c.precision AS int) AS precision_value, CAST(c.scale AS int) AS scale_value, \
+                    CAST(c.is_nullable AS bit) AS is_nullable, CAST(c.is_identity AS bit) AS is_identity, \
+                    CAST(c.is_computed AS bit) AS is_computed, \
+                    CONVERT(nvarchar(100), ident.seed_value) AS identity_seed, \
+                    CONVERT(nvarchar(100), ident.increment_value) AS identity_increment, \
+                    dc.name AS default_constraint, dc.definition AS default_definition, \
+                    comp.definition AS computed_definition, \
+                    CAST(COALESCE(comp.is_persisted, 0) AS bit) AS computed_persisted, \
+                    CAST(ty.is_user_defined AS bit) AS is_user_defined \
+             FROM sys.tables t \
+             JOIN sys.schemas s ON s.schema_id = t.schema_id \
+             JOIN sys.columns c ON c.object_id = t.object_id \
+             JOIN sys.types ty ON ty.user_type_id = c.user_type_id \
+             LEFT JOIN sys.identity_columns ident ON ident.object_id = c.object_id AND ident.column_id = c.column_id \
+             LEFT JOIN sys.default_constraints dc ON dc.parent_object_id = c.object_id AND dc.parent_column_id = c.column_id \
+             LEFT JOIN sys.computed_columns comp ON comp.object_id = c.object_id AND comp.column_id = c.column_id \
+             WHERE s.name = {schema_lit} AND t.is_ms_shipped = 0 \
+             ORDER BY t.name, c.column_id"
+        ),
+    )
+    .await?;
+
+    let mut columns_by_object: BTreeMap<i32, Vec<SqlServerColumnMeta>> = BTreeMap::new();
+    for row in &column_rows {
+        let object_id = row.get::<i32, _>("object_id").unwrap_or(0);
+        if object_id == 0 {
+            continue;
+        }
+        let type_name = sqlserver_row_string(row, "type_name");
+        let data_type = sqlserver::format_sqlserver_column_type(
+            &type_name,
+            row.get::<i32, _>("max_length"),
+            row.get::<i32, _>("precision_value"),
+            row.get::<i32, _>("scale_value"),
+            row.get::<bool, _>("is_user_defined").unwrap_or(false),
+        );
+        columns_by_object
+            .entry(object_id)
+            .or_default()
+            .push(SqlServerColumnMeta {
+                name: sqlserver_row_string(row, "column_name"),
+                data_type,
+                nullable: row.get::<bool, _>("is_nullable").unwrap_or(false),
+                default_constraint: sqlserver_row_opt_string(row, "default_constraint"),
+                default_expr: sqlserver_row_opt_string(row, "default_definition"),
+                is_identity: row.get::<bool, _>("is_identity").unwrap_or(false),
+                identity_seed: sqlserver_row_opt_string(row, "identity_seed"),
+                identity_increment: sqlserver_row_opt_string(row, "identity_increment"),
+                computed_expr: sqlserver_row_opt_string(row, "computed_definition"),
+                computed_persisted: row.get::<bool, _>("computed_persisted").unwrap_or(false),
+            });
+    }
+
+    let primary_key_rows = query_sqlserver_rows(
+        pool,
+        "查询 SQL Server 主键",
+        format!(
+            "SELECT CAST(t.object_id AS int) AS object_id, kc.name AS constraint_name, \
+                    c.name AS column_name, CAST(ic.is_descending_key AS bit) AS is_descending_key, \
+                    CAST(ic.key_ordinal AS int) AS key_ordinal \
+             FROM sys.key_constraints kc \
+             JOIN sys.tables t ON t.object_id = kc.parent_object_id \
+             JOIN sys.schemas s ON s.schema_id = t.schema_id \
+             JOIN sys.index_columns ic ON ic.object_id = t.object_id AND ic.index_id = kc.unique_index_id \
+             JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id \
+             WHERE s.name = {schema_lit} AND kc.type = 'PK' \
+             ORDER BY t.name, ic.key_ordinal"
+        ),
+    )
+    .await?;
+
+    let mut primary_keys: BTreeMap<i32, SqlServerPrimaryKeyMeta> = BTreeMap::new();
+    for row in &primary_key_rows {
+        let object_id = row.get::<i32, _>("object_id").unwrap_or(0);
+        if object_id == 0 {
+            continue;
+        }
+        primary_keys
+            .entry(object_id)
+            .or_insert_with(|| SqlServerPrimaryKeyMeta {
+                name: sqlserver_row_string(row, "constraint_name"),
+                columns: Vec::new(),
+            })
+            .columns
+            .push((
+                sqlserver_row_string(row, "column_name"),
+                row.get::<bool, _>("is_descending_key").unwrap_or(false),
+            ));
+    }
+
+    let mut tables = Vec::new();
+    let mut views = Vec::new();
+    for (object_id, name, object_type, definition) in &relations {
+        if object_type == "U" {
+            let columns = columns_by_object.remove(object_id).unwrap_or_default();
+            let data_columns = columns
+                .iter()
+                .filter(|column| column.computed_expr.is_none())
+                .map(|column| SqlServerExportDataColumn {
+                    name: column.name.clone(),
+                    data_type: column.data_type.clone(),
+                    is_identity: column.is_identity,
+                })
+                .collect::<Vec<_>>();
+            let ddl =
+                build_sqlserver_table_ddl(schema, name, &columns, primary_keys.get(object_id));
+            tables.push(SqlServerExportRelation {
+                name: name.clone(),
+                ddl,
+                columns: data_columns,
+            });
+        } else if let Some(ddl) = definition.as_ref().filter(|ddl| !ddl.trim().is_empty()) {
+            views.push(SqlServerExportObject {
+                name: name.clone(),
+                ddl: ddl.clone(),
+            });
+        }
+    }
+
+    let index_rows = query_sqlserver_rows(
+        pool,
+        "查询 SQL Server 索引",
+        format!(
+            "SELECT t.name AS table_name, i.name AS index_name, CAST(i.is_unique AS bit) AS is_unique, \
+                    i.type_desc AS index_type, i.filter_definition, c.name AS column_name, \
+                    CAST(COALESCE(ic.key_ordinal, 0) AS int) AS key_ordinal, \
+                    CAST(COALESCE(ic.is_descending_key, 0) AS bit) AS is_descending_key, \
+                    CAST(COALESCE(ic.is_included_column, 0) AS bit) AS is_included_column, \
+                    CAST(COALESCE(ic.index_column_id, 0) AS int) AS index_column_id \
+             FROM sys.indexes i \
+             JOIN sys.tables t ON t.object_id = i.object_id \
+             JOIN sys.schemas s ON s.schema_id = t.schema_id \
+             LEFT JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id \
+             LEFT JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id \
+             WHERE s.name = {schema_lit} AND i.index_id > 0 AND i.type IN (1, 2) \
+               AND i.is_primary_key = 0 AND i.is_unique_constraint = 0 AND i.is_hypothetical = 0 \
+             ORDER BY t.name, i.name, ic.is_included_column, ic.key_ordinal, ic.index_column_id"
+        ),
+    )
+    .await?;
+
+    let mut indexes_by_name: BTreeMap<(String, String), SqlServerIndexMeta> = BTreeMap::new();
+    for row in &index_rows {
+        let table_name = sqlserver_row_string(row, "table_name");
+        let index_name = sqlserver_row_string(row, "index_name");
+        if table_name.is_empty() || index_name.is_empty() {
+            continue;
+        }
+        let column_name = sqlserver_row_string(row, "column_name");
+        let entry = indexes_by_name
+            .entry((table_name.clone(), index_name.clone()))
+            .or_insert_with(|| SqlServerIndexMeta {
+                table_name: table_name.clone(),
+                index_name: index_name.clone(),
+                unique: row.get::<bool, _>("is_unique").unwrap_or(false),
+                index_type: sqlserver_row_string(row, "index_type"),
+                filter_definition: sqlserver_row_opt_string(row, "filter_definition"),
+                key_columns: Vec::new(),
+                included_columns: Vec::new(),
+            });
+        if column_name.is_empty() {
+            continue;
+        }
+        if row.get::<bool, _>("is_included_column").unwrap_or(false) {
+            entry.included_columns.push(column_name);
+        } else if row.get::<i32, _>("key_ordinal").unwrap_or(0) > 0 {
+            entry.key_columns.push((
+                column_name,
+                row.get::<bool, _>("is_descending_key").unwrap_or(false),
+            ));
+        }
+    }
+    let indexes = indexes_by_name
+        .values()
+        .filter_map(|index| {
+            build_sqlserver_index_ddl(schema, index).map(|ddl| SqlServerExportObject {
+                name: index.index_name.clone(),
+                ddl,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let fk_rows = query_sqlserver_rows(
+        pool,
+        "查询 SQL Server 外键",
+        format!(
+            "SELECT fk.name AS fk_name, t.name AS table_name, rs.name AS referenced_schema, \
+                    rt.name AS referenced_table, fk.delete_referential_action_desc AS delete_action, \
+                    fk.update_referential_action_desc AS update_action, pc.name AS column_name, \
+                    rc.name AS referenced_column, CAST(fkc.constraint_column_id AS int) AS ordinal \
+             FROM sys.foreign_keys fk \
+             JOIN sys.tables t ON t.object_id = fk.parent_object_id \
+             JOIN sys.schemas s ON s.schema_id = t.schema_id \
+             JOIN sys.tables rt ON rt.object_id = fk.referenced_object_id \
+             JOIN sys.schemas rs ON rs.schema_id = rt.schema_id \
+             JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id \
+             JOIN sys.columns pc ON pc.object_id = fkc.parent_object_id AND pc.column_id = fkc.parent_column_id \
+             JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id \
+             WHERE s.name = {schema_lit} \
+             ORDER BY t.name, fk.name, fkc.constraint_column_id"
+        ),
+    )
+    .await?;
+
+    let mut fks_by_name: BTreeMap<(String, String), SqlServerForeignKeyMeta> = BTreeMap::new();
+    for row in &fk_rows {
+        let table_name = sqlserver_row_string(row, "table_name");
+        let name = sqlserver_row_string(row, "fk_name");
+        if table_name.is_empty() || name.is_empty() {
+            continue;
+        }
+        fks_by_name
+            .entry((table_name.clone(), name.clone()))
+            .or_insert_with(|| SqlServerForeignKeyMeta {
+                name: name.clone(),
+                table_name: table_name.clone(),
+                referenced_schema: sqlserver_row_string(row, "referenced_schema"),
+                referenced_table: sqlserver_row_string(row, "referenced_table"),
+                delete_action: sqlserver_row_string(row, "delete_action"),
+                update_action: sqlserver_row_string(row, "update_action"),
+                columns: Vec::new(),
+            })
+            .columns
+            .push((
+                sqlserver_row_string(row, "column_name"),
+                sqlserver_row_string(row, "referenced_column"),
+            ));
+    }
+    let foreign_keys = fks_by_name
+        .values()
+        .map(|fk| SqlServerExportObject {
+            name: fk.name.clone(),
+            ddl: build_sqlserver_foreign_key_ddl(schema, fk),
+        })
+        .collect::<Vec<_>>();
+
+    let trigger_rows = query_sqlserver_rows(
+        pool,
+        "查询 SQL Server 触发器",
+        format!(
+            "SELECT tr.name, m.definition \
+             FROM sys.triggers tr \
+             JOIN sys.tables t ON t.object_id = tr.parent_id \
+             JOIN sys.schemas s ON s.schema_id = t.schema_id \
+             JOIN sys.sql_modules m ON m.object_id = tr.object_id \
+             WHERE s.name = {schema_lit} AND tr.is_ms_shipped = 0 \
+             ORDER BY t.name, tr.name"
+        ),
+    )
+    .await?;
+    let triggers = trigger_rows
+        .iter()
+        .filter_map(|row| {
+            let ddl = sqlserver_row_opt_string(row, "definition")?;
+            Some(SqlServerExportObject {
+                name: sqlserver_row_string(row, "name"),
+                ddl,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let routine_rows = query_sqlserver_rows(
+        pool,
+        "查询 SQL Server 函数/过程",
+        format!(
+            "SELECT o.name, m.definition \
+             FROM sys.objects o \
+             JOIN sys.schemas s ON s.schema_id = o.schema_id \
+             JOIN sys.sql_modules m ON m.object_id = o.object_id \
+             WHERE s.name = {schema_lit} AND o.type IN ('P', 'PC', 'FN', 'IF', 'TF', 'FS', 'FT') \
+             ORDER BY o.type, o.name"
+        ),
+    )
+    .await?;
+    let routines = routine_rows
+        .iter()
+        .filter_map(|row| {
+            let ddl = sqlserver_row_opt_string(row, "definition")?;
+            Some(SqlServerExportObject {
+                name: sqlserver_row_string(row, "name"),
+                ddl,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Ok(SqlServerExportMetadata {
+        schema: schema.to_string(),
+        tables,
+        views,
+        indexes,
+        foreign_keys,
+        triggers,
+        routines,
+    })
+}
+
+fn build_sqlserver_insert_batch_query(
+    schema: &str,
+    tables: &[SqlServerExportRelation],
+    max_rows: u64,
+) -> Option<String> {
+    let parts = tables
+        .iter()
+        .enumerate()
+        .filter(|(_, table)| !table.columns.is_empty())
+        .map(|(idx, table)| {
+            let literal_expr = table
+                .columns
+                .iter()
+                .map(|column| {
+                    sqlserver_insert_literal_expr(&sqlserver_id(&column.name), &column.data_type)
+                })
+                .collect::<Vec<_>>()
+                .join(" + N', ' + ");
+            let select_cols = table
+                .columns
+                .iter()
+                .map(|column| sqlserver_id(&column.name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "(SELECT {idx} AS table_order, {} AS table_name, {} AS values_sql \
+                  FROM (SELECT TOP ({}) {} FROM {}.{}) AS exported_rows)",
+                sqlserver_nstr(&table.name),
+                literal_expr,
+                max_rows,
+                select_cols,
+                sqlserver_id(schema),
+                sqlserver_id(&table.name)
+            )
+        })
+        .collect::<Vec<_>>();
+
+    if parts.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "SELECT table_name, values_sql FROM ({}) AS exported_rows ORDER BY table_order",
+        parts.join(" UNION ALL ")
+    ))
+}
+
+async fn load_sqlserver_insert_batches(
+    pool: &sqlserver::SqlServerPool,
+    schema: &str,
+    tables: &[SqlServerExportRelation],
+    max_rows: u64,
+) -> Result<(Vec<SqlServerExportInsertBatch>, u64), String> {
+    let Some(sql) = build_sqlserver_insert_batch_query(schema, tables, max_rows) else {
+        return Ok((Vec::new(), 0));
+    };
+    let rows = query_sqlserver_rows(pool, "导出 SQL Server 表数据", sql).await?;
+    let mut insert_rows = 0u64;
+    let mut rows_by_table: BTreeMap<String, Vec<Vec<String>>> = BTreeMap::new();
+    for row in &rows {
+        let table_name = sqlserver_row_string(row, "table_name");
+        let values_sql = sqlserver_row_string(row, "values_sql");
+        if table_name.is_empty() || values_sql.is_empty() {
+            continue;
+        }
+        insert_rows += 1;
+        rows_by_table
+            .entry(table_name)
+            .or_default()
+            .push(vec![values_sql]);
+    }
+
+    let batches = tables
+        .iter()
+        .filter_map(|table| {
+            rows_by_table
+                .remove(&table.name)
+                .map(|rows| SqlServerExportInsertBatch {
+                    table: table.name.clone(),
+                    columns: table.columns.clone(),
+                    rows,
+                })
+        })
+        .collect();
+
+    Ok((batches, insert_rows))
 }
 
 async fn load_postgres_export_metadata(
@@ -867,6 +1931,76 @@ fn record_import_failure(
     });
 }
 
+async fn read_sql_file_text(file_path: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || -> Result<String, String> {
+        let path = Path::new(&file_path);
+        let meta =
+            std::fs::metadata(path).map_err(|e| format_fs_err("无法读取 SQL 文件信息", e))?;
+        let file_len = meta.len();
+        if file_len > MAX_IMPORT_FILE_BYTES {
+            let cur_mb = file_len as f64 / (1024.0 * 1024.0);
+            let max_mb = MAX_IMPORT_FILE_BYTES / (1024 * 1024);
+            return Err(format!(
+                "SQL 文件过大（当前约 {:.1} MB，单文件上限 {} MB）。可将文件拆分后分批导入，或使用数据库客户端导入。",
+                cur_mb, max_mb
+            ));
+        }
+        let bytes = std::fs::read(path).map_err(|e| format_fs_err("读取 SQL 文件失败", e))?;
+        let bytes = strip_utf8_bom(&bytes);
+        let text = std::str::from_utf8(bytes).map_err(|_| "文件不是有效 UTF-8 文本".to_string())?;
+        Ok(text.to_string())
+    })
+    .await
+    .map_err(|e| format!("读取 SQL 文件任务失败: {}", e))?
+}
+
+fn is_dangerous_import_statement(stmt: &str) -> bool {
+    let upper = stmt.trim().to_uppercase();
+    upper.starts_with("TRUNCATE")
+        || upper.starts_with("DROP DATABASE")
+        || upper.starts_with("DROP SCHEMA")
+}
+
+fn preview_sql_file_dangerous_statements(
+    database_type: &str,
+    sql_text: &str,
+) -> PreviewSqlFileImportResult {
+    let statements = split_import_sql_for_database_type(database_type, sql_text);
+    let mut dangerous_statements = Vec::new();
+    let mut dangerous_statements_total = 0u32;
+
+    for (idx, stmt) in statements.iter().enumerate() {
+        if !is_dangerous_import_statement(stmt) {
+            continue;
+        }
+        dangerous_statements_total += 1;
+        if dangerous_statements.len() < MAX_RECORDED_IMPORT_FAILURES {
+            dangerous_statements.push(DangerousSqlStatementPreview {
+                statement_index: (idx + 1) as u32,
+                statement_preview: summarize_import_statement(stmt),
+            });
+        }
+    }
+
+    PreviewSqlFileImportResult {
+        statements_total: statements.len() as u32,
+        dangerous_statements_total,
+        dangerous_statements,
+    }
+}
+
+#[tauri::command]
+pub async fn preview_sql_file_import(
+    database_type: Option<String>,
+    file_path: String,
+) -> Result<PreviewSqlFileImportResult, String> {
+    let sql_text = read_sql_file_text(file_path).await?;
+    Ok(preview_sql_file_dangerous_statements(
+        database_type.as_deref().unwrap_or("mysql"),
+        &sql_text,
+    ))
+}
+
 /// 从用户选择的 UTF-8 SQL 文件依次执行语句（SELECT 类会执行并丢弃结果）。
 #[tauri::command]
 pub async fn import_sql_file(
@@ -885,43 +2019,25 @@ pub async fn import_sql_file(
         },
     );
 
-    // 读取整文件（上限 512MB）与拆句都是阻塞型 IO/CPU 操作，放到 blocking 线程池，
-    // 避免阻塞当前 Tokio worker 线程影响其它异步命令。
-    let read_path = file_path.clone();
-    let statements: Vec<String> = tokio::task::spawn_blocking(move || -> Result<Vec<String>, String> {
-        let path = Path::new(&read_path);
-        let meta =
-            std::fs::metadata(path).map_err(|e| format_fs_err("无法读取 SQL 文件信息", e))?;
-        let file_len = meta.len();
-        if file_len > MAX_IMPORT_FILE_BYTES {
-            let cur_mb = file_len as f64 / (1024.0 * 1024.0);
-            let max_mb = MAX_IMPORT_FILE_BYTES / (1024 * 1024);
-            return Err(format!(
-                "SQL 文件过大（当前约 {:.1} MB，单文件上限 {} MB）。可将文件拆分后分批导入，或使用 mysql 客户端导入。",
-                cur_mb, max_mb
-            ));
-        }
-        let bytes = std::fs::read(path).map_err(|e| format_fs_err("读取 SQL 文件失败", e))?;
-        let bytes = strip_utf8_bom(&bytes);
-        let text = std::str::from_utf8(bytes).map_err(|_| "文件不是有效 UTF-8 文本".to_string())?;
-        Ok(split_sql_statements(text)
-            .into_iter()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect())
-    })
-    .await
-    .map_err(|e| format!("读取 SQL 文件任务失败: {}", e))??;
-
-    let total = statements.len() as u32;
-    if total == 0 {
-        return Err("未解析到任何 SQL 语句".to_string());
-    }
+    // 读取整文件（上限 512MB）是阻塞型 IO，放到 blocking 线程池，
+    // 避免阻塞当前 Tokio worker 线程影响其它异步命令。拆分需按数据库类型选择。
+    let sql_text = read_sql_file_text(file_path.clone()).await?;
 
     let pool_handle = {
         let mut manager = state.connection_manager.lock().await;
         manager.get_database_pool_for_write(&conn_id)?
     };
+
+    let statements: Vec<String> = match &pool_handle {
+        DatabasePoolHandle::SqlServer(_) => {
+            split_import_sql_for_database_type("sqlserver", &sql_text)
+        }
+        _ => split_import_sql_for_database_type("mysql", &sql_text),
+    };
+    let total = statements.len() as u32;
+    if total == 0 {
+        return Err("未解析到任何 SQL 语句".to_string());
+    }
 
     let start = Instant::now();
     let mut ok: u32 = 0;
@@ -1022,8 +2138,34 @@ pub async fn import_sql_file(
                 }
             }
         }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            let mut client =
+                handle.pool.get().await.map_err(|e| {
+                    sqlserver::normalize_sqlserver_error("获取连接失败", e.to_string())
+                })?;
+
+            for (i, stmt) in statements.iter().enumerate() {
+                match run_one_sqlserver_batch(&mut client, stmt).await {
+                    Ok(()) => ok += 1,
+                    Err(e) => {
+                        failed += 1;
+                        record_import_failure(&mut failures, (i + 1) as u32, stmt, e);
+                    }
+                }
+                let done = (i + 1) as u32;
+                if done == 1
+                    || done == total
+                    || done.is_multiple_of(IMPORT_PROGRESS_EMIT_INTERVAL as u32)
+                {
+                    let _ = app.emit(
+                        "sql-import-progress",
+                        SqlImportProgress {
+                            current: done,
+                            total,
+                        },
+                    );
+                }
+            }
         }
     }
 
@@ -1250,6 +2392,73 @@ async fn export_sqlite_database_to_file_impl(
     })
 }
 
+async fn export_sqlserver_database_to_file_impl(
+    app: &AppHandle,
+    pool: &sqlserver::SqlServerPool,
+    schema: &str,
+    file_path: String,
+    include_data: bool,
+    max_rows: u64,
+    mut file: BufWriter<std::fs::File>,
+) -> Result<ExportSqlFileResult, String> {
+    let start = Instant::now();
+    let metadata = load_sqlserver_export_metadata(pool, schema).await?;
+    let metadata_steps = metadata.tables.len()
+        + metadata.views.len()
+        + metadata.indexes.len()
+        + metadata.foreign_keys.len()
+        + metadata.triggers.len()
+        + metadata.routines.len();
+    let data_steps = if include_data {
+        metadata.tables.len()
+    } else {
+        0
+    };
+    let total_steps_u32 = (metadata_steps + data_steps).max(1) as u32;
+    let _ = app.emit(
+        "sql-export-progress",
+        SqlExportProgress {
+            current: 0,
+            total: total_steps_u32,
+        },
+    );
+
+    let (inserts, insert_rows) = if include_data {
+        load_sqlserver_insert_batches(pool, schema, &metadata.tables, max_rows).await?
+    } else {
+        (Vec::new(), 0)
+    };
+
+    let script = build_sqlserver_export_script(&metadata, &inserts)?;
+    file.write_all(script.as_bytes())
+        .map_err(|e| format_fs_err("写入导出文件失败", e))?;
+    file.flush()
+        .map_err(|e| format_fs_err("写入导出文件失败", e))?;
+    drop(file);
+
+    let path = Path::new(&file_path);
+    crate::util::secure_fs::set_secure_file_permissions(path)
+        .map_err(|e| format!("设置文件权限失败: {}", e))?;
+
+    let _ = app.emit(
+        "sql-export-progress",
+        SqlExportProgress {
+            current: total_steps_u32,
+            total: total_steps_u32,
+        },
+    );
+
+    Ok(ExportSqlFileResult {
+        tables_exported: metadata.tables.len() as u32,
+        views_exported: metadata.views.len() as u32,
+        triggers_exported: metadata.triggers.len() as u32,
+        events_exported: 0,
+        insert_rows,
+        file_path,
+        elapsed_ms: start.elapsed().as_millis() as u64,
+    })
+}
+
 /// 将当前库导出为 .sql（表/视图的 CREATE；可选导出表数据为 INSERT，每表最多 `max_rows_per_table` 行）。
 #[tauri::command]
 pub async fn export_database_to_file(
@@ -1302,8 +2511,17 @@ pub async fn export_database_to_file(
             )
             .await;
         }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            return export_sqlserver_database_to_file_impl(
+                &app,
+                &handle.pool,
+                &database,
+                file_path,
+                include_data,
+                max_rows,
+                file,
+            )
+            .await;
         }
     };
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -1857,5 +3075,164 @@ mod format_fs_err_tests {
         assert!(sql.contains("FROM \"app\".\"orders\" LIMIT 100"));
         assert!(sql.contains("UNION ALL"));
         assert!(sql.contains("ORDER BY table_order"));
+    }
+
+    #[test]
+    fn sqlserver_go_splitter_respects_strings_comments_and_batches() {
+        let sql = "\
+CREATE TABLE [dbo].[users] ([name] nvarchar(100));\n\
+GO\n\
+INSERT INTO [dbo].[users] ([name]) VALUES (N'GO is data');\n\
+-- GO in a line comment must not split\n\
+/*\n\
+GO in a block comment must not split\n\
+*/\n\
+GO\n\
+CREATE TRIGGER [dbo].[users_ai] ON [dbo].[users]\n\
+AFTER INSERT AS\n\
+BEGIN\n\
+  PRINT N'created by trigger';\n\
+END\n\
+go\n";
+
+        let batches = split_sqlserver_batches(sql);
+
+        assert_eq!(batches.len(), 3, "{:#?}", batches);
+        assert!(batches[0].contains("CREATE TABLE"));
+        assert!(batches[1].contains("GO is data"));
+        assert!(batches[1].contains("GO in a block comment"));
+        assert!(batches[2].contains("CREATE TRIGGER"));
+        assert!(!batches
+            .iter()
+            .any(|batch| batch.trim().eq_ignore_ascii_case("GO")));
+    }
+
+    #[test]
+    fn sqlserver_export_script_includes_schema_objects_insert_data_and_go_batches() {
+        let metadata = SqlServerExportMetadata {
+            schema: "dbo".to_string(),
+            tables: vec![SqlServerExportRelation {
+                name: "users".to_string(),
+                ddl: "CREATE TABLE [dbo].[users] (\n  [id] int IDENTITY(1,1) NOT NULL,\n  [name] nvarchar(100) NULL,\n  CONSTRAINT [PK_users] PRIMARY KEY ([id])\n)"
+                    .to_string(),
+                columns: vec![
+                    SqlServerExportDataColumn {
+                        name: "id".to_string(),
+                        data_type: "int".to_string(),
+                        is_identity: true,
+                    },
+                    SqlServerExportDataColumn {
+                        name: "name".to_string(),
+                        data_type: "nvarchar".to_string(),
+                        is_identity: false,
+                    },
+                ],
+            }],
+            views: vec![SqlServerExportObject {
+                name: "active_users".to_string(),
+                ddl: "CREATE VIEW [dbo].[active_users] AS SELECT [id], [name] FROM [dbo].[users]"
+                    .to_string(),
+            }],
+            indexes: vec![SqlServerExportObject {
+                name: "IX_users_name".to_string(),
+                ddl: "CREATE UNIQUE NONCLUSTERED INDEX [IX_users_name] ON [dbo].[users] ([name] ASC)"
+                    .to_string(),
+            }],
+            foreign_keys: vec![SqlServerExportObject {
+                name: "FK_users_org".to_string(),
+                ddl: "ALTER TABLE [dbo].[users] WITH CHECK ADD CONSTRAINT [FK_users_org] FOREIGN KEY ([org_id]) REFERENCES [dbo].[orgs] ([id])"
+                    .to_string(),
+            }],
+            triggers: vec![SqlServerExportObject {
+                name: "users_ai".to_string(),
+                ddl: "CREATE TRIGGER [dbo].[users_ai] ON [dbo].[users] AFTER INSERT AS BEGIN SELECT 1; END"
+                    .to_string(),
+            }],
+            routines: vec![SqlServerExportObject {
+                name: "touch_user".to_string(),
+                ddl: "CREATE PROCEDURE [dbo].[touch_user] AS SELECT 1".to_string(),
+            }],
+        };
+        let inserts = vec![SqlServerExportInsertBatch {
+            table: "users".to_string(),
+            columns: vec![
+                SqlServerExportDataColumn {
+                    name: "id".to_string(),
+                    data_type: "int".to_string(),
+                    is_identity: true,
+                },
+                SqlServerExportDataColumn {
+                    name: "name".to_string(),
+                    data_type: "nvarchar".to_string(),
+                    is_identity: false,
+                },
+            ],
+            rows: vec![
+                vec!["1".to_string(), "N'Ada'".to_string()],
+                vec!["2".to_string(), "N'Bob'".to_string()],
+            ],
+        }];
+
+        let script = build_sqlserver_export_script(&metadata, &inserts).unwrap();
+
+        assert!(script.contains("IF SCHEMA_ID(N'dbo') IS NULL EXEC(N'CREATE SCHEMA [dbo]');"));
+        assert!(script.contains("CREATE TABLE [dbo].[users]"));
+        assert!(script.contains("CREATE PROCEDURE [dbo].[touch_user]"));
+        assert!(script.contains("CREATE VIEW [dbo].[active_users]"));
+        assert!(script.contains("CREATE UNIQUE NONCLUSTERED INDEX [IX_users_name]"));
+        assert!(script.contains("ADD CONSTRAINT [FK_users_org]"));
+        assert!(script.contains("CREATE TRIGGER [dbo].[users_ai]"));
+        assert!(script.contains("SET IDENTITY_INSERT [dbo].[users] ON;"));
+        assert!(script
+            .contains("INSERT INTO [dbo].[users] ([id], [name]) VALUES (1, N'Ada'), (2, N'Bob');"));
+        assert!(script.contains("SET IDENTITY_INSERT [dbo].[users] OFF;"));
+        assert!(script.matches("\nGO\n").count() >= 5, "{}", script);
+        assert!(!script.contains("FOREIGN_KEY_CHECKS"));
+        assert!(!script.contains("SET search_path"));
+    }
+
+    #[test]
+    fn sqlserver_insert_literal_expr_quotes_values_by_type() {
+        assert_eq!(
+            sqlserver_insert_literal_expr("[name]", "nvarchar"),
+            "CASE WHEN [name] IS NULL THEN N'NULL' ELSE CONCAT(N'N''', REPLACE(CONVERT(nvarchar(max), [name]), N'''', N''''''), N'''') END"
+        );
+        assert_eq!(
+            sqlserver_insert_literal_expr("[payload]", "varbinary"),
+            "CASE WHEN [payload] IS NULL THEN N'NULL' ELSE CONVERT(nvarchar(max), sys.fn_varbintohexstr(CONVERT(varbinary(max), [payload]))) END"
+        );
+        assert_eq!(
+            sqlserver_insert_literal_expr("[created_at]", "datetime2"),
+            "CASE WHEN [created_at] IS NULL THEN N'NULL' ELSE CONCAT(N'N''', REPLACE(CONVERT(nvarchar(max), [created_at], 126), N'''', N''''''), N'''') END"
+        );
+        assert_eq!(
+            sqlserver_insert_literal_expr("[amount]", "bigint"),
+            "CASE WHEN [amount] IS NULL THEN N'NULL' ELSE CONVERT(nvarchar(max), [amount]) END"
+        );
+    }
+
+    #[test]
+    fn sqlserver_import_preview_detects_dangerous_go_batches() {
+        let sql = "\
+TRUNCATE TABLE [dbo].[users]\n\
+GO\n\
+SELECT N'TRUNCATE TABLE is only string data';\n\
+GO\n\
+DROP SCHEMA [old_schema]\n";
+
+        let preview = preview_sql_file_dangerous_statements("sqlserver", sql);
+
+        assert_eq!(preview.statements_total, 3);
+        assert_eq!(preview.dangerous_statements.len(), 2);
+        assert_eq!(preview.dangerous_statements[0].statement_index, 1);
+        assert_eq!(
+            preview.dangerous_statements[0].statement_preview,
+            "TRUNCATE TABLE [dbo].[users]"
+        );
+        assert_eq!(preview.dangerous_statements[1].statement_index, 3);
+        assert_eq!(
+            preview.dangerous_statements[1].statement_preview,
+            "DROP SCHEMA [old_schema]"
+        );
     }
 }

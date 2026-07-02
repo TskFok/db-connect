@@ -1,5 +1,16 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { Typography, Tag, Empty, Spin, Button, Space, Popconfirm, Tooltip, message, Tabs } from "antd";
+import {
+  Typography,
+  Tag,
+  Empty,
+  Spin,
+  Button,
+  Space,
+  Popconfirm,
+  Tooltip,
+  message,
+  Tabs,
+} from "antd";
 import { SafeInput } from "../common/SafeInput";
 import type { ColumnType } from "antd/es/table";
 import {
@@ -54,6 +65,7 @@ import {
   LIST_TABLE_IDS,
 } from "../../utils/listTableColumns";
 import { createListColumnAutoFit } from "../../utils/columnAutoFitWidth";
+import { favoriteConnectionKey } from "../../utils/favoriteConnection";
 
 const { Title, Text } = Typography;
 
@@ -98,15 +110,15 @@ export function DatabaseOverview() {
   const favorites = useFavoriteStore((s) => s.favorites);
   const toggleFavorite = useFavoriteStore((s) => s.toggleFavorite);
   const connId = activeConnection?.connId ?? "";
-  const connectionId =
-    activeConnection?.config.id ??
-    (activeConnection
-      ? `${activeConnection.config.host}:${activeConnection.config.port}`
-      : "");
+  const connectionId = activeConnection
+    ? favoriteConnectionKey(activeConnection.config)
+    : "";
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [editDbModalOpen, setEditDbModalOpen] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
-  const systemDb = selectedDatabase ? isSystemDatabase(selectedDatabase) : false;
+  const systemDb = selectedDatabase
+    ? isSystemDatabase(selectedDatabase)
+    : false;
   const [instanceReadOnly, setInstanceReadOnly] = useState(false);
   const clientReadOnly = useClientReadOnly();
   const writeBlocked = clientReadOnly || instanceReadOnly;
@@ -176,7 +188,9 @@ export function DatabaseOverview() {
   const [largeIndexOnly, setLargeIndexOnly] = useState(false);
   const searchInputRef = useRef<InputRef>(null);
   /** 数据库视图：表列表 | 例程 | 事件 */
-  const [dbOverviewTab, setDbOverviewTab] = useState<"tables" | "routines" | "events">("tables");
+  const [dbOverviewTab, setDbOverviewTab] = useState<
+    "tables" | "routines" | "events"
+  >("tables");
   const overviewListRemeasureKey = `${dbOverviewTab}|${selectedDatabase ?? ""}`;
   const { containerRef: tableListContainerRef, scrollY: tableListScrollY } =
     useAntTableScrollY({ remeasureKey: overviewListRemeasureKey });
@@ -227,7 +241,14 @@ export function DatabaseOverview() {
         );
       }
     },
-    [connId, selectedDatabase, dropTable, messageApi, clientReadOnly, instanceReadOnly]
+    [
+      connId,
+      selectedDatabase,
+      dropTable,
+      messageApi,
+      clientReadOnly,
+      instanceReadOnly,
+    ]
   );
 
   const handleTruncateTable = useCallback(
@@ -238,7 +259,13 @@ export function DatabaseOverview() {
         messageApi.warning("当前连接在配置中标记为只读，无法 TRUNCATE。");
         return;
       }
-      if (await isConnectionGloballyReadOnly(connId, selectedDatabase, databaseType)) {
+      if (
+        await isConnectionGloballyReadOnly(
+          connId,
+          selectedDatabase,
+          databaseType
+        )
+      ) {
         messageApi.warning(
           databaseType === "postgres"
             ? "当前 PostgreSQL 会话处于只读模式，无法执行 TRUNCATE。请切换到可写连接或调整事务只读设置。"
@@ -256,7 +283,14 @@ export function DatabaseOverview() {
         });
       }
     },
-    [connId, selectedDatabase, databaseType, truncateTable, messageApi, clientReadOnly]
+    [
+      connId,
+      selectedDatabase,
+      databaseType,
+      truncateTable,
+      messageApi,
+      clientReadOnly,
+    ]
   );
 
   const columnDefinitions = useMemo<Record<string, ColumnType<TableInfo>>>(
@@ -368,7 +402,9 @@ export function DatabaseOverview() {
                     size="small"
                     icon={
                       fav ? (
-                        <StarFilled style={{ color: "#faad14", fontSize: 14 }} />
+                        <StarFilled
+                          style={{ color: "#faad14", fontSize: 14 }}
+                        />
                       ) : (
                         <StarOutlined
                           style={{
@@ -391,7 +427,8 @@ export function DatabaseOverview() {
                   />
                 </Tooltip>
               )}
-              {capabilities.schemaManagement && isTable &&
+              {capabilities.schemaManagement &&
+                isTable &&
                 (writeBlocked ? (
                   <Tooltip
                     title={
@@ -437,8 +474,8 @@ export function DatabaseOverview() {
                     </Tooltip>
                   </Popconfirm>
                 ))}
-              {capabilities.schemaManagement && (
-                writeBlocked ? (
+              {capabilities.schemaManagement &&
+                (writeBlocked ? (
                   <Tooltip
                     title={
                       clientReadOnly
@@ -461,7 +498,10 @@ export function DatabaseOverview() {
                     title="确认删除"
                     description={`确定要删除表 "${record.name}" 吗？此操作不可恢复！`}
                     onConfirm={(e) =>
-                      handleDropTable(record.name, e as unknown as React.MouseEvent)
+                      handleDropTable(
+                        record.name,
+                        e as unknown as React.MouseEvent
+                      )
                     }
                     onCancel={(e) => e?.stopPropagation()}
                     okText="删除"
@@ -478,8 +518,7 @@ export function DatabaseOverview() {
                       />
                     </Tooltip>
                   </Popconfirm>
-                )
-              )}
+                ))}
             </Space>
           );
         },
@@ -590,9 +629,7 @@ export function DatabaseOverview() {
       await dropDatabase(connId, selectedDatabase);
       messageApi.success(`${objectNoun}「${selectedDatabase}」已删除`);
     } catch (err) {
-      messageApi.error(
-        err instanceof Error ? err.message : String(err)
-      );
+      messageApi.error(err instanceof Error ? err.message : String(err));
     }
   }, [
     connId,
@@ -616,16 +653,22 @@ export function DatabaseOverview() {
 
       <Tabs
         activeKey={dbOverviewTab}
-        onChange={(k) => setDbOverviewTab(k as "tables" | "routines" | "events")}
-        style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
+        onChange={(k) =>
+          setDbOverviewTab(k as "tables" | "routines" | "events")
+        }
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+        }}
         className="full-height-tabs"
         items={[
           {
             key: "tables",
             label: (
               <span>
-                <TableOutlined />
-                表
+                <TableOutlined />表
               </span>
             ),
             children: (
@@ -647,8 +690,13 @@ export function DatabaseOverview() {
                     }}
                   >
                     <Space size={8}>
-                      <DatabaseOutlined style={{ fontSize: 20, color: "#1677ff" }} />
-                      <Title level={4} style={{ margin: 0, color: "var(--text-primary)" }}>
+                      <DatabaseOutlined
+                        style={{ fontSize: 20, color: "#1677ff" }}
+                      />
+                      <Title
+                        level={4}
+                        style={{ margin: 0, color: "var(--text-primary)" }}
+                      >
                         {selectedDatabase}
                       </Title>
                     </Space>
@@ -660,7 +708,10 @@ export function DatabaseOverview() {
                           icon={<SearchOutlined />}
                           onClick={() => {
                             setSearchVisible(true);
-                            setTimeout(() => searchInputRef.current?.focus(), 50);
+                            setTimeout(
+                              () => searchInputRef.current?.focus(),
+                              50
+                            );
                           }}
                         />
                       </Tooltip>
@@ -704,8 +755,8 @@ export function DatabaseOverview() {
                           />
                         </Tooltip>
                       )}
-                      {capabilities.databaseManagement && (
-                        writeBlocked ? (
+                      {capabilities.databaseManagement &&
+                        (writeBlocked ? (
                           <Tooltip
                             title={
                               systemDb
@@ -756,8 +807,7 @@ export function DatabaseOverview() {
                               </span>
                             </Tooltip>
                           </Popconfirm>
-                        )
-                      )}
+                        ))}
                       {capabilities.schemaManagement && (
                         <Tooltip
                           title={
@@ -794,7 +844,11 @@ export function DatabaseOverview() {
                     >
                       <SafeInput
                         ref={searchInputRef}
-                        prefix={<SearchOutlined style={{ color: "var(--text-secondary)" }} />}
+                        prefix={
+                          <SearchOutlined
+                            style={{ color: "var(--text-secondary)" }}
+                          />
+                        }
                         placeholder="搜索表名或注释..."
                         value={searchKeyword}
                         onChange={(e) => setSearchKeyword(e.target.value)}
@@ -812,7 +866,11 @@ export function DatabaseOverview() {
                   )}
 
                   {tableList.length > 0 && (
-                    <Space size={16} wrap style={{ marginTop: 4, marginBottom: 4 }}>
+                    <Space
+                      size={16}
+                      wrap
+                      style={{ marginTop: 4, marginBottom: 4 }}
+                    >
                       <Text type="secondary">
                         数据合计: {formatBytes(storageSummary.totalDataLength)}
                       </Text>
@@ -876,68 +934,68 @@ export function DatabaseOverview() {
           },
           ...(capabilities.routineManagement
             ? [
-          {
-            key: "routines",
-            label: (
-              <span>
-                <FunctionOutlined />
-                例程
-              </span>
-            ),
-            children: (
-              <div
-                style={{
-                  height: "100%",
-                  display: "flex",
-                  flexDirection: "column",
-                  minHeight: 0,
-                  overflow: "hidden",
-                }}
-              >
-                <Space style={{ marginBottom: 8, flexShrink: 0 }}>
-                  <DatabaseOutlined />
-                  <Title level={5} style={{ margin: 0 }}>
-                    {selectedDatabase}
-                  </Title>
-                  <Text type="secondary">存储过程与函数</Text>
-                </Space>
-                <RoutineList remeasureKey={overviewListRemeasureKey} />
-              </div>
-            ),
-          },
+                {
+                  key: "routines",
+                  label: (
+                    <span>
+                      <FunctionOutlined />
+                      例程
+                    </span>
+                  ),
+                  children: (
+                    <div
+                      style={{
+                        height: "100%",
+                        display: "flex",
+                        flexDirection: "column",
+                        minHeight: 0,
+                        overflow: "hidden",
+                      }}
+                    >
+                      <Space style={{ marginBottom: 8, flexShrink: 0 }}>
+                        <DatabaseOutlined />
+                        <Title level={5} style={{ margin: 0 }}>
+                          {selectedDatabase}
+                        </Title>
+                        <Text type="secondary">存储过程与函数</Text>
+                      </Space>
+                      <RoutineList remeasureKey={overviewListRemeasureKey} />
+                    </div>
+                  ),
+                },
               ]
             : []),
           ...(capabilities.eventManagement
             ? [
-          {
-            key: "events",
-            label: (
-              <span>
-                <ClockCircleOutlined />
-                事件
-              </span>
-            ),
-            children: (
-              <div
-                style={{
-                  height: "100%",
-                  display: "flex",
-                  flexDirection: "column",
-                  minHeight: 0,
-                  overflow: "hidden",
-                }}
-              >
-                <Space style={{ marginBottom: 8, flexShrink: 0 }}>
-                  <DatabaseOutlined />
-                  <Title level={5} style={{ margin: 0 }}>
-                    {selectedDatabase}
-                  </Title>
-                  <Text type="secondary">定时事件（EVENT）</Text>
-                </Space>
-                <EventList remeasureKey={overviewListRemeasureKey} />
-              </div>
-            ),
-          },
+                {
+                  key: "events",
+                  label: (
+                    <span>
+                      <ClockCircleOutlined />
+                      事件
+                    </span>
+                  ),
+                  children: (
+                    <div
+                      style={{
+                        height: "100%",
+                        display: "flex",
+                        flexDirection: "column",
+                        minHeight: 0,
+                        overflow: "hidden",
+                      }}
+                    >
+                      <Space style={{ marginBottom: 8, flexShrink: 0 }}>
+                        <DatabaseOutlined />
+                        <Title level={5} style={{ margin: 0 }}>
+                          {selectedDatabase}
+                        </Title>
+                        <Text type="secondary">定时事件（EVENT）</Text>
+                      </Space>
+                      <EventList remeasureKey={overviewListRemeasureKey} />
+                    </div>
+                  ),
+                },
               ]
             : []),
         ]}

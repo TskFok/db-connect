@@ -4,6 +4,7 @@ import { SavedSqlDropdown } from "../components/database/SavedSqlDropdown";
 import { useConnectionStore } from "../stores/connectionStore";
 import { useDatabaseStore } from "../stores/databaseStore";
 import { useSavedSqlStore } from "../stores/savedSqlStore";
+import { savedSqlConnectionKey } from "../utils/savedSqlConnection";
 import type { SavedSql } from "../stores/savedSqlStore";
 
 vi.mock("../services/tauriCommands", () => ({
@@ -93,7 +94,63 @@ describe("SavedSqlDropdown", () => {
       fireEvent.click(screen.getByRole("button", { name: /已保存的 SQL/ }));
       fireEvent.click(screen.getByRole("button", { name: "加载已保存的 SQL" }));
       expect(screen.getByPlaceholderText(/搜索名称或 SQL/)).toBeInTheDocument();
-      expect(useDatabaseStore.getState().openTabs.some((t) => t.type === "sql")).toBe(true);
+      expect(
+        useDatabaseStore.getState().openTabs.some((t) => t.type === "sql")
+      ).toBe(true);
+    });
+
+    it("SQL Server 仅显示当前连接键下保存的 SQL，避免同 host/port 串到 MySQL", () => {
+      const sqlserverConfig = {
+        name: "SQL Server 临时连接",
+        host: "localhost",
+        port: 1433,
+        username: "sa",
+        database: "appdb",
+        database_type: "sqlserver" as const,
+      };
+      const mysqlConfig = {
+        ...sqlserverConfig,
+        name: "MySQL 临时连接",
+        username: "root",
+        database_type: "mysql" as const,
+      };
+      const sqlserverItem: SavedSql = {
+        id: "sqlserver-sql",
+        name: "SQL Server 查询",
+        sql: "SELECT TOP 10 * FROM dbo.users",
+        createdAt: Date.now(),
+        connectionKey: savedSqlConnectionKey(sqlserverConfig),
+        connectionLabel: "SQL Server 临时连接",
+      };
+      const mysqlItem: SavedSql = {
+        id: "mysql-sql",
+        name: "MySQL 查询",
+        sql: "SELECT * FROM users LIMIT 10",
+        createdAt: Date.now(),
+        connectionKey: savedSqlConnectionKey(mysqlConfig),
+        connectionLabel: "MySQL 临时连接",
+      };
+
+      useConnectionStore.setState({
+        activeConnections: {
+          "mssql-1": {
+            connId: "mssql-1",
+            config: sqlserverConfig,
+          },
+        },
+        activeConnId: "mssql-1",
+        activeConnection: {
+          connId: "mssql-1",
+          config: sqlserverConfig,
+        },
+      });
+      useSavedSqlStore.setState({ list: [sqlserverItem, mysqlItem] });
+
+      render(<SavedSqlDropdown />);
+      fireEvent.click(screen.getByRole("button", { name: /已保存的 SQL/ }));
+
+      expect(screen.getByText("SQL Server 查询")).toBeInTheDocument();
+      expect(screen.queryByText("MySQL 查询")).not.toBeInTheDocument();
     });
   });
 
@@ -104,7 +161,9 @@ describe("SavedSqlDropdown", () => {
         activeConnId: "conn-1",
         activeConnection: mockActiveConnection,
       });
-      useSavedSqlStore.setState({ list: [makeItem("conn-1", "SELECT * FROM t")] });
+      useSavedSqlStore.setState({
+        list: [makeItem("conn-1", "SELECT * FROM t")],
+      });
     });
 
     it("未连接时禁用触发按钮", () => {
@@ -152,7 +211,9 @@ describe("SavedSqlDropdown", () => {
           />
         );
         fireEvent.click(screen.getByRole("button", { name: /已保存的 SQL/ }));
-        fireEvent.click(screen.getByRole("button", { name: "加载并运行已保存的 SQL" }));
+        fireEvent.click(
+          screen.getByRole("button", { name: "加载并运行已保存的 SQL" })
+        );
         expect(setSql).toHaveBeenCalledWith("SELECT * FROM t");
         vi.advanceTimersByTime(100);
         expect(run).toHaveBeenCalledTimes(1);

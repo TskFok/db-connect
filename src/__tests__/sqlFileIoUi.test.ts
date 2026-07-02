@@ -13,7 +13,9 @@ vi.mock("../services/tauriCommands", () => ({
 import * as api from "../services/tauriCommands";
 import {
   IMPORT_SQL_BACKUP_HINT,
+  buildExportSqlDescription,
   buildImportFailureDetailsText,
+  buildImportReadOnlyWarningText,
   buildImportSqlConfirmText,
   isConnectionGloballyReadOnly,
   isServerReadOnlyFromSqlResult,
@@ -32,6 +34,30 @@ describe("sqlFileIoUi", () => {
     expect(t).toContain(IMPORT_SQL_BACKUP_HINT);
     expect(t).toContain("DROP");
     expect(t).toContain("跳过");
+  });
+
+  it("SQL Server 导入确认文案提示 GO 批处理分隔符", () => {
+    const t = buildImportSqlConfirmText("sqlserver");
+    expect(t).toContain("GO");
+    expect(t).toContain("批");
+    expect(t).toContain(IMPORT_SQL_BACKUP_HINT);
+  });
+
+  it("SQL Server 只读导入提示不使用 MySQL read_only 文案", () => {
+    const t = buildImportReadOnlyWarningText("sqlserver");
+    expect(t).toContain("SQL Server");
+    expect(t).toContain("READ_ONLY");
+    expect(t).not.toContain("@@global");
+    expect(t).not.toContain("super_read_only");
+  });
+
+  it("SQL Server 导出说明使用 schema 和 GO 文案，不出现 MySQL 专属事件说明", () => {
+    const t = buildExportSqlDescription("sqlserver");
+    expect(t).toContain("当前 schema");
+    expect(t).toContain("GO");
+    expect(t).toContain("函数/过程");
+    expect(t).not.toContain("事件");
+    expect(t).not.toContain("mysqldump");
   });
 
   it("buildImportFailureDetailsText 无失败时为空", () => {
@@ -134,9 +160,7 @@ describe("sqlFileIoUi", () => {
       message: "",
       execution_time_ms: 0,
     });
-    await expect(
-      isConnectionGloballyReadOnly("c1", "db")
-    ).resolves.toBe(true);
+    await expect(isConnectionGloballyReadOnly("c1", "db")).resolves.toBe(true);
     expect(mockExecuteSql).toHaveBeenCalledTimes(1);
   });
 
@@ -151,9 +175,7 @@ describe("sqlFileIoUi", () => {
         message: "",
         execution_time_ms: 0,
       });
-    await expect(
-      isConnectionGloballyReadOnly("c1", "db")
-    ).resolves.toBe(false);
+    await expect(isConnectionGloballyReadOnly("c1", "db")).resolves.toBe(false);
     expect(mockExecuteSql).toHaveBeenCalledTimes(2);
   });
 
@@ -167,11 +189,13 @@ describe("sqlFileIoUi", () => {
       execution_time_ms: 0,
     });
     await expect(
-      (isConnectionGloballyReadOnly as unknown as (
-        connId: string,
-        database: string,
-        databaseType: "postgres"
-      ) => Promise<boolean>)("c1", "public", "postgres")
+      (
+        isConnectionGloballyReadOnly as unknown as (
+          connId: string,
+          database: string,
+          databaseType: "postgres"
+        ) => Promise<boolean>
+      )("c1", "public", "postgres")
     ).resolves.toBe(true);
     expect(mockExecuteSql).toHaveBeenCalledTimes(1);
     expect(mockExecuteSql).toHaveBeenCalledWith(
@@ -192,11 +216,13 @@ describe("sqlFileIoUi", () => {
     });
 
     await expect(
-      (isConnectionGloballyReadOnly as unknown as (
-        connId: string,
-        database: string,
-        databaseType: "sqlserver"
-      ) => Promise<boolean>)("mssql-1", "dbo", "sqlserver")
+      (
+        isConnectionGloballyReadOnly as unknown as (
+          connId: string,
+          database: string,
+          databaseType: "sqlserver"
+        ) => Promise<boolean>
+      )("mssql-1", "dbo", "sqlserver")
     ).resolves.toBe(true);
 
     expect(mockExecuteSql).toHaveBeenCalledTimes(1);

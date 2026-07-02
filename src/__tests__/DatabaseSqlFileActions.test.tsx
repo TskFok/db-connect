@@ -8,12 +8,17 @@ import { useConnectionStore } from "../stores/connectionStore";
 import * as api from "../services/tauriCommands";
 import type { ActiveConnection, SqlExecuteResult } from "../types";
 
+const { mockPreviewSqlFileImport } = vi.hoisted(() => ({
+  mockPreviewSqlFileImport: vi.fn(),
+}));
+
 vi.mock("../services/tauriCommands", () => ({
   listDatabases: vi.fn(),
   listTables: vi.fn(),
   getTableStructure: vi.fn(),
   getDatabaseInfo: vi.fn(),
   executeSql: vi.fn(),
+  previewSqlFileImport: mockPreviewSqlFileImport,
   importSqlFile: vi.fn(),
   alterDatabaseCharset: vi.fn(),
   createDatabase: vi.fn(),
@@ -91,6 +96,10 @@ describe("DatabaseSqlFileActions", () => {
       void Promise.resolve().then(() => opts.onOk?.());
       return { destroy: vi.fn(), update: vi.fn() };
     });
+    const modalResult = { destroy: vi.fn(), update: vi.fn() };
+    vi.spyOn(Modal, "success").mockReturnValue(modalResult);
+    vi.spyOn(Modal, "warning").mockReturnValue(modalResult);
+    vi.spyOn(Modal, "error").mockReturnValue(modalResult);
     setupStoreWithDb("mydb");
     useConnectionStore.setState({
       activeConnections: { "conn-1": mockActiveConnection },
@@ -98,6 +107,11 @@ describe("DatabaseSqlFileActions", () => {
       activeConnection: mockActiveConnection,
     });
     mockApi.executeSql.mockResolvedValue(notReadonlySelect);
+    mockPreviewSqlFileImport.mockResolvedValue({
+      statements_total: 2,
+      dangerous_statements_total: 0,
+      dangerous_statements: [],
+    });
     mockApi.importSqlFile.mockResolvedValue({
       statements_total: 2,
       statements_ok: 1,
@@ -111,6 +125,7 @@ describe("DatabaseSqlFileActions", () => {
   });
 
   afterEach(() => {
+    Modal.destroyAll();
     vi.restoreAllMocks();
   });
 
@@ -135,5 +150,78 @@ describe("DatabaseSqlFileActions", () => {
       expect(loadTablesSpy).toHaveBeenCalledWith("conn-1", "mydb");
       expect(refreshSpy).toHaveBeenCalledWith("conn-1");
     });
+    Modal.destroyAll();
+  });
+
+  it("导入 SQL 文件发现高危语句且用户取消时不执行导入", async () => {
+    mockPreviewSqlFileImport.mockResolvedValue({
+      statements_total: 2,
+      dangerous_statements_total: 1,
+      dangerous_statements: [
+        {
+          statement_index: 1,
+          statement_preview: "TRUNCATE TABLE [dbo].[users]",
+        },
+      ],
+    });
+    vi.mocked(Modal.confirm).mockImplementation((opts: ModalFuncProps) => {
+      if (opts.title === "确认执行高危语句") {
+        void Promise.resolve().then(() => opts.onCancel?.());
+      } else {
+        void Promise.resolve().then(() => opts.onOk?.());
+      }
+      return { destroy: vi.fn(), update: vi.fn() };
+    });
+
+    render(<DatabaseSqlFileActions connId="conn-1" database="mydb" />);
+
+    const importBtn = screen.getAllByRole("button")[0];
+    fireEvent.click(importBtn);
+
+    await waitFor(() => {
+      expect(mockPreviewSqlFileImport).toHaveBeenCalledWith(
+        "mysql",
+        "/tmp/fake.sql"
+      );
+    });
+    await waitFor(() => {
+      expect(mockApi.importSqlFile).not.toHaveBeenCalled();
+    });
+  });
+
+  it("SQL Server 导出弹窗展示 schema/GO 说明且不出现 MySQL 专属文案", () => {
+    useConnectionStore.setState({
+      activeConnections: {
+        "conn-1": {
+          ...mockActiveConnection,
+          config: {
+            ...mockActiveConnection.config,
+            database_type: "sqlserver",
+            name: "SQL Server 测试",
+            port: 1433,
+          },
+        },
+      },
+      activeConnId: "conn-1",
+      activeConnection: {
+        ...mockActiveConnection,
+        config: {
+          ...mockActiveConnection.config,
+          database_type: "sqlserver",
+          name: "SQL Server 测试",
+          port: 1433,
+        },
+      },
+    });
+
+    render(<DatabaseSqlFileActions connId="conn-1" database="dbo" />);
+
+    const exportBtn = screen.getAllByRole("button")[1];
+    fireEvent.click(exportBtn);
+
+    expect(screen.getByText(/当前 schema/)).toBeInTheDocument();
+    expect(screen.getByText(/GO/)).toBeInTheDocument();
+    expect(screen.queryByText(/mysqldump/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/事件定义/)).not.toBeInTheDocument();
   });
 });

@@ -1,20 +1,20 @@
 # DB Connect
 
-基于 **Tauri 2 + React + TypeScript** 的跨平台数据库桌面图形化管理工具，目前支持 **MySQL / MariaDB**、**PostgreSQL** 与 **SQLite**。仓库 CI 在 **Linux / macOS / Windows** 上运行前端单测与完整 `tauri build`；日常使用与打包说明以 **macOS** 为例，其他系统请参阅 [Tauri 前置依赖](https://v2.tauri.app/start/prerequisites/)。
+基于 **Tauri 2 + React + TypeScript** 的跨平台数据库桌面图形化管理工具，目前支持 **MySQL / MariaDB**、**PostgreSQL**、**SQLite** 与 **SQL Server**。仓库 CI 在 **Linux / macOS / Windows** 上运行前端单测与完整 `tauri build`；日常使用与打包说明以 **macOS** 为例，其他系统请参阅 [Tauri 前置依赖](https://v2.tauri.app/start/prerequisites/)。
 
 ## 功能特性
 
 ### 连接管理
 
 - **连接排序**：支持拖拽自定义连接显示顺序，顺序持久化保存
-- **直连 / SSH 隧道 / SQLite 文件**：支持直接连接 MySQL / MariaDB / PostgreSQL，或通过 SSH 隧道转发；SQLite 通过选择本地 `.db` / `.sqlite` 文件连接
+- **直连 / SSH 隧道 / SQLite 文件**：支持直接连接 MySQL / MariaDB / PostgreSQL / SQL Server，或通过 SSH 隧道转发；SQLite 通过选择本地 `.db` / `.sqlite` 文件连接
 - **多种认证方式**：密码认证、SSH 密钥认证（`private_key_path`）
 - **连接配置持久化**：保存、编辑、删除连接配置，自动加载已保存连接
 - **连接测试**：建立连接前可测试连通性
 - **空闲超时断开**：长时间无操作后自动断开连接，减少凭据驻留时间（可配置 5/10/15/30/60 分钟或禁用）
-- **SSL / TLS**：连接可配置加密模式（系统信任库、VERIFY_CA / VERIFY_IDENTITY 与自定义 CA PEM、调试用的不校验证书模式等），支持 PKCS#12 客户端证书与 TLS 主机名覆盖（适用于 SSH 隧道访问云数据库等场景）
+- **SSL / TLS**：连接可配置加密模式（系统信任库、VERIFY_CA / VERIFY_IDENTITY 与自定义 CA PEM、调试用的不校验证书模式等）。MySQL / PostgreSQL 支持 PKCS#12 客户端证书与 TLS 主机名覆盖；SQL Server 支持 disabled / required / verify_ca / verify_identity / required_insecure 与 PEM CA，暂不支持 PKCS#12 客户端证书
 - **高级连接**：MySQL 可选客户端字符集（默认 `SET NAMES utf8mb4`）、连接后依次执行的会话 SQL（如 `SET SESSION max_execution_time`）、以及「只读连接」双保险（配合数据库侧最小权限）。连接成功后会根据数据库类型探测账号是否具备写权限；若为只读账号，界面写入口会与勾选「只读连接」时同样灰显（无需重复勾选）
-- **实例 / 会话只读感知**：MySQL 探测 `@@read_only` / `@@super_read_only`，PostgreSQL 探测 `transaction_read_only`。当连接处于只读状态时，会阻止 **TRUNCATE**、**.sql 导入** 等明显写入类操作，并给出提示（适用于只读副本等场景）
+- **实例 / 会话只读感知**：MySQL 探测 `@@read_only` / `@@super_read_only`，PostgreSQL 探测 `transaction_read_only`，SQL Server 探测当前 database 的 `READ_ONLY` 状态。当连接处于只读状态时，会阻止 **TRUNCATE**、**.sql 导入** 等明显写入类操作，并给出提示（适用于只读副本等场景）
 
 #### 长连接、超时与连接池
 
@@ -26,18 +26,19 @@
 
 ### 数据库管理
 
-- **数据库 / schema / SQLite main 列表**：MySQL 展示数据库，PostgreSQL 展示 schema，SQLite 展示 `main` 等库名；树形展示对象及表，支持虚拟滚动，支持按名称排序（A→Z / Z→A）
+- **数据库 / schema / SQLite main 列表**：MySQL 展示数据库，PostgreSQL / SQL Server 展示 schema，SQLite 展示 `main` 等库名；SQL Server 当前浏览的是连接配置所选 database 内的 schema 树，不是 server 级 database 管理工具；树形展示对象及表，支持虚拟滚动，支持按名称排序（A→Z / Z→A）
 - **视图与基表**：表列表中对 **VIEW** 与 **BASE TABLE** 区分展示；打开视图后，部分仅适用于物理表的能力（如外键页签）会自动隐藏
-- **数据库 / schema 编辑**：MySQL 支持修改字符集/排序规则（utf8mb4、utf8、latin1、gbk 等）；PostgreSQL 支持 schema 创建、删除与重命名；SQLite 不展示数据库级编辑、字符集或存储引擎入口
-- **数据库重命名**：MySQL 通过创建新库 → 迁移表 → 删除旧库实现；PostgreSQL 走 schema 重命名
+- **数据库 / schema 编辑**：MySQL 支持修改字符集/排序规则（utf8mb4、utf8、latin1、gbk 等）；PostgreSQL / SQL Server 支持 schema 创建、删除与重命名；SQLite 不展示数据库级编辑、字符集或存储引擎入口
+- **数据库 / schema 重命名**：MySQL 通过创建新库 → 迁移表 → 删除旧库实现；PostgreSQL / SQL Server 走 schema 重命名
 - **新建表**：可视化创建表（列定义、主键、MySQL 引擎、注释）
 - **删除表 / 清空表**：删除表支持确认；对物理表支持 **TRUNCATE**（外键等约束导致的失败会给出可读错误提示）
 - **表搜索**：按表名或注释搜索（`Cmd/Ctrl+F`）
 - **表收藏**：收藏常用表，在侧边栏顶部快捷访问，支持一键进入和取消收藏
 - **多标签工作区**：可同时打开多张表的内容页与多个 **SQL** 标签页，在顶部标签栏切换；每个 SQL 标签独立保留编辑器内容与执行结果
-- **例程（存储过程 / 函数）**：在数据库概览的「例程」子标签中列出当前库的 `PROCEDURE` / `FUNCTION`，支持类型筛选、查看完整 DDL、删除；SQLite 不支持 routine
-- **事件调度（EVENT）**：MySQL 在「事件」子标签中列出调度事件，支持查看 DDL、启用/停用、删除；PostgreSQL 与 SQLite 无等价事件入口
-- **数据库 / schema 级 SQL 导入 / 导出**：在概览工具栏可将 **`.sql` 文件**导入当前数据库 / schema（按语句拆分执行，支持 PostgreSQL dollar-quoted 函数体，带进度与失败摘要）；或导出为 **`.sql`**（结构 + 可选 **INSERT** 数据，INSERT 数量上限可在导出对话框中配置，默认与查询导出上限量级一致）。PostgreSQL 导出覆盖 schema、表、视图、索引、外键、触发器、函数/过程；SQLite 导出覆盖表、视图、索引、触发器与 SQLite 方言 INSERT
+- **例程（存储过程 / 函数）**：在数据库概览的「例程」子标签中列出当前库 / schema 的 `PROCEDURE` / `FUNCTION`，支持类型筛选、查看完整 DDL、删除；SQLite 不支持 routine
+- **事件调度（EVENT）**：MySQL 在「事件」子标签中列出调度事件，支持查看 DDL、启用/停用、删除；PostgreSQL / SQLite / SQL Server 无等价 EVENT 入口
+- **数据库 / schema 级 SQL 导入 / 导出**：在概览工具栏可将 **`.sql` 文件**导入当前数据库 / schema（MySQL / PostgreSQL / SQLite 按语句拆分执行；SQL Server 按 `GO` 批处理分隔符逐批执行；支持 PostgreSQL dollar-quoted 函数体，带进度与失败摘要）；或导出为 **`.sql`**（结构 + 可选 **INSERT** 数据，INSERT 数量上限可在导出对话框中配置，默认与查询导出上限量级一致）。PostgreSQL 导出覆盖 schema、表、视图、索引、外键、触发器、函数/过程；SQLite 导出覆盖表、视图、索引、触发器与 SQLite 方言 INSERT；SQL Server 导出覆盖当前 schema 的表、视图、普通/唯一索引、外键、触发器、函数/过程与 SQL Server 方言 INSERT
+- **SQL Server 当前限制**：SQL Server DDL 导出以基础可重放脚本为目标，不保证无损覆盖压缩、分区、权限、扩展属性、全文/空间/列存等高级属性；数据导出仍受每表行数上限约束；导入未显式限定 schema 的脚本时，SQL Server 仍按当前用户默认 schema 执行；不提供 server 级 database 创建、删除、重命名或跨 database 管理
 
 ### 外键管理
 
@@ -52,12 +53,12 @@
 
 ### 表结构管理
 
-- **表结构查看**：列名、类型、可空、键、默认值、注释；MySQL 额外展示存储引擎，SQLite 不展示字符集和存储引擎
+- **表结构查看**：列名、类型、可空、键、默认值、注释；MySQL 额外展示存储引擎，SQLite / SQL Server 不展示字符集和存储引擎
 - **修改列**：重命名、改类型、可空、默认值、extra、注释
 - **新增列**：指定位置（`AFTER` 某列或末尾）
 - **删除列**：支持确认删除
 - **重命名表**：直接修改表名
-- **修改表引擎**：MySQL 支持 InnoDB、MyISAM 等；PostgreSQL / SQLite 不展示该入口
+- **修改表引擎**：MySQL 支持 InnoDB、MyISAM 等；PostgreSQL / SQLite / SQL Server 不展示该入口
 
 ### 数据浏览与编辑
 
@@ -74,7 +75,7 @@
 ### 索引管理
 
 - **索引列表**：查看主键、唯一索引、普通索引
-- **创建索引**：MySQL 支持 INDEX、UNIQUE、FULLTEXT、SPATIAL 与 BTREE/HASH 方法；PostgreSQL 支持常用索引方法；SQLite 当前入口支持普通索引与唯一索引
+- **创建索引**：MySQL 支持 INDEX、UNIQUE、FULLTEXT、SPATIAL 与 BTREE/HASH 方法；PostgreSQL 支持常用索引方法；SQLite / SQL Server 当前入口支持普通索引与唯一索引
 - **删除索引**：支持确认删除
 
 ### 触发器管理
@@ -129,7 +130,7 @@
 - **关系图**：Mermaid（外键可视化）
 - **表格导出**：write-excel-file（`.xlsx` 生成）
 - **剪贴板**：`@tauri-apps/plugin-clipboard-manager`
-- **数据库驱动**：mysql_async、deadpool-postgres / tokio-postgres、deadpool-sqlite / rusqlite (Rust)
+- **数据库驱动**：mysql_async、deadpool-postgres / tokio-postgres、deadpool-sqlite / rusqlite、bb8-tiberius / tiberius (Rust)
 - **SSH 隧道**：按平台区分实现
   - **Windows**：russh（纯 Rust 客户端，`ring` 后端，无需系统 libssh2）
   - **macOS / Linux**：调用系统 OpenSSH（`ssh`）建立本地端口转发

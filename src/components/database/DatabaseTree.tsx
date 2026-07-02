@@ -1,5 +1,14 @@
 import { useEffect, useCallback, useState, useMemo, useRef } from "react";
-import { Tree, Button, Typography, Space, Spin, Tooltip, Dropdown, Tabs } from "antd";
+import {
+  Tree,
+  Button,
+  Typography,
+  Space,
+  Spin,
+  Tooltip,
+  Dropdown,
+  Tabs,
+} from "antd";
 import type { MenuProps } from "antd";
 import {
   DatabaseOutlined,
@@ -27,6 +36,7 @@ import { FavoriteTables } from "./FavoriteTables";
 import { SavedSqlDropdown } from "./SavedSqlDropdown";
 import { useClientReadOnly } from "../../hooks/useClientReadOnly";
 import { getDatabaseCapabilities } from "../../utils/databaseCapabilities";
+import { favoriteConnectionKey } from "../../utils/favoriteConnection";
 
 const { Text, Title } = Typography;
 
@@ -72,11 +82,9 @@ export function DatabaseTree() {
   const { removeTableFromCache } = useTableDataStore();
 
   const connId = activeConnection?.connId ?? "";
-  const connectionId =
-    activeConnection?.config.id ??
-    (activeConnection
-      ? `${activeConnection.config.host}:${activeConnection.config.port}`
-      : "");
+  const connectionId = activeConnection
+    ? favoriteConnectionKey(activeConnection.config)
+    : "";
   const favorites = useFavoriteStore((s) => s.favorites);
   const toggleFavorite = useFavoriteStore((s) => s.toggleFavorite);
   const clientReadOnly = useClientReadOnly();
@@ -116,7 +124,10 @@ export function DatabaseTree() {
 
   // 右键菜单状态
   const [contextMenuDb, setContextMenuDb] = useState<string | null>(null);
-  const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(null);
+  const [contextMenuPosition, setContextMenuPosition] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
   // 编辑数据库弹窗状态
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingDb, setEditingDb] = useState<string | null>(null);
@@ -153,7 +164,9 @@ export function DatabaseTree() {
       const dbTables = tables[db];
       const sortedTables = dbTables
         ? [...dbTables].sort((a, b) => {
-            const cmp = a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+            const cmp = a.name.localeCompare(b.name, undefined, {
+              sensitivity: "base",
+            });
             return tableSortOrder === "asc" ? cmp : -cmp;
           })
         : undefined;
@@ -245,16 +258,16 @@ export function DatabaseTree() {
         : undefined;
 
       return {
-          title: (
-            <Text strong style={{ fontSize: 13 }}>
-              {db}
-            </Text>
-          ),
-          key: `db:${db}`,
-          icon: <DatabaseOutlined style={{ color: "#1677ff" }} />,
-          children,
-        };
-      });
+        title: (
+          <Text strong style={{ fontSize: 13 }}>
+            {db}
+          </Text>
+        ),
+        key: `db:${db}`,
+        icon: <DatabaseOutlined style={{ color: "#1677ff" }} />,
+        children,
+      };
+    });
   }, [
     databases,
     tables,
@@ -333,7 +346,10 @@ export function DatabaseTree() {
       if (key.startsWith("db:")) {
         const db = key.substring(3);
         setContextMenuDb(db);
-        setContextMenuPosition({ x: info.event.clientX, y: info.event.clientY });
+        setContextMenuPosition({
+          x: info.event.clientX,
+          y: info.event.clientY,
+        });
       }
     },
     []
@@ -413,7 +429,13 @@ export function DatabaseTree() {
             items={connectionEntries.map(([cId, conn]) => ({
               key: cId,
               label: (
-                <span style={{ maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis" }}>
+                <span
+                  style={{
+                    maxWidth: 120,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
                   {conn.config.name}
                 </span>
               ),
@@ -437,7 +459,10 @@ export function DatabaseTree() {
             marginBottom: 4,
           }}
         >
-          <Title level={5} style={{ margin: 0, color: "var(--text-primary)", fontSize: 14 }}>
+          <Title
+            level={5}
+            style={{ margin: 0, color: "var(--text-primary)", fontSize: 14 }}
+          >
             {activeConnection?.config.name}
           </Title>
           <Space size={4}>
@@ -446,8 +471,8 @@ export function DatabaseTree() {
                 !capabilities.databaseManagement
                   ? `当前数据库类型暂不支持新建${capabilities.databaseObjectNoun}`
                   : clientReadOnly
-                  ? `只读连接无法新建${capabilities.databaseObjectNoun}`
-                  : `新建${capabilities.databaseObjectNoun}`
+                    ? `只读连接无法新建${capabilities.databaseObjectNoun}`
+                    : `新建${capabilities.databaseObjectNoun}`
               }
             >
               <Button
@@ -455,7 +480,9 @@ export function DatabaseTree() {
                 size="small"
                 icon={<PlusOutlined />}
                 onClick={() => connId && setCreateModalOpen(true)}
-                disabled={!connId || clientReadOnly || !capabilities.databaseManagement}
+                disabled={
+                  !connId || clientReadOnly || !capabilities.databaseManagement
+                }
               />
             </Tooltip>
             <Dropdown

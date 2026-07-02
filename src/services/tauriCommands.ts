@@ -13,6 +13,7 @@ import type {
   SessionInfo,
   RuntimeInfo,
   ImportSqlFileResult,
+  PreviewSqlFileImportResult,
   ExportSqlFileResult,
   IndexInfo,
   CreateIndexRequest,
@@ -992,6 +993,19 @@ export async function explainSql(
     database,
     sql,
     analyze,
+  });
+}
+
+/**
+ * 读取本地 UTF-8 SQL 文件并预检高危语句，不执行任何 SQL。
+ */
+export async function previewSqlFileImport(
+  databaseType: string | null | undefined,
+  filePath: string
+): Promise<PreviewSqlFileImportResult> {
+  return invoke<PreviewSqlFileImportResult>("preview_sql_file_import", {
+    databaseType,
+    filePath,
   });
 }
 

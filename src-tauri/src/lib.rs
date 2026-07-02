@@ -106,6 +106,7 @@ pub fn run() {
             data::cancel_query,
             data::get_session_info,
             data::explain_sql,
+            sql_file::preview_sql_file_import,
             sql_file::import_sql_file,
             sql_file::export_database_to_file,
             index_cmd::list_indexes,
