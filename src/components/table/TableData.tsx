@@ -308,31 +308,44 @@ export function TableData() {
    * - 至少存在一个主键列
    * SQLite 阶段四要求无主键表不开放可视化编辑，因此新增/更新/删除统一禁用。
    */
-  const hasPrimaryKeyForEdits =
-    !!tableStructure && tableStructure.some((c) => c.key === "PRI");
-  const requiresPrimaryKeyForDataEditing = currentDatabaseType === "sqlite";
+  const rowLocatorColumnsForEdits = useMemo(
+    () =>
+      tableStructure
+        ?.filter(
+          (c) =>
+            c.key === "PRI" ||
+            (currentDatabaseType === "sqlserver" && c.key === "UNI")
+        )
+        .map((c) => c.name) ?? [],
+    [tableStructure, currentDatabaseType]
+  );
+  const hasRowLocatorForEdits = rowLocatorColumnsForEdits.length > 0;
+  const requiresPrimaryKeyForDataEditing =
+    currentDatabaseType === "sqlite" || currentDatabaseType === "sqlserver";
   const baseDataEditingAllowed =
     !clientReadOnly && capabilities.tableDataEditing;
   const dataEditingAllowed =
     baseDataEditingAllowed &&
-    (!requiresPrimaryKeyForDataEditing || hasPrimaryKeyForEdits);
+    (!requiresPrimaryKeyForDataEditing || hasRowLocatorForEdits);
   const noPrimaryKeyDisabledReason =
-    "该表没有主键，无法定位行；请改用 SQL 编辑器或为表添加主键";
+    currentDatabaseType === "sqlserver"
+      ? "该表没有主键或非过滤唯一索引，无法定位行；请改用 SQL 编辑器或为表添加主键/唯一索引"
+      : "该表没有主键，无法定位行；请改用 SQL 编辑器或为表添加主键";
   const rowEditDisabledReason = !capabilities.tableDataEditing
     ? "当前数据库类型不允许编辑表数据"
     : clientReadOnly
       ? "当前连接为只读模式，不允许编辑表数据"
-      : !hasPrimaryKeyForEdits
+      : !hasRowLocatorForEdits
         ? noPrimaryKeyDisabledReason
         : "";
   const insertDisabledReason = !capabilities.tableDataEditing
     ? "当前数据库类型不允许编辑表数据"
     : clientReadOnly
       ? "当前连接为只读模式，不允许编辑表数据"
-      : requiresPrimaryKeyForDataEditing && !hasPrimaryKeyForEdits
+      : requiresPrimaryKeyForDataEditing && !hasRowLocatorForEdits
         ? noPrimaryKeyDisabledReason
         : "";
-  const rowOperationsAllowed = baseDataEditingAllowed && hasPrimaryKeyForEdits;
+  const rowOperationsAllowed = baseDataEditingAllowed && hasRowLocatorForEdits;
   const rowSelectionScopeKey =
     connId && database && table ? `${connId}|${database}|${table}` : "";
   const selectedRowKeys = useMemo(
@@ -476,11 +489,7 @@ export function TableData() {
   );
 
   // 获取主键列（memoized）
-  const primaryKeyColumns = useMemo(
-    () =>
-      tableStructure?.filter((c) => c.key === "PRI").map((c) => c.name) ?? [],
-    [tableStructure]
-  );
+  const primaryKeyColumns = rowLocatorColumnsForEdits;
   const primaryKeyColumn = primaryKeyColumns[0] ?? "";
 
   /** 列名 → MySQL column_type（用于 varchar 等大整数字符串列不因 Number/JSON 丢精度） */

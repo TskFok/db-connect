@@ -786,8 +786,8 @@ pub async fn insert_row(
         DatabasePoolHandle::Sqlite(handle) => {
             return sqlite::insert_row(&handle.pool, &database, &table, values).await;
         }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            return sqlserver::insert_row(&handle.pool, &database, &table, values).await;
         }
     };
 
@@ -954,8 +954,9 @@ pub async fn update_row(
             return sqlite::update_row(&handle.pool, &database, &table, primary_keys, updates)
                 .await;
         }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            return sqlserver::update_row(&handle.pool, &database, &table, primary_keys, updates)
+                .await;
         }
     };
 
@@ -1023,8 +1024,16 @@ pub async fn batch_update_rows(
                 .collect();
             return sqlite::batch_update_rows(&handle.pool, &database, &table, sqlite_rows).await;
         }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            let sqlserver_rows: Vec<sqlserver::SqlServerRowUpdate> = rows
+                .into_iter()
+                .map(|r| sqlserver::SqlServerRowUpdate {
+                    primary_keys: r.primary_keys,
+                    updates: r.updates,
+                })
+                .collect();
+            return sqlserver::batch_update_rows(&handle.pool, &database, &table, sqlserver_rows)
+                .await;
         }
     };
 
@@ -1089,8 +1098,8 @@ pub async fn delete_rows(
         DatabasePoolHandle::Sqlite(handle) => {
             return sqlite::delete_rows(&handle.pool, &database, &table, primary_keys).await;
         }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            return sqlserver::delete_rows(&handle.pool, &database, &table, primary_keys).await;
         }
     };
 
@@ -1153,8 +1162,24 @@ pub async fn query_full_rows(
             )
             .await;
         }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            if let Some(primary_keys) = primary_keys {
+                return sqlserver::query_full_rows_by_primary_keys(
+                    &handle.pool,
+                    &database,
+                    &table,
+                    primary_keys,
+                )
+                .await;
+            }
+            return sqlserver::query_full_rows(
+                &handle.pool,
+                &database,
+                &table,
+                &primary_key_column,
+                primary_key_values,
+            )
+            .await;
         }
     };
 

@@ -69,8 +69,12 @@ import {
   SQLITE_DATA_TYPES,
   SQLITE_LENGTH_TYPES,
   SQLITE_SCALE_TYPES,
+  SQLSERVER_DATA_TYPES,
+  SQLSERVER_LENGTH_TYPES,
+  SQLSERVER_SCALE_TYPES,
+  SQLSERVER_UNSIGNED_TYPES,
   parseColumnType,
-  buildColumnType,
+  buildColumnTypeWithConfig,
 } from "../../utils/columnTypeUtils";
 import {
   columnInfoToReorderAlterRequest,
@@ -116,6 +120,11 @@ const MYSQL_EXTRA_OPTIONS = [
 
 /** PostgreSQL 仅暴露"(无)"；identity/generated 通过类型/SQL 显式管理。 */
 const POSTGRES_EXTRA_OPTIONS = [{ label: "(无)", value: "" }];
+
+const SQLSERVER_EXTRA_OPTIONS = [
+  { label: "(无)", value: "" },
+  { label: "identity", value: "identity" },
+];
 
 interface StructureDragRowContextValue {
   setActivatorNodeRef: (element: HTMLElement | null) => void;
@@ -253,29 +262,42 @@ export function TableStructure() {
     activeConnection?.config.database_type
   );
   const isSqlite = databaseType === "sqlite";
+  const isSqlServer = databaseType === "sqlserver";
   const structureReadOnly =
     clientReadOnly || isView || !capabilities.schemaManagement;
   const showEngine = capabilities.storageEngine;
   const columnReorderingEnabled = capabilities.columnReordering;
   const dataTypeOptions = isSqlite
     ? SQLITE_DATA_TYPES
-    : showEngine
-      ? MYSQL_DATA_TYPES
-      : POSTGRES_DATA_TYPES;
+    : isSqlServer
+      ? SQLSERVER_DATA_TYPES
+      : showEngine
+        ? MYSQL_DATA_TYPES
+        : POSTGRES_DATA_TYPES;
   const lengthSet = isSqlite
     ? SQLITE_LENGTH_TYPES
-    : showEngine
-      ? LENGTH_TYPES
-      : POSTGRES_LENGTH_TYPES;
+    : isSqlServer
+      ? SQLSERVER_LENGTH_TYPES
+      : showEngine
+        ? LENGTH_TYPES
+        : POSTGRES_LENGTH_TYPES;
   const scaleSet = isSqlite
     ? SQLITE_SCALE_TYPES
+    : isSqlServer
+      ? SQLSERVER_SCALE_TYPES
+      : showEngine
+        ? SCALE_TYPES
+        : POSTGRES_SCALE_TYPES;
+  const unsignedSet = isSqlServer
+    ? SQLSERVER_UNSIGNED_TYPES
     : showEngine
-      ? SCALE_TYPES
-      : POSTGRES_SCALE_TYPES;
-  const unsignedSet = showEngine ? UNSIGNED_TYPES : new Set<string>();
+      ? UNSIGNED_TYPES
+      : new Set<string>();
   const extraOptions = showEngine
     ? MYSQL_EXTRA_OPTIONS
-    : POSTGRES_EXTRA_OPTIONS;
+    : isSqlServer
+      ? SQLSERVER_EXTRA_OPTIONS
+      : POSTGRES_EXTRA_OPTIONS;
   const canAlterColumnDefinition = !isSqlite;
 
   const [structureOrderOverride, setStructureOrderOverride] = useState<
@@ -440,7 +462,7 @@ export function TableStructure() {
     setEditingColumnName("");
     columnForm.setFieldsValue({
       name: "",
-      data_type: isSqlite ? "TEXT" : "varchar",
+      data_type: isSqlite ? "TEXT" : isSqlServer ? "nvarchar" : "varchar",
       length: isSqlite ? "" : "255",
       scale: "",
       unsigned: false,
@@ -451,7 +473,7 @@ export function TableStructure() {
       after_column: null,
     });
     setColumnModalOpen(true);
-  }, [columnForm, isSqlite]);
+  }, [columnForm, isSqlite, isSqlServer]);
 
   // 保存列 (编辑/新增)
   const handleColumnSave = useCallback(async () => {
@@ -464,11 +486,15 @@ export function TableStructure() {
         values.default_value?.trim() === ""
           ? null
           : (values.default_value?.trim() ?? null);
-      const columnType = buildColumnType(
+      const columnType = buildColumnTypeWithConfig(
         values.data_type,
         values.length || "",
         values.scale || "",
-        values.unsigned || false
+        values.unsigned || false,
+        {
+          scaleTypes: scaleSet,
+          unsignedTypes: unsignedSet,
+        }
       );
 
       if (columnModalMode === "edit") {
@@ -480,7 +506,7 @@ export function TableStructure() {
           default_value: defaultVal,
           extra: values.extra || "",
           comment: values.comment?.trim() || "",
-          is_primary: values.is_primary === true,
+          is_primary: isSqlServer ? undefined : values.is_primary === true,
         };
         await alterColumn(connId, database, table, request);
         messageApi.success(`列 "${editingColumnName}" 修改成功`);
@@ -514,6 +540,9 @@ export function TableStructure() {
     alterColumn,
     addColumn,
     messageApi,
+    isSqlServer,
+    scaleSet,
+    unsignedSet,
   ]);
 
   // 删除列
@@ -1011,7 +1040,7 @@ export function TableStructure() {
           <Form.Item name="nullable" label="允许 NULL" valuePropName="checked">
             <Switch />
           </Form.Item>
-          {columnModalMode === "edit" && !isSqlite && (
+          {columnModalMode === "edit" && !isSqlite && !isSqlServer && (
             <Form.Item name="is_primary" label="主键" valuePropName="checked">
               <Switch />
             </Form.Item>
@@ -1033,7 +1062,7 @@ export function TableStructure() {
               <SafeInput placeholder="列注释 (可选)" />
             </Form.Item>
           )}
-          {columnModalMode === "add" && !isSqlite && (
+          {columnModalMode === "add" && columnReorderingEnabled && (
             <Form.Item name="after_column" label="位置 (在哪个列之后)">
               <Select
                 placeholder="默认添加到末尾"

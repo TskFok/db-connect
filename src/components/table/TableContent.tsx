@@ -16,6 +16,7 @@ import { TableStructure } from "./TableStructure";
 import { TableData } from "./TableData";
 import { SqlEditor } from "../sql/SqlEditorLazy";
 import { getDatabaseCapabilities } from "../../utils/databaseCapabilities";
+import { normalizeDatabaseType } from "../../utils/connectionConfig";
 
 const { Title, Text } = Typography;
 
@@ -53,6 +54,7 @@ export function TableContent() {
     () => getDatabaseCapabilities(activeConnection?.config.database_type),
     [activeConnection?.config.database_type]
   );
+  const databaseType = normalizeDatabaseType(activeConnection?.config.database_type);
 
   const tabItems = useMemo(() => {
     const base = [
@@ -117,7 +119,7 @@ export function TableContent() {
         children: withLazyTab(<ForeignKeyList />),
       });
     }
-    if (capabilities.schemaManagement) {
+    if (capabilities.schemaManagement && databaseType !== "sqlserver") {
       base.push({
         key: "createTable",
         label: (
@@ -144,7 +146,7 @@ export function TableContent() {
     // selectedDatabase / selectedTable 必须参与依赖：否则顶部多表标签切换时仍复用旧 items，
     // Ant Tabs 可能不刷新「数据」面板，出现上一张表虚拟行叠在新表上、字体重叠。
     return base;
-  }, [capabilities, isView, tableScopeKey]);
+  }, [capabilities, databaseType, isView, tableScopeKey]);
 
   const tabKeys = useMemo(() => tabItems.map((t) => t.key), [tabItems]);
 

@@ -3,11 +3,11 @@ pub mod column_ops;
 pub use column_ops::build_column_definition;
 
 use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
-use crate::db::postgres_ddl;
 use crate::db::sql_utils::{
     esc_id, esc_str, validate_column_extra, validate_column_type, validate_engine_name,
 };
 use crate::db::{postgres, sqlite, sqlserver};
+use crate::db::{postgres_ddl, sqlserver_ddl};
 use crate::models::types::{
     ColumnInfo, CreateTableRequest, DatabaseInfo, SqlCompletionColumn, SqlCompletionMetadata,
     SqlCompletionTable, TableInfo,
@@ -481,7 +481,7 @@ pub async fn alter_database_charset(
             return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
         }
         DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+            return Err("SQL Server 暂不支持修改数据库字符集/排序规则".to_string());
         }
     };
 
@@ -537,8 +537,8 @@ pub async fn drop_database(
         DatabasePoolHandle::Sqlite(_) => {
             return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
         }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            return sqlserver_ddl::drop_schema(&handle.pool, &database).await;
         }
     };
 
@@ -577,8 +577,8 @@ pub async fn create_database(
         DatabasePoolHandle::Sqlite(_) => {
             return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
         }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            return sqlserver_ddl::create_schema(&handle.pool, &name).await;
         }
     };
 
@@ -646,8 +646,8 @@ pub async fn rename_database(
         DatabasePoolHandle::Sqlite(_) => {
             return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
         }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            return sqlserver_ddl::rename_schema(&handle.pool, &old_name, &new_name).await;
         }
     };
 
@@ -718,8 +718,9 @@ pub async fn rename_table(
         DatabasePoolHandle::Sqlite(handle) => {
             return sqlite::rename_table(&handle.pool, &database, &old_name, &new_name).await;
         }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            return sqlserver_ddl::rename_table(&handle.pool, &database, &old_name, &new_name)
+                .await;
         }
     };
 
@@ -806,8 +807,8 @@ pub async fn get_primary_keys(
         DatabasePoolHandle::Sqlite(handle) => {
             return sqlite::get_primary_keys(&handle.pool, &database, &table).await;
         }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            return sqlserver::fetch_edit_locator(&handle.pool, &database, &table).await;
         }
     };
 
@@ -850,8 +851,8 @@ pub async fn drop_table(
         DatabasePoolHandle::Sqlite(handle) => {
             return sqlite::drop_table(&handle.pool, &database, &table).await;
         }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            return sqlserver_ddl::drop_table(&handle.pool, &database, &table).await;
         }
     };
 
@@ -887,8 +888,8 @@ pub async fn truncate_table(
         DatabasePoolHandle::Sqlite(handle) => {
             return sqlite::truncate_table(&handle.pool, &database, &table).await;
         }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            return sqlserver_ddl::truncate_table(&handle.pool, &database, &table).await;
         }
     };
 
@@ -932,8 +933,8 @@ pub async fn create_table(
         DatabasePoolHandle::Sqlite(handle) => {
             return sqlite::create_table(&handle.pool, &database, &request).await;
         }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            return sqlserver_ddl::create_table(&handle.pool, &database, &request).await;
         }
     };
 

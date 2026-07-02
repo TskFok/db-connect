@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { formColumnToDef } from "../utils/createTableFormUtils";
 import type { CreateTableRequest, CreateTableColumnDef } from "../types";
+import {
+  SQLSERVER_SCALE_TYPES,
+  SQLSERVER_UNSIGNED_TYPES,
+} from "../utils/columnTypeUtils";
 
 describe("formColumnToDef", () => {
   it("基本 varchar 列 → 正确构建 column_type", () => {
@@ -178,6 +182,48 @@ describe("formColumnToDef", () => {
       data_type: "int",
     });
     expect(result.default_value).toBeNull();
+  });
+
+  it("SQL Server decimal/nvarchar 使用 SQL Server 类型规则且忽略 unsigned", () => {
+    const typeConfig = {
+      scaleTypes: SQLSERVER_SCALE_TYPES,
+      unsignedTypes: SQLSERVER_UNSIGNED_TYPES,
+    };
+
+    expect(
+      formColumnToDef(
+        {
+          name: "price",
+          data_type: "decimal",
+          length: "18",
+          scale: "2",
+          unsigned: true,
+          nullable: false,
+          default_value: "0",
+          extra: "",
+          comment: "",
+        },
+        typeConfig
+      )
+    ).toMatchObject({
+      name: "price",
+      column_type: "decimal(18,2)",
+      nullable: false,
+      default_value: "0",
+    });
+
+    expect(
+      formColumnToDef(
+        {
+          name: "name",
+          data_type: "nvarchar",
+          length: "255",
+          scale: "",
+          unsigned: false,
+        },
+        typeConfig
+      ).column_type
+    ).toBe("nvarchar(255)");
   });
 });
 

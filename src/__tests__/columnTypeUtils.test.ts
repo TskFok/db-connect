@@ -6,6 +6,11 @@ import {
   LENGTH_TYPES,
   SCALE_TYPES,
   MYSQL_DATA_TYPES,
+  SQLSERVER_DATA_TYPES,
+  SQLSERVER_LENGTH_TYPES,
+  SQLSERVER_SCALE_TYPES,
+  SQLSERVER_UNSIGNED_TYPES,
+  buildColumnTypeWithConfig,
 } from "../utils/columnTypeUtils";
 
 describe("parseColumnType", () => {
@@ -186,7 +191,9 @@ describe("buildColumnType", () => {
   });
 
   it("构建带长度和 unsigned 的类型", () => {
-    expect(buildColumnType("bigint", "20", "", true)).toBe("bigint(20) unsigned");
+    expect(buildColumnType("bigint", "20", "", true)).toBe(
+      "bigint(20) unsigned"
+    );
   });
 
   it("构建 decimal 带精度和小数位", () => {
@@ -352,5 +359,46 @@ describe("SCALE_TYPES", () => {
     expect(SCALE_TYPES.has("int")).toBe(false);
     expect(SCALE_TYPES.has("varchar")).toBe(false);
     expect(SCALE_TYPES.has("bigint")).toBe(false);
+  });
+});
+
+describe("SQLSERVER_DATA_TYPES", () => {
+  it("提供计划要求的 SQL Server 常用类型建议", () => {
+    const labels = SQLSERVER_DATA_TYPES.flatMap((group) =>
+      group.options.map((option) => option.label)
+    );
+
+    expect(labels).toEqual(
+      expect.arrayContaining([
+        "int",
+        "bigint",
+        "bit",
+        "decimal(18,2)",
+        "nvarchar(255)",
+        "varchar(255)",
+        "datetime2",
+        "datetimeoffset",
+        "uniqueidentifier",
+        "varbinary(max)",
+      ])
+    );
+  });
+
+  it("使用 SQL Server 类型规则构建长度、精度且不支持 unsigned", () => {
+    expect(SQLSERVER_LENGTH_TYPES.has("nvarchar")).toBe(true);
+    expect(SQLSERVER_SCALE_TYPES.has("decimal")).toBe(true);
+    expect(SQLSERVER_UNSIGNED_TYPES.size).toBe(0);
+    expect(
+      buildColumnTypeWithConfig("decimal", "18", "2", true, {
+        scaleTypes: SQLSERVER_SCALE_TYPES,
+        unsignedTypes: SQLSERVER_UNSIGNED_TYPES,
+      })
+    ).toBe("decimal(18,2)");
+    expect(
+      buildColumnTypeWithConfig("nvarchar", "255", "", false, {
+        scaleTypes: SQLSERVER_SCALE_TYPES,
+        unsignedTypes: SQLSERVER_UNSIGNED_TYPES,
+      })
+    ).toBe("nvarchar(255)");
   });
 });

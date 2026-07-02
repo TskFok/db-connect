@@ -180,4 +180,31 @@ describe("sqlFileIoUi", () => {
       "SHOW transaction_read_only"
     );
   });
+
+  it("isConnectionGloballyReadOnly 在 SQL Server 下查询当前 database 的只读状态", async () => {
+    mockExecuteSql.mockResolvedValue({
+      result_type: "select",
+      columns: ["ro"],
+      rows: [[1]],
+      affected_rows: null,
+      message: "",
+      execution_time_ms: 0,
+    });
+
+    await expect(
+      (isConnectionGloballyReadOnly as unknown as (
+        connId: string,
+        database: string,
+        databaseType: "sqlserver"
+      ) => Promise<boolean>)("mssql-1", "dbo", "sqlserver")
+    ).resolves.toBe(true);
+
+    expect(mockExecuteSql).toHaveBeenCalledTimes(1);
+    expect(mockExecuteSql).toHaveBeenCalledWith(
+      "mssql-1",
+      "dbo",
+      expect.stringContaining("DATABASEPROPERTYEX")
+    );
+    expect(mockExecuteSql.mock.calls[0]?.[2]).not.toContain("@@global");
+  });
 });

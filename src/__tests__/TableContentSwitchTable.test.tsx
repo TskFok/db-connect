@@ -155,4 +155,43 @@ describe("TableContent 多表切换", () => {
     expect(screen.getByRole("tab", { name: /触发器/ })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /外键/ })).toBeInTheDocument();
   });
+
+  it("SQL Server 不展示当前未支持的创建表 SQL 标签", () => {
+    useConnectionStore.setState({
+      activeConnection: {
+        connId: "mssql-1",
+        config: {
+          id: "mssql-1",
+          name: "SQL Server",
+          host: "localhost",
+          port: 1433,
+          username: "sa",
+          database_type: "sqlserver",
+        },
+      },
+      activeConnId: "mssql-1",
+    });
+    useDatabaseStore.setState({
+      activeConnId: "mssql-1",
+      selectedDatabase: "dbo",
+      selectedTable: "users",
+      selectedTableInfo: {
+        name: "users",
+        table_type: "TABLE",
+        engine: "SQL Server",
+        rows: 0,
+        data_length: 0,
+        index_length: null,
+        comment: "",
+      },
+      tableContentActiveTab: "data",
+    });
+
+    render(<TableContent />);
+
+    expect(screen.getByRole("tab", { name: /数据/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /结构/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /SQL/ })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /创建表/ })).not.toBeInTheDocument();
+  });
 });

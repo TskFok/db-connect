@@ -248,7 +248,7 @@ export function DatabaseOverview() {
       }
       try {
         await truncateTable(connId, selectedDatabase, tableName);
-        messageApi.success(`表 "${tableName}" 已清空（TRUNCATE）`);
+        messageApi.success(`表 "${tableName}" 已清空`);
       } catch (err) {
         messageApi.error({
           content: formatTruncateTableError(err),
@@ -413,7 +413,7 @@ export function DatabaseOverview() {
                 ) : (
                   <Popconfirm
                     title="确认清空表"
-                    description={`将执行 TRUNCATE TABLE「${record.name}」，删除全部数据行且不可恢复；表结构保留。是否继续？`}
+                    description={`将清空表「${record.name}」的全部数据行且不可恢复；表结构保留。是否继续？`}
                     onConfirm={(e) =>
                       handleTruncateTable(
                         record.name,
@@ -426,7 +426,7 @@ export function DatabaseOverview() {
                     okButtonProps={{ danger: true }}
                     getPopupContainer={() => document.body}
                   >
-                    <Tooltip title="清空表（TRUNCATE）">
+                    <Tooltip title="清空表">
                       <Button
                         type="text"
                         size="small"

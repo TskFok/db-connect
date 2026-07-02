@@ -165,6 +165,53 @@ export const SQLITE_DATA_TYPES = [
 export const SQLITE_LENGTH_TYPES = new Set<string>();
 export const SQLITE_SCALE_TYPES = new Set<string>();
 
+/** SQL Server 常用数据类型分组（用于 Select 下拉框）。 */
+export const SQLSERVER_DATA_TYPES = [
+  {
+    label: "数值类型",
+    options: [
+      { label: "int", value: "int" },
+      { label: "bigint", value: "bigint" },
+      { label: "bit", value: "bit" },
+      { label: "decimal(18,2)", value: "decimal" },
+    ],
+  },
+  {
+    label: "字符串类型",
+    options: [
+      { label: "nvarchar(255)", value: "nvarchar" },
+      { label: "varchar(255)", value: "varchar" },
+    ],
+  },
+  {
+    label: "日期时间类型",
+    options: [
+      { label: "datetime2", value: "datetime2" },
+      { label: "datetimeoffset", value: "datetimeoffset" },
+    ],
+  },
+  {
+    label: "其他类型",
+    options: [
+      { label: "uniqueidentifier", value: "uniqueidentifier" },
+      { label: "varbinary(max)", value: "varbinary" },
+    ],
+  },
+];
+
+export const SQLSERVER_LENGTH_TYPES = new Set([
+  "char",
+  "varchar",
+  "nchar",
+  "nvarchar",
+  "binary",
+  "varbinary",
+  "decimal",
+  "numeric",
+]);
+export const SQLSERVER_SCALE_TYPES = new Set(["decimal", "numeric"]);
+export const SQLSERVER_UNSIGNED_TYPES = new Set<string>();
+
 /** 解析后的列类型结构 */
 export interface ParsedColumnType {
   /** 基础数据类型 (如 varchar, int) */
@@ -235,20 +282,38 @@ export function buildColumnType(
   scale: string,
   unsigned: boolean
 ): string {
+  return buildColumnTypeWithConfig(dataType, length, scale, unsigned, {
+    scaleTypes: SCALE_TYPES,
+    unsignedTypes: UNSIGNED_TYPES,
+  });
+}
+
+export function buildColumnTypeWithConfig(
+  dataType: string,
+  length: string,
+  scale: string,
+  unsigned: boolean,
+  config: {
+    scaleTypes?: ReadonlySet<string>;
+    unsignedTypes?: ReadonlySet<string>;
+  } = {}
+): string {
   let result = dataType;
+  const scaleTypes = config.scaleTypes ?? SCALE_TYPES;
+  const unsignedTypes = config.unsignedTypes ?? UNSIGNED_TYPES;
 
   const trimLength = length.trim();
   const trimScale = scale.trim();
 
   if (trimLength) {
-    if (trimScale && SCALE_TYPES.has(dataType.toLowerCase())) {
+    if (trimScale && scaleTypes.has(dataType.toLowerCase())) {
       result += `(${trimLength},${trimScale})`;
     } else {
       result += `(${trimLength})`;
     }
   }
 
-  if (unsigned && UNSIGNED_TYPES.has(dataType.toLowerCase())) {
+  if (unsigned && unsignedTypes.has(dataType.toLowerCase())) {
     result += " unsigned";
   }
 

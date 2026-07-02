@@ -1,5 +1,6 @@
 import type { DatabaseType, ImportSqlFileResult, SqlExecuteResult } from "../types";
 import * as api from "../services/tauriCommands";
+import { normalizeDatabaseType } from "./connectionConfig";
 
 /** 导入确认文案中是否包含备份提示（供单测断言） */
 export const IMPORT_SQL_BACKUP_HINT =
@@ -88,11 +89,20 @@ export async function isConnectionGloballyReadOnly(
   database: string,
   databaseType: DatabaseType | string | null | undefined = "mysql"
 ): Promise<boolean> {
-  if (databaseType === "postgres") {
+  const normalizedType = normalizeDatabaseType(databaseType);
+  if (normalizedType === "postgres") {
     const roCheck = await api.executeSql(
       connId,
       database,
       "SHOW transaction_read_only"
+    );
+    return isServerReadOnlyFromSqlResult(roCheck);
+  }
+  if (normalizedType === "sqlserver") {
+    const roCheck = await api.executeSql(
+      connId,
+      database,
+      "SELECT CAST(CASE WHEN DATABASEPROPERTYEX(DB_NAME(), 'Updateability') = 'READ_ONLY' THEN 1 ELSE 0 END AS int) AS ro"
     );
     return isServerReadOnlyFromSqlResult(roCheck);
   }

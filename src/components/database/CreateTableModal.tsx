@@ -24,6 +24,10 @@ import {
   SQLITE_DATA_TYPES,
   SQLITE_LENGTH_TYPES,
   SQLITE_SCALE_TYPES,
+  SQLSERVER_DATA_TYPES,
+  SQLSERVER_LENGTH_TYPES,
+  SQLSERVER_SCALE_TYPES,
+  SQLSERVER_UNSIGNED_TYPES,
 } from "../../utils/columnTypeUtils";
 import { formColumnToDef } from "../../utils/createTableFormUtils";
 import { useConnectionStore } from "../../stores/connectionStore";
@@ -43,6 +47,11 @@ const MYSQL_EXTRA_OPTIONS = [
 
 /** PostgreSQL 不通过 extra 字段维护自增；通过 `serial`/`bigserial` 类型实现，故仅保留"(无)"。 */
 const POSTGRES_EXTRA_OPTIONS = [{ label: "(无)", value: "" }];
+
+const SQLSERVER_EXTRA_OPTIONS = [
+  { label: "(无)", value: "" },
+  { label: "identity", value: "identity" },
+];
 
 interface CreateTableModalProps {
   open: boolean;
@@ -74,27 +83,44 @@ export function CreateTableModal({
     activeConnection?.config.database_type
   );
   const isSqlite = databaseType === "sqlite";
+  const isSqlServer = databaseType === "sqlserver";
   const showEngine = capabilities.storageEngine;
   const dataTypeOptions = isSqlite
     ? SQLITE_DATA_TYPES
-    : showEngine
-      ? MYSQL_DATA_TYPES
-      : POSTGRES_DATA_TYPES;
+    : isSqlServer
+      ? SQLSERVER_DATA_TYPES
+      : showEngine
+        ? MYSQL_DATA_TYPES
+        : POSTGRES_DATA_TYPES;
   const lengthSet = isSqlite
     ? SQLITE_LENGTH_TYPES
-    : showEngine
-      ? LENGTH_TYPES
-      : POSTGRES_LENGTH_TYPES;
+    : isSqlServer
+      ? SQLSERVER_LENGTH_TYPES
+      : showEngine
+        ? LENGTH_TYPES
+        : POSTGRES_LENGTH_TYPES;
   const scaleSet = isSqlite
     ? SQLITE_SCALE_TYPES
+    : isSqlServer
+      ? SQLSERVER_SCALE_TYPES
+      : showEngine
+        ? SCALE_TYPES
+        : POSTGRES_SCALE_TYPES;
+  const unsignedSet = isSqlServer
+    ? SQLSERVER_UNSIGNED_TYPES
     : showEngine
-      ? SCALE_TYPES
-      : POSTGRES_SCALE_TYPES;
-  const unsignedSet = showEngine ? UNSIGNED_TYPES : new Set<string>();
+      ? UNSIGNED_TYPES
+      : new Set<string>();
   const extraOptions = showEngine
     ? MYSQL_EXTRA_OPTIONS
-    : POSTGRES_EXTRA_OPTIONS;
-  const defaultDataType = isSqlite ? "TEXT" : "varchar";
+    : isSqlServer
+      ? SQLSERVER_EXTRA_OPTIONS
+      : POSTGRES_EXTRA_OPTIONS;
+  const defaultDataType = isSqlite
+    ? "TEXT"
+    : isSqlServer
+      ? "nvarchar"
+      : "varchar";
   const idDefault = showEngine
     ? {
         name: "id",
@@ -121,19 +147,32 @@ export function CreateTableModal({
           extra: "",
           comment: "",
         }
-      : {
-          // PostgreSQL 默认主键使用 bigserial（隐含 NOT NULL + 自动序列）
-          name: "id",
-          data_type: "bigserial",
-          length: "",
-          scale: "",
-          unsigned: false,
-          nullable: false,
-          is_primary: true,
-          default_value: "",
-          extra: "",
-          comment: "",
-        };
+      : isSqlServer
+        ? {
+            name: "id",
+            data_type: "bigint",
+            length: "",
+            scale: "",
+            unsigned: false,
+            nullable: false,
+            is_primary: true,
+            default_value: "",
+            extra: "identity",
+            comment: "",
+          }
+        : {
+            // PostgreSQL 默认主键使用 bigserial（隐含 NOT NULL + 自动序列）
+            name: "id",
+            data_type: "bigserial",
+            length: "",
+            scale: "",
+            unsigned: false,
+            nullable: false,
+            is_primary: true,
+            default_value: "",
+            extra: "",
+            comment: "",
+          };
   const [form] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -144,9 +183,13 @@ export function CreateTableModal({
       setSubmitting(true);
       setError(null);
 
+      const typeConfig = {
+        scaleTypes: scaleSet,
+        unsignedTypes: unsignedSet,
+      };
       const rawColumns: CreateTableColumnDef[] = (
         values.columns as Record<string, unknown>[]
-      ).map(formColumnToDef);
+      ).map((col) => formColumnToDef(col, typeConfig));
       const columns = isSqlite
         ? rawColumns.map((col) => ({
             ...col,
@@ -527,7 +570,7 @@ export function CreateTableModal({
                     add({
                       name: "",
                       data_type: defaultDataType,
-                      length: isSqlite ? "" : "255",
+                      length: isSqlite ? "" : isSqlServer ? "255" : "255",
                       scale: "",
                       unsigned: false,
                       nullable: true,

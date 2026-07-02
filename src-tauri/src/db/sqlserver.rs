@@ -11,7 +11,7 @@ use bb8::{Pool, PooledConnection};
 use bb8_tiberius::ConnectionManager as SqlServerConnectionManager;
 use futures_util::TryStreamExt;
 use serde_json::Value as JsonValue;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::{Duration, Instant};
 use tiberius::{AuthMethod, ColumnData, Config as TiberiusConfig, EncryptionLevel, Row};
 
@@ -248,6 +248,33 @@ fn table_structure_sql(schema: &str, table: &str) -> String {
            FROM sys.indexes i \
            JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id \
            WHERE i.is_primary_key = 1 \
+         ), pk_exists AS ( \
+           SELECT DISTINCT object_id FROM pk \
+         ), uq_candidate_keys AS ( \
+           SELECT i.object_id, i.index_id, c.name AS first_key_name \
+           FROM sys.indexes i \
+           JOIN sys.index_columns first_ic \
+             ON first_ic.object_id = i.object_id AND first_ic.index_id = i.index_id \
+            AND first_ic.key_ordinal = 1 AND first_ic.is_included_column = 0 \
+           JOIN sys.columns c ON c.object_id = first_ic.object_id AND c.column_id = first_ic.column_id \
+           WHERE i.is_unique = 1 AND i.is_primary_key = 0 AND i.has_filter = 0 \
+             AND i.is_disabled = 0 AND i.is_hypothetical = 0 \
+             AND NOT EXISTS ( \
+               SELECT 1 \
+               FROM sys.index_columns ic2 \
+               JOIN sys.columns c2 ON c2.object_id = ic2.object_id AND c2.column_id = ic2.column_id \
+               WHERE ic2.object_id = i.object_id AND ic2.index_id = i.index_id \
+                 AND ic2.is_included_column = 0 AND c2.is_computed = 1 \
+             ) \
+         ), uq_candidates AS ( \
+           SELECT object_id, index_id, \
+                  ROW_NUMBER() OVER (PARTITION BY object_id ORDER BY first_key_name, index_id) AS rank_no \
+           FROM uq_candidate_keys \
+         ), uq AS ( \
+           SELECT ic.object_id, ic.column_id \
+           FROM uq_candidates uq \
+           JOIN sys.index_columns ic ON ic.object_id = uq.object_id AND ic.index_id = uq.index_id \
+           WHERE uq.rank_no = 1 AND ic.is_included_column = 0 \
          ) \
          SELECT c.name AS column_name, \
                 ty.name AS type_name, \
@@ -255,7 +282,7 @@ fn table_structure_sql(schema: &str, table: &str) -> String {
                 CAST(c.precision AS int) AS precision_value, \
                 CAST(c.scale AS int) AS scale_value, \
                 c.is_nullable, \
-                CASE WHEN pk.column_id IS NULL THEN '' ELSE 'PRI' END AS key_name, \
+                CASE WHEN pk.column_id IS NOT NULL THEN 'PRI' WHEN pk_exists.object_id IS NULL AND uq.column_id IS NOT NULL THEN 'UNI' ELSE '' END AS key_name, \
                 dc.definition AS default_value, \
                 CASE WHEN ident.column_id IS NULL THEN CAST(0 AS bit) ELSE CAST(1 AS bit) END AS is_identity, \
                 comp.definition AS computed_definition, \
@@ -272,6 +299,8 @@ fn table_structure_sql(schema: &str, table: &str) -> String {
          LEFT JOIN sys.computed_columns comp \
            ON comp.object_id = c.object_id AND comp.column_id = c.column_id \
          LEFT JOIN pk ON pk.object_id = c.object_id AND pk.column_id = c.column_id \
+         LEFT JOIN pk_exists ON pk_exists.object_id = c.object_id \
+         LEFT JOIN uq ON uq.object_id = c.object_id AND uq.column_id = c.column_id \
          LEFT JOIN sys.extended_properties ep \
            ON ep.class = 1 AND ep.major_id = c.object_id AND ep.minor_id = c.column_id AND ep.name = N'MS_Description' \
          WHERE s.name = N{} AND o.name = N{} AND o.type IN ('U', 'V') \
@@ -371,6 +400,51 @@ pub(crate) fn build_sqlserver_column_extra(
     parts.join(" ")
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SqlServerInputValue {
+    Null,
+    Text(String),
+}
+
+impl SqlServerInputValue {
+    pub fn from_json(v: &JsonValue) -> Self {
+        match v {
+            JsonValue::Null => SqlServerInputValue::Null,
+            JsonValue::Bool(true) => SqlServerInputValue::Text("1".to_string()),
+            JsonValue::Bool(false) => SqlServerInputValue::Text("0".to_string()),
+            JsonValue::Number(n) => SqlServerInputValue::Text(n.to_string()),
+            JsonValue::String(s) => SqlServerInputValue::Text(s.clone()),
+            other => SqlServerInputValue::Text(other.to_string()),
+        }
+    }
+
+    fn as_owned_text(&self) -> Option<String> {
+        match self {
+            SqlServerInputValue::Null => None,
+            SqlServerInputValue::Text(value) => Some(value.clone()),
+        }
+    }
+
+    fn is_null(&self) -> bool {
+        matches!(self, SqlServerInputValue::Null)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SqlServerRowUpdate {
+    pub primary_keys: HashMap<String, JsonValue>,
+    pub updates: HashMap<String, JsonValue>,
+}
+
+#[derive(Debug, Clone)]
+struct SqlServerRowLocator {
+    columns: Vec<String>,
+}
+
+const SQLSERVER_NO_ROW_LOCATOR_EDIT_ERROR: &str =
+    "SQL Server 表没有主键或非过滤唯一索引，无法安全定位要修改的行";
+const SQLSERVER_VIEW_EDIT_ERROR: &str = "SQL Server 视图暂不支持通过当前入口编辑";
+
 pub fn build_order_by_sql(fields: &[(&str, &str)]) -> String {
     if fields.is_empty() {
         return String::new();
@@ -452,7 +526,8 @@ pub async fn query_table_data(
     let mut selected_columns_for_empty_result: Option<Vec<String>> = None;
     let select_part = match &select_columns {
         Some(cols) if !cols.is_empty() => {
-            let fetched_pk = fetch_primary_keys_on_client(&mut client, schema, table).await?;
+            let fetched_pk =
+                fetch_row_locator_columns_on_client(&mut client, schema, table).await?;
             let mut merged = cols.clone();
             for pk in &fetched_pk {
                 if !merged.iter().any(|c| c == pk) {
@@ -474,7 +549,8 @@ pub async fn query_table_data(
         let pk = match &pk_cols {
             Some(cols) => cols.clone(),
             None => {
-                let fetched = fetch_primary_keys_on_client(&mut client, schema, table).await?;
+                let fetched =
+                    fetch_row_locator_columns_on_client(&mut client, schema, table).await?;
                 fetched
             }
         };
@@ -861,36 +937,6 @@ fn build_where_sql(where_clause: &Option<String>) -> Result<String, String> {
     }
 }
 
-async fn fetch_primary_keys_on_client(
-    client: &mut SqlServerPooledConnection<'_>,
-    schema: &str,
-    table: &str,
-) -> Result<Vec<String>, String> {
-    let sql = format!(
-        "SELECT c.name \
-         FROM sys.indexes i \
-         JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id \
-         JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id \
-         JOIN sys.objects o ON o.object_id = i.object_id \
-         JOIN sys.schemas s ON s.schema_id = o.schema_id \
-         WHERE i.is_primary_key = 1 AND s.name = N{} AND o.name = N{} \
-         ORDER BY ic.key_ordinal",
-        sqlserver_str(schema),
-        sqlserver_str(table)
-    );
-    let rows = client
-        .simple_query(sql)
-        .await
-        .map_err(|e| normalize_sqlserver_error("查询主键信息失败", e.to_string()))?
-        .into_first_result()
-        .await
-        .map_err(|e| normalize_sqlserver_error("读取主键信息失败", e.to_string()))?;
-    Ok(rows
-        .iter()
-        .filter_map(|row| row.get::<&str, _>("name").map(str::to_string))
-        .collect())
-}
-
 async fn fetch_column_names_on_client(
     client: &mut SqlServerPooledConnection<'_>,
     schema: &str,
@@ -917,6 +963,546 @@ async fn fetch_column_names_on_client(
         .iter()
         .filter_map(|row| row.get::<&str, _>("name").map(str::to_string))
         .collect())
+}
+
+async fn ensure_editable_table_on_client(
+    client: &mut SqlServerPooledConnection<'_>,
+    schema: &str,
+    table: &str,
+) -> Result<SqlServerRowLocator, String> {
+    let object_sql = format!(
+        "SELECT o.type \
+         FROM sys.objects o \
+         JOIN sys.schemas s ON s.schema_id = o.schema_id \
+         WHERE s.name = N{} AND o.name = N{} AND o.type IN ('U', 'V')",
+        sqlserver_str(schema),
+        sqlserver_str(table)
+    );
+    let object_row = client
+        .simple_query(object_sql)
+        .await
+        .map_err(|e| normalize_sqlserver_error("查询表类型失败", e.to_string()))?
+        .into_row()
+        .await
+        .map_err(|e| normalize_sqlserver_error("读取表类型失败", e.to_string()))?;
+    let object_type = object_row
+        .as_ref()
+        .and_then(|row| row.get::<&str, _>("type"))
+        .unwrap_or("");
+    if object_type == "V" {
+        return Err(SQLSERVER_VIEW_EDIT_ERROR.to_string());
+    }
+    if object_type != "U" {
+        return Err(format!("SQL Server 表 `{}`.`{}` 不存在", schema, table));
+    }
+
+    let rows = client
+        .simple_query(row_locator_sql(schema, table))
+        .await
+        .map_err(|e| normalize_sqlserver_error("查询行定位键信息失败", e.to_string()))?
+        .into_first_result()
+        .await
+        .map_err(|e| normalize_sqlserver_error("读取行定位键信息失败", e.to_string()))?;
+
+    let mut grouped: BTreeMap<i32, (bool, Vec<(i32, String)>)> = BTreeMap::new();
+    for row in rows {
+        let Some(index_id) = row.get::<i32, _>("index_id") else {
+            continue;
+        };
+        let is_primary = row.get::<bool, _>("is_primary_key").unwrap_or(false);
+        let key_ordinal = row.get::<i32, _>("key_ordinal").unwrap_or(0);
+        let column = row_string(&row, "name");
+        if column.is_empty() || key_ordinal <= 0 {
+            continue;
+        }
+        let entry = grouped.entry(index_id).or_insert((is_primary, Vec::new()));
+        entry.0 = entry.0 || is_primary;
+        entry.1.push((key_ordinal, column));
+    }
+
+    let mut candidates = grouped
+        .into_values()
+        .map(|(is_primary, mut cols)| {
+            cols.sort_by_key(|(ordinal, _)| *ordinal);
+            (
+                is_primary,
+                cols.into_iter()
+                    .map(|(_, column)| column)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .filter(|(_, cols)| !cols.is_empty())
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|(is_primary, cols)| {
+        (
+            if *is_primary { 0 } else { 1 },
+            cols.first().cloned().unwrap_or_default(),
+        )
+    });
+
+    let Some((_, columns)) = candidates.into_iter().next() else {
+        return Err(SQLSERVER_NO_ROW_LOCATOR_EDIT_ERROR.to_string());
+    };
+
+    Ok(SqlServerRowLocator { columns })
+}
+
+async fn fetch_row_locator_columns_on_client(
+    client: &mut SqlServerPooledConnection<'_>,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<String>, String> {
+    let rows = client
+        .simple_query(row_locator_sql(schema, table))
+        .await
+        .map_err(|e| normalize_sqlserver_error("查询行定位键信息失败", e.to_string()))?
+        .into_first_result()
+        .await
+        .map_err(|e| normalize_sqlserver_error("读取行定位键信息失败", e.to_string()))?;
+
+    let mut grouped: BTreeMap<i32, (bool, Vec<(i32, String)>)> = BTreeMap::new();
+    for row in rows {
+        let Some(index_id) = row.get::<i32, _>("index_id") else {
+            continue;
+        };
+        let is_primary = row.get::<bool, _>("is_primary_key").unwrap_or(false);
+        let key_ordinal = row.get::<i32, _>("key_ordinal").unwrap_or(0);
+        let column = row_string(&row, "name");
+        if column.is_empty() || key_ordinal <= 0 {
+            continue;
+        }
+        let entry = grouped.entry(index_id).or_insert((is_primary, Vec::new()));
+        entry.0 = entry.0 || is_primary;
+        entry.1.push((key_ordinal, column));
+    }
+    let mut candidates = grouped
+        .into_values()
+        .map(|(is_primary, mut cols)| {
+            cols.sort_by_key(|(ordinal, _)| *ordinal);
+            (
+                is_primary,
+                cols.into_iter()
+                    .map(|(_, column)| column)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .filter(|(_, cols)| !cols.is_empty())
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|(is_primary, cols)| {
+        (
+            if *is_primary { 0 } else { 1 },
+            cols.first().cloned().unwrap_or_default(),
+        )
+    });
+    Ok(candidates
+        .into_iter()
+        .next()
+        .map(|(_, cols)| cols)
+        .unwrap_or_default())
+}
+
+fn row_locator_sql(schema: &str, table: &str) -> String {
+    format!(
+        "SELECT CAST(i.index_id AS int) AS index_id, \
+                CAST(i.is_primary_key AS bit) AS is_primary_key, \
+                CAST(ic.key_ordinal AS int) AS key_ordinal, \
+                c.name \
+         FROM sys.indexes i \
+         JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id \
+         JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id \
+         JOIN sys.objects o ON o.object_id = i.object_id \
+         JOIN sys.schemas s ON s.schema_id = o.schema_id \
+         WHERE s.name = N{} AND o.name = N{} AND o.type = 'U' \
+           AND ic.is_included_column = 0 \
+           AND NOT EXISTS ( \
+             SELECT 1 \
+             FROM sys.index_columns ic2 \
+             JOIN sys.columns c2 ON c2.object_id = ic2.object_id AND c2.column_id = ic2.column_id \
+             WHERE ic2.object_id = i.object_id AND ic2.index_id = i.index_id \
+               AND ic2.is_included_column = 0 AND c2.is_computed = 1 \
+           ) \
+           AND (i.is_primary_key = 1 OR (i.is_unique = 1 AND i.has_filter = 0 AND i.is_disabled = 0 AND i.is_hypothetical = 0)) \
+         ORDER BY CASE WHEN i.is_primary_key = 1 THEN 0 ELSE 1 END, i.index_id, ic.key_ordinal",
+        sqlserver_str(schema),
+        sqlserver_str(table)
+    )
+}
+
+pub async fn fetch_edit_locator(
+    pool: &SqlServerPool,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<String>, String> {
+    let mut client = get_client_with_retry(pool).await?;
+    Ok(ensure_editable_table_on_client(&mut client, schema, table)
+        .await?
+        .columns)
+}
+
+fn map_entries(values: &HashMap<String, JsonValue>) -> Vec<(String, SqlServerInputValue)> {
+    values
+        .iter()
+        .map(|(k, v)| (k.clone(), SqlServerInputValue::from_json(v)))
+        .collect()
+}
+
+fn ordered_locator_entries(
+    locator_columns: &[String],
+    values: &HashMap<String, JsonValue>,
+    missing_message: &str,
+) -> Result<Vec<(String, SqlServerInputValue)>, String> {
+    if locator_columns.is_empty() {
+        return Err(SQLSERVER_NO_ROW_LOCATOR_EDIT_ERROR.to_string());
+    }
+    if locator_columns
+        .iter()
+        .any(|column| !values.contains_key(column))
+    {
+        return Err(missing_message.to_string());
+    }
+    Ok(locator_columns
+        .iter()
+        .map(|column| {
+            (
+                column.clone(),
+                SqlServerInputValue::from_json(values.get(column).expect("locator checked")),
+            )
+        })
+        .collect())
+}
+
+fn map_locator_rows(
+    locator_columns: &[String],
+    rows: &[HashMap<String, JsonValue>],
+) -> Result<Vec<Vec<(String, SqlServerInputValue)>>, String> {
+    if rows.is_empty() {
+        return Err("没有提供要删除的行".to_string());
+    }
+    rows.iter()
+        .map(|row| ordered_locator_entries(locator_columns, row, "存在主键信息不完整的行"))
+        .collect()
+}
+
+pub fn build_insert_statement(
+    schema: &str,
+    table: &str,
+    entries: &[(String, SqlServerInputValue)],
+) -> (String, Vec<SqlServerInputValue>) {
+    let cols_sql = entries
+        .iter()
+        .map(|(column, _)| sqlserver_id(column))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let placeholders = (1..=entries.len())
+        .map(|idx| format!("@P{}", idx))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "INSERT INTO {}.{} ({}) VALUES ({})",
+        sqlserver_id(schema),
+        sqlserver_id(table),
+        cols_sql,
+        placeholders
+    );
+    let params = entries.iter().map(|(_, v)| v.clone()).collect();
+    (sql, params)
+}
+
+pub fn build_update_statement(
+    schema: &str,
+    table: &str,
+    primary_keys: &[(String, SqlServerInputValue)],
+    updates: &[(String, SqlServerInputValue)],
+) -> (String, Vec<SqlServerInputValue>) {
+    let mut idx = 1usize;
+    let mut params = Vec::with_capacity(updates.len() + primary_keys.len());
+
+    let set_parts = updates
+        .iter()
+        .map(|(column, value)| {
+            let part = format!("{} = @P{}", sqlserver_id(column), idx);
+            idx += 1;
+            params.push(value.clone());
+            part
+        })
+        .collect::<Vec<_>>();
+    let where_parts = primary_keys
+        .iter()
+        .map(|(column, value)| {
+            if value.is_null() {
+                format!("{} IS NULL", sqlserver_id(column))
+            } else {
+                let part = format!("{} = @P{}", sqlserver_id(column), idx);
+                idx += 1;
+                params.push(value.clone());
+                part
+            }
+        })
+        .collect::<Vec<_>>();
+
+    (
+        format!(
+            "UPDATE {}.{} SET {} WHERE {}",
+            sqlserver_id(schema),
+            sqlserver_id(table),
+            set_parts.join(", "),
+            where_parts.join(" AND ")
+        ),
+        params,
+    )
+}
+
+pub fn build_delete_statement(
+    schema: &str,
+    table: &str,
+    rows: &[Vec<(String, SqlServerInputValue)>],
+) -> (String, Vec<SqlServerInputValue>) {
+    let first_row = rows.first().expect("primary key rows must not be empty");
+    let mut idx = 1usize;
+    let mut params = Vec::new();
+
+    let where_sql = if first_row.len() == 1 && rows.iter().all(|row| !row[0].1.is_null()) {
+        let primary_key_column = &first_row[0].0;
+        let placeholders = rows
+            .iter()
+            .map(|row| {
+                let placeholder = format!("@P{}", idx);
+                idx += 1;
+                params.push(row[0].1.clone());
+                placeholder
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{} IN ({})", sqlserver_id(primary_key_column), placeholders)
+    } else {
+        build_or_locator_predicate(rows, &mut idx, &mut params)
+    };
+
+    (
+        format!(
+            "DELETE FROM {}.{} WHERE {}",
+            sqlserver_id(schema),
+            sqlserver_id(table),
+            where_sql
+        ),
+        params,
+    )
+}
+
+fn build_or_locator_predicate(
+    rows: &[Vec<(String, SqlServerInputValue)>],
+    idx: &mut usize,
+    params: &mut Vec<SqlServerInputValue>,
+) -> String {
+    rows.iter()
+        .map(|row| {
+            let parts = row
+                .iter()
+                .map(|(column, value)| {
+                    if value.is_null() {
+                        format!("{} IS NULL", sqlserver_id(column))
+                    } else {
+                        let part = format!("{} = @P{}", sqlserver_id(column), *idx);
+                        *idx += 1;
+                        params.push(value.clone());
+                        part
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" AND ");
+            format!("({})", parts)
+        })
+        .collect::<Vec<_>>()
+        .join(" OR ")
+}
+
+async fn execute_with_text_params(
+    client: &mut SqlServerPooledConnection<'_>,
+    sql: &str,
+    values: &[SqlServerInputValue],
+) -> Result<u64, String> {
+    let owned: Vec<Option<String>> = values.iter().map(|v| v.as_owned_text()).collect();
+    let params: Vec<&dyn tiberius::ToSql> = owned
+        .iter()
+        .map(|opt| opt as &dyn tiberius::ToSql)
+        .collect();
+    client
+        .execute(sql, &params)
+        .await
+        .map(|result| result.total())
+        .map_err(|e| normalize_sqlserver_error("执行写操作失败", e.to_string()))
+}
+
+pub async fn insert_row(
+    pool: &SqlServerPool,
+    schema: &str,
+    table: &str,
+    values: HashMap<String, JsonValue>,
+) -> Result<u64, String> {
+    if values.is_empty() {
+        return Err("没有提供要插入的数据".to_string());
+    }
+    let mut client = get_client_with_retry(pool).await?;
+    ensure_editable_table_on_client(&mut client, schema, table).await?;
+    let entries = map_entries(&values);
+    let (sql, params) = build_insert_statement(schema, table, &entries);
+    execute_with_text_params(&mut client, &sql, &params).await
+}
+
+pub async fn update_row(
+    pool: &SqlServerPool,
+    schema: &str,
+    table: &str,
+    primary_keys: HashMap<String, JsonValue>,
+    updates: HashMap<String, JsonValue>,
+) -> Result<u64, String> {
+    if updates.is_empty() {
+        return Err("没有提供要更新的数据".to_string());
+    }
+    if primary_keys.is_empty() {
+        return Err("没有提供主键信息".to_string());
+    }
+    let mut client = get_client_with_retry(pool).await?;
+    let locator = ensure_editable_table_on_client(&mut client, schema, table).await?;
+    let pk_entries =
+        ordered_locator_entries(&locator.columns, &primary_keys, "存在缺少主键信息的行")?;
+    let upd_entries = map_entries(&updates);
+    let (sql, params) = build_update_statement(schema, table, &pk_entries, &upd_entries);
+    execute_with_text_params(&mut client, &sql, &params).await
+}
+
+fn prepare_batch_update_statements(
+    schema: &str,
+    table: &str,
+    locator_columns: &[String],
+    rows: &[SqlServerRowUpdate],
+) -> Result<Vec<(String, Vec<SqlServerInputValue>)>, String> {
+    rows.iter()
+        .map(|row| {
+            let pk_entries = ordered_locator_entries(
+                locator_columns,
+                &row.primary_keys,
+                "存在缺少主键信息的行",
+            )?;
+            let upd_entries = map_entries(&row.updates);
+            Ok(build_update_statement(
+                schema,
+                table,
+                &pk_entries,
+                &upd_entries,
+            ))
+        })
+        .collect()
+}
+
+pub async fn batch_update_rows(
+    pool: &SqlServerPool,
+    schema: &str,
+    table: &str,
+    rows: Vec<SqlServerRowUpdate>,
+) -> Result<u64, String> {
+    if rows.is_empty() {
+        return Err("没有提供要更新的数据".to_string());
+    }
+    for row in &rows {
+        if row.updates.is_empty() {
+            return Err("存在没有更新内容的行".to_string());
+        }
+        if row.primary_keys.is_empty() {
+            return Err("存在缺少主键信息的行".to_string());
+        }
+    }
+
+    let mut client = get_client_with_retry(pool).await?;
+    let locator = ensure_editable_table_on_client(&mut client, schema, table).await?;
+    let statements = prepare_batch_update_statements(schema, table, &locator.columns, &rows)?;
+    drain_simple_query(&mut client, "BEGIN TRANSACTION", "开启事务失败").await?;
+
+    let mut total = 0u64;
+    for (sql, params) in &statements {
+        match execute_with_text_params(&mut client, &sql, &params).await {
+            Ok(affected) => total += affected,
+            Err(err) => {
+                let _ =
+                    drain_simple_query(&mut client, "ROLLBACK TRANSACTION", "回滚事务失败").await;
+                return Err(format!("批量更新失败，已回滚（未提交任何修改）: {}", err));
+            }
+        }
+    }
+
+    drain_simple_query(&mut client, "COMMIT TRANSACTION", "提交事务失败").await?;
+    Ok(total)
+}
+
+pub async fn delete_rows(
+    pool: &SqlServerPool,
+    schema: &str,
+    table: &str,
+    primary_keys: Vec<HashMap<String, JsonValue>>,
+) -> Result<u64, String> {
+    let mut client = get_client_with_retry(pool).await?;
+    let locator = ensure_editable_table_on_client(&mut client, schema, table).await?;
+    let rows = map_locator_rows(&locator.columns, &primary_keys)?;
+    let (sql, params) = build_delete_statement(schema, table, &rows);
+    execute_with_text_params(&mut client, &sql, &params).await
+}
+
+pub async fn query_full_rows(
+    pool: &SqlServerPool,
+    schema: &str,
+    table: &str,
+    primary_key_column: &str,
+    primary_key_values: Vec<JsonValue>,
+) -> Result<QueryResult, String> {
+    if primary_key_values.is_empty() {
+        return Err("没有提供主键值".to_string());
+    }
+    let primary_keys = primary_key_values
+        .into_iter()
+        .map(|value| HashMap::from([(primary_key_column.to_string(), value)]))
+        .collect();
+    query_full_rows_by_primary_keys(pool, schema, table, primary_keys).await
+}
+
+pub async fn query_full_rows_by_primary_keys(
+    pool: &SqlServerPool,
+    schema: &str,
+    table: &str,
+    primary_keys: Vec<HashMap<String, JsonValue>>,
+) -> Result<QueryResult, String> {
+    let start = Instant::now();
+    let mut client = get_client_with_retry(pool).await?;
+    let locator = ensure_editable_table_on_client(&mut client, schema, table).await?;
+    let rows = map_locator_rows(&locator.columns, &primary_keys)?;
+
+    let mut idx = 1usize;
+    let mut params = Vec::new();
+    let where_sql = build_or_locator_predicate(&rows, &mut idx, &mut params);
+    let sql = format!(
+        "SELECT * FROM {}.{} WHERE {}",
+        sqlserver_id(schema),
+        sqlserver_id(table),
+        where_sql
+    );
+    let owned: Vec<Option<String>> = params.iter().map(|v| v.as_owned_text()).collect();
+    let bound: Vec<&dyn tiberius::ToSql> = owned
+        .iter()
+        .map(|opt| opt as &dyn tiberius::ToSql)
+        .collect();
+    let result_rows = client
+        .query(sql, &bound)
+        .await
+        .map_err(|e| normalize_sqlserver_error("查询完整行数据失败", e.to_string()))?
+        .into_first_result()
+        .await
+        .map_err(|e| normalize_sqlserver_error("读取完整行数据失败", e.to_string()))?;
+    let (columns, json_rows) = rows_to_columns_and_json(&result_rows);
+    Ok(QueryResult {
+        columns,
+        total: json_rows.len() as u64,
+        rows: json_rows,
+        execution_time_ms: start.elapsed().as_millis() as u64,
+    })
 }
 
 fn rows_to_columns_and_json(rows: &[Row]) -> (Vec<String>, Vec<Vec<JsonValue>>) {
@@ -1294,5 +1880,120 @@ mod tests {
         assert!(sql.contains("SELECT * FROM dbo.users"));
         assert!(sql.ends_with("SET SHOWPLAN_TEXT OFF;"));
         assert!(!sql.contains("ANALYZE"));
+    }
+
+    #[test]
+    fn sqlserver_dml_builders_use_at_params_and_bracket_identifiers() {
+        let entries = vec![
+            (
+                "name".to_string(),
+                SqlServerInputValue::from_json(&serde_json::json!("Ada")),
+            ),
+            (
+                "age".to_string(),
+                SqlServerInputValue::from_json(&serde_json::json!(42)),
+            ),
+        ];
+        let (insert_sql, insert_params) = build_insert_statement("dbo", "users", &entries);
+        assert_eq!(
+            insert_sql,
+            "INSERT INTO [dbo].[users] ([name], [age]) VALUES (@P1, @P2)"
+        );
+        assert_eq!(insert_params.len(), 2);
+
+        let primary_keys = vec![(
+            "id".to_string(),
+            SqlServerInputValue::from_json(&serde_json::json!(1)),
+        )];
+        let updates = vec![(
+            "name".to_string(),
+            SqlServerInputValue::from_json(&serde_json::json!("Grace")),
+        )];
+        let (update_sql, update_params) =
+            build_update_statement("dbo", "users", &primary_keys, &updates);
+        assert_eq!(
+            update_sql,
+            "UPDATE [dbo].[users] SET [name] = @P1 WHERE [id] = @P2"
+        );
+        assert_eq!(update_params.len(), 2);
+    }
+
+    #[test]
+    fn sqlserver_delete_builder_supports_composite_row_locators() {
+        let rows = vec![
+            vec![
+                (
+                    "tenant_id".to_string(),
+                    SqlServerInputValue::from_json(&serde_json::json!(1)),
+                ),
+                (
+                    "code".to_string(),
+                    SqlServerInputValue::from_json(&serde_json::json!("A")),
+                ),
+            ],
+            vec![
+                (
+                    "tenant_id".to_string(),
+                    SqlServerInputValue::from_json(&serde_json::json!(1)),
+                ),
+                (
+                    "code".to_string(),
+                    SqlServerInputValue::from_json(&serde_json::json!("B")),
+                ),
+            ],
+        ];
+
+        let (sql, params) = build_delete_statement("dbo", "items", &rows);
+
+        assert_eq!(
+            sql,
+            "DELETE FROM [dbo].[items] WHERE ([tenant_id] = @P1 AND [code] = @P2) OR ([tenant_id] = @P3 AND [code] = @P4)"
+        );
+        assert_eq!(params.len(), 4);
+    }
+
+    #[test]
+    fn sqlserver_row_locator_excludes_indexes_with_computed_key_columns() {
+        let sql = row_locator_sql("dbo", "items");
+
+        assert!(sql.contains("NOT EXISTS"));
+        assert!(sql.contains("c2.is_computed = 1"));
+    }
+
+    #[test]
+    fn sqlserver_table_structure_excludes_computed_unique_key_markers() {
+        let sql = table_structure_sql("dbo", "items");
+
+        assert!(sql.contains("c2.is_computed = 1"));
+    }
+
+    #[test]
+    fn sqlserver_table_structure_marks_only_backend_chosen_unique_locator() {
+        let sql = table_structure_sql("dbo", "items");
+
+        assert!(sql.contains("uq_candidates"));
+        assert!(sql.contains("ROW_NUMBER() OVER"));
+        assert!(sql.contains("uq.rank_no = 1"));
+        assert!(sql.contains("pk_exists"));
+        assert!(sql.contains("pk_exists.object_id IS NULL"));
+    }
+
+    #[test]
+    fn sqlserver_batch_update_statements_validate_all_locators_before_transaction() {
+        let rows = vec![
+            SqlServerRowUpdate {
+                primary_keys: HashMap::from([("id".to_string(), serde_json::json!(1))]),
+                updates: HashMap::from([("name".to_string(), serde_json::json!("ok"))]),
+            },
+            SqlServerRowUpdate {
+                primary_keys: HashMap::new(),
+                updates: HashMap::from([("name".to_string(), serde_json::json!("bad"))]),
+            },
+        ];
+
+        let err = prepare_batch_update_statements("dbo", "items", &["id".to_string()], &rows)
+            .expect_err("missing locator should be rejected before BEGIN TRANSACTION");
+
+        assert_eq!(err, "存在缺少主键信息的行");
     }
 }

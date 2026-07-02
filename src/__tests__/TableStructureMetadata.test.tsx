@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { TableStructure } from "../components/table/TableStructure";
 import { useDatabaseStore } from "../stores/databaseStore";
 import { useConnectionStore } from "../stores/connectionStore";
@@ -94,5 +94,104 @@ describe("TableStructure 表元数据", () => {
     expect(screen.getByText("索引容量")).toBeInTheDocument();
     expect(screen.getByText("64.0 KB")).toBeInTheDocument();
     expect(screen.getByText("16.0 KB")).toBeInTheDocument();
+  });
+
+  it("SQL Server 结构元数据不展示存储引擎，也不渲染列拖拽手柄", () => {
+    useConnectionStore.setState({
+      activeConnections: {
+        "conn-1": {
+          ...mockActiveConnection,
+          config: {
+            ...mockActiveConnection.config,
+            database_type: "sqlserver",
+          },
+        },
+      },
+      activeConnId: "conn-1",
+      activeConnection: {
+        ...mockActiveConnection,
+        config: {
+          ...mockActiveConnection.config,
+          database_type: "sqlserver",
+        },
+      },
+    });
+    useDatabaseStore.setState({
+      tableStructure: [
+        {
+          name: "id",
+          column_type: "bigint",
+          nullable: false,
+          key: "PRI",
+          default_value: null,
+          extra: "identity",
+          comment: "",
+        },
+      ],
+      selectedTableInfo: {
+        name: "users",
+        table_type: "TABLE",
+        engine: "SQL Server",
+        rows: 1000,
+        data_length: 65536,
+        index_length: 16384,
+        comment: "用户表",
+      },
+    });
+
+    render(<TableStructure />);
+
+    expect(screen.queryByText("引擎")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("拖拽调整顺序")).not.toBeInTheDocument();
+  });
+
+  it("SQL Server 编辑列弹窗不展示无效的主键开关", () => {
+    useConnectionStore.setState({
+      activeConnections: {
+        "conn-1": {
+          ...mockActiveConnection,
+          config: {
+            ...mockActiveConnection.config,
+            database_type: "sqlserver",
+          },
+        },
+      },
+      activeConnId: "conn-1",
+      activeConnection: {
+        ...mockActiveConnection,
+        config: {
+          ...mockActiveConnection.config,
+          database_type: "sqlserver",
+        },
+      },
+    });
+    useDatabaseStore.setState({
+      tableStructure: [
+        {
+          name: "id",
+          column_type: "bigint",
+          nullable: false,
+          key: "PRI",
+          default_value: null,
+          extra: "identity",
+          comment: "",
+        },
+      ],
+      selectedTableInfo: {
+        name: "users",
+        table_type: "TABLE",
+        engine: "SQL Server",
+        rows: 1000,
+        data_length: 65536,
+        index_length: 16384,
+        comment: "用户表",
+      },
+    });
+
+    render(<TableStructure />);
+    fireEvent.click(screen.getByLabelText("编辑列"));
+
+    expect(screen.getByText(/编辑列/)).toBeInTheDocument();
+    expect(screen.queryByText("主键")).not.toBeInTheDocument();
   });
 });

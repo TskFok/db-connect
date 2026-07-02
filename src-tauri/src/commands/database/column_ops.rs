@@ -2,7 +2,7 @@
 
 use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
 use crate::db::sql_utils::{esc_id, esc_str, validate_column_extra, validate_column_type};
-use crate::db::{postgres_ddl, sqlite};
+use crate::db::{postgres_ddl, sqlite, sqlserver_ddl};
 use crate::models::types::{AddColumnRequest, AlterColumnPlacement, AlterColumnRequest};
 use crate::AppState;
 use mysql_async::prelude::*;
@@ -80,8 +80,9 @@ pub async fn alter_column(
         DatabasePoolHandle::Sqlite(_) => {
             return Err("SQLite 暂不支持修改列定义，请通过新建表迁移数据完成该操作".to_string());
         }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            validate_column_type(&request.column_type)?;
+            return sqlserver_ddl::alter_column(&handle.pool, &database, &table, &request).await;
         }
     };
 
@@ -233,8 +234,9 @@ pub async fn add_column(
             validate_column_type(&request.column_type)?;
             return sqlite::add_column(&handle.pool, &database, &table, &request).await;
         }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            validate_column_type(&request.column_type)?;
+            return sqlserver_ddl::add_column(&handle.pool, &database, &table, &request).await;
         }
     };
 
@@ -291,8 +293,8 @@ pub async fn drop_column(
         DatabasePoolHandle::Sqlite(handle) => {
             return sqlite::drop_column(&handle.pool, &database, &table, &column_name).await;
         }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        DatabasePoolHandle::SqlServer(handle) => {
+            return sqlserver_ddl::drop_column(&handle.pool, &database, &table, &column_name).await;
         }
     };
 
