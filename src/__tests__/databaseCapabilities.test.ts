@@ -73,7 +73,7 @@ describe("getDatabaseCapabilities", () => {
     expect(caps.databaseObjectNoun).toBe("database");
   });
 
-  it("SQL Server Phase 4 开放数据编辑和 schema/table/column 管理，仍关闭列重排及高风险对象入口", () => {
+  it("SQL Server Phase 5 开放索引/外键/触发器/例程，仍不展示 MySQL EVENT 和导入导出入口", () => {
     const caps = getDatabaseCapabilities("sqlserver");
 
     expect(caps.sqlEditor).toBe(true);
@@ -81,11 +81,11 @@ describe("getDatabaseCapabilities", () => {
     expect(caps.tableBrowsing).toBe(true);
     expect(caps.tableDataEditing).toBe(true);
     expect(caps.schemaManagement).toBe(true);
-    expect(caps.routineManagement).toBe(false);
+    expect(caps.routineManagement).toBe(true);
     expect(caps.eventManagement).toBe(false);
-    expect(caps.triggerManagement).toBe(false);
-    expect(caps.indexManagement).toBe(false);
-    expect(caps.foreignKeyManagement).toBe(false);
+    expect(caps.triggerManagement).toBe(true);
+    expect(caps.indexManagement).toBe(true);
+    expect(caps.foreignKeyManagement).toBe(true);
     expect(caps.sqlFileImportExport).toBe(false);
     expect(caps.savedSql).toBe(false);
     expect(caps.favoriteTables).toBe(false);

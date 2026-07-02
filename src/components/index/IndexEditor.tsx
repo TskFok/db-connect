@@ -54,9 +54,10 @@ export function IndexEditor({
   const normalizedDbType = normalizeDatabaseType(dbType);
   const isPostgres = normalizedDbType === "postgres";
   const isSqlite = normalizedDbType === "sqlite";
+  const isSqlServer = normalizedDbType === "sqlserver";
 
   const indexTypeOptions =
-    isPostgres || isSqlite
+    isPostgres || isSqlite || isSqlServer
       ? [
           { label: "普通索引 (INDEX)", value: "INDEX" },
           { label: "唯一索引 (UNIQUE)", value: "UNIQUE" },
@@ -77,7 +78,7 @@ export function IndexEditor({
         { label: "SPGIST", value: "spgist" },
         { label: "BRIN", value: "brin" },
       ]
-    : isSqlite
+    : isSqlite || isSqlServer
       ? [{ label: "BTREE", value: "BTREE" }]
       : [
           { label: "BTREE", value: "BTREE" },
@@ -92,14 +93,14 @@ export function IndexEditor({
       form.setFieldsValue({
         index_name: editingIndex.name,
         index_type: getIndexKind(editingIndex),
-        index_method: getIndexMethod(editingIndex),
+        index_method: getIndexMethod(editingIndex, normalizedDbType),
         columns: indexColumnsToFormValues(editingIndex),
         comment: editingIndex.comment || "",
       });
     } else if (open && !editingIndex) {
       form.resetFields();
     }
-  }, [open, editingIndex, form]);
+  }, [open, editingIndex, form, normalizedDbType]);
 
   const handleSubmit = async () => {
     try {
@@ -234,6 +235,7 @@ export function IndexEditor({
             name="index_method"
             label="索引方法"
             style={{ width: 160 }}
+            hidden={isSqlServer}
           >
             <Select
               allowClear
@@ -292,6 +294,7 @@ export function IndexEditor({
                       {...restField}
                       name={[name, "length"]}
                       style={{ marginBottom: 0, width: 120 }}
+                      hidden={isSqlServer}
                     >
                       <InputNumber
                         placeholder="前缀长度"

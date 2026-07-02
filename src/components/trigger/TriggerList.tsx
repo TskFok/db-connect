@@ -28,6 +28,8 @@ import * as api from "../../services/tauriCommands";
 import { TriggerEditor } from "./TriggerEditor";
 import { useClientReadOnly } from "../../hooks/useClientReadOnly";
 import { useAntTableScrollY } from "../../hooks/useAntTableScrollY";
+import { normalizeDatabaseType } from "../../utils/connectionConfig";
+import { isConnectionGloballyReadOnly } from "../../utils/sqlFileIoUi";
 
 const { Text } = Typography;
 
@@ -69,6 +71,10 @@ export function TriggerList() {
   const connId = activeConnection?.connId ?? "";
   const database = selectedDatabase ?? "";
   const table = selectedTable ?? "";
+  const databaseType = activeConnection?.config.database_type;
+  const isSqlite = normalizeDatabaseType(databaseType) === "sqlite";
+  const [readOnlyDb, setReadOnlyDb] = useState(false);
+  const writeBlocked = clientReadOnly || readOnlyDb;
 
   // 加载触发器列表
   const loadTriggers = useCallback(async () => {
@@ -91,6 +97,29 @@ export function TriggerList() {
   useEffect(() => {
     loadTriggers();
   }, [loadTriggers]);
+
+  useEffect(() => {
+    let cancel = false;
+    if (!connId || !database || isSqlite) {
+      setReadOnlyDb(false);
+      return;
+    }
+    void (async () => {
+      try {
+        const ro = await isConnectionGloballyReadOnly(
+          connId,
+          database,
+          databaseType
+        );
+        if (!cancel) setReadOnlyDb(ro);
+      } catch {
+        if (!cancel) setReadOnlyDb(false);
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [connId, database, databaseType, isSqlite]);
 
   // 查看触发器定义
   const handleViewDefinition = async (triggerName: string) => {
@@ -123,6 +152,14 @@ export function TriggerList() {
 
   // 删除触发器
   const handleDelete = async (triggerName: string) => {
+    if (writeBlocked) {
+      messageApi.warning(
+        clientReadOnly
+          ? "只读连接无法删除触发器"
+          : "当前数据库只读，无法删除触发器"
+      );
+      return;
+    }
     try {
       await api.dropTrigger(connId, database, triggerName, table);
       messageApi.success(`触发器 "${triggerName}" 已删除`);
@@ -145,12 +182,28 @@ export function TriggerList() {
 
   // 打开新建
   const handleOpenCreate = () => {
+    if (writeBlocked) {
+      messageApi.warning(
+        clientReadOnly
+          ? "只读连接无法新建触发器"
+          : "当前数据库只读，无法新建触发器"
+      );
+      return;
+    }
     setEditingTrigger(null);
     setEditorOpen(true);
   };
 
   // 打开编辑
   const handleOpenEdit = (trigger: TriggerInfo) => {
+    if (writeBlocked) {
+      messageApi.warning(
+        clientReadOnly
+          ? "只读连接无法编辑触发器"
+          : "当前数据库只读，无法编辑触发器"
+      );
+      return;
+    }
     setEditingTrigger(trigger);
     setEditorOpen(true);
   };
@@ -252,13 +305,19 @@ export function TriggerList() {
       render: (_: unknown, record: TriggerInfo) => (
         <Space size={4}>
           <Tooltip
-            title={clientReadOnly ? "只读连接无法编辑触发器" : "编辑触发器"}
+            title={
+              writeBlocked
+                ? clientReadOnly
+                  ? "只读连接无法编辑触发器"
+                  : "当前数据库只读，无法编辑触发器"
+                : "编辑触发器"
+            }
           >
             <Button
               type="text"
               size="small"
               icon={<EditOutlined />}
-              disabled={clientReadOnly}
+              disabled={writeBlocked}
               onClick={() => handleOpenEdit(record)}
             />
           </Tooltip>
@@ -277,14 +336,14 @@ export function TriggerList() {
             okText="删除"
             cancelText="取消"
             okButtonProps={{ danger: true }}
-            disabled={clientReadOnly}
+            disabled={writeBlocked}
           >
             <Button
               type="text"
               size="small"
               icon={<DeleteOutlined />}
               danger
-              disabled={clientReadOnly}
+              disabled={writeBlocked}
             />
           </Popconfirm>
         </Space>
@@ -322,13 +381,19 @@ export function TriggerList() {
             />
           </Tooltip>
           <Tooltip
-            title={clientReadOnly ? "只读连接无法新建触发器" : undefined}
+            title={
+              writeBlocked
+                ? clientReadOnly
+                  ? "只读连接无法新建触发器"
+                  : "当前数据库只读，无法新建触发器"
+                : undefined
+            }
           >
             <Button
               icon={<PlusOutlined />}
               size="small"
               type="primary"
-              disabled={clientReadOnly}
+              disabled={writeBlocked}
               onClick={handleOpenCreate}
             >
               新建触发器

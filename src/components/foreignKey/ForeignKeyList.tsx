@@ -48,6 +48,13 @@ const ACTION_OPTIONS = [
   "SET DEFAULT",
 ];
 
+const SQLSERVER_ACTION_OPTIONS = [
+  "NO ACTION",
+  "CASCADE",
+  "SET NULL",
+  "SET DEFAULT",
+];
+
 function formatFkTableRef(fk: ForeignKeyInfo): string {
   return `${fk.table_schema}.${fk.table_name}`;
 }
@@ -86,6 +93,9 @@ export function ForeignKeyList() {
   const database = selectedDatabase ?? "";
   const table = selectedTable ?? "";
   const isSqlite = normalizeDatabaseType(databaseType) === "sqlite";
+  const isSqlServer = normalizeDatabaseType(databaseType) === "sqlserver";
+  const actionOptions = isSqlServer ? SQLSERVER_ACTION_OPTIONS : ACTION_OPTIONS;
+  const dropForeignKeyVerb = isSqlServer ? "DROP CONSTRAINT" : "DROP FOREIGN KEY";
   const writeBlocked = clientReadOnly || readOnlyDb;
 
   const [diagramExpanded, setDiagramExpanded] = useState(false);
@@ -167,8 +177,8 @@ export function ForeignKeyList() {
       columns: [],
       referenced_table: "",
       referenced_columns_text: "",
-      on_update: "RESTRICT",
-      on_delete: "RESTRICT",
+      on_update: isSqlServer ? "NO ACTION" : "RESTRICT",
+      on_delete: isSqlServer ? "NO ACTION" : "RESTRICT",
     });
     setWizardOpen(true);
   };
@@ -196,7 +206,12 @@ export function ForeignKeyList() {
       };
       let preview: string;
       try {
-        preview = previewAddForeignKeySql(database, table, req);
+        preview = previewAddForeignKeySql(
+          database,
+          table,
+          req,
+          isSqlServer ? "sqlserver" : undefined
+        );
       } catch (err) {
         messageApi.error(err instanceof Error ? err.message : String(err));
         return;
@@ -325,7 +340,7 @@ export function ForeignKeyList() {
       render: (_: unknown, fk: ForeignKeyInfo) => (
         <Popconfirm
           title="删除此外键？"
-          description={`将在子表 ${formatFkTableRef(fk)} 上执行 DROP FOREIGN KEY「${fk.constraint_name}」。`}
+          description={`将在子表 ${formatFkTableRef(fk)} 上执行 ${dropForeignKeyVerb}「${fk.constraint_name}」。`}
           okText="删除"
           cancelText="取消"
           okButtonProps={{ danger: true }}
@@ -568,9 +583,20 @@ export function ForeignKeyList() {
           <Form.Item
             name="referenced_table"
             label="被引用表"
-            rules={[{ required: true, message: "请输入表名或 库.表" }]}
+            rules={[
+              {
+                required: true,
+                message: isSqlServer
+                  ? "请输入表名或 schema.表"
+                  : "请输入表名或 库.表",
+              },
+            ]}
           >
-            <SafeInput placeholder="users 或 other_db.users" />
+            <SafeInput
+              placeholder={
+                isSqlServer ? "users 或 sales.users" : "users 或 other_db.users"
+              }
+            />
           </Form.Item>
           <Form.Item
             name="referenced_columns_text"
@@ -587,7 +613,7 @@ export function ForeignKeyList() {
               rules={[{ required: true }]}
             >
               <Select
-                options={ACTION_OPTIONS.map((v) => ({ value: v, label: v }))}
+                options={actionOptions.map((v) => ({ value: v, label: v }))}
               />
             </Form.Item>
             <Form.Item
@@ -597,7 +623,7 @@ export function ForeignKeyList() {
               rules={[{ required: true }]}
             >
               <Select
-                options={ACTION_OPTIONS.map((v) => ({ value: v, label: v }))}
+                options={actionOptions.map((v) => ({ value: v, label: v }))}
               />
             </Form.Item>
           </Space>

@@ -1,6 +1,7 @@
 use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
 use crate::db::postgres_objects;
 use crate::db::sql_utils::esc_id;
+use crate::db::sqlserver_objects;
 use crate::models::types::{EventInfo, RoutineInfo};
 use crate::AppState;
 use mysql_async::prelude::*;
@@ -33,8 +34,13 @@ pub async fn list_routines(
             DatabasePoolHandle::Sqlite(_) => {
                 return Err(DatabasePoolHandle::sqlite_unsupported_error());
             }
-            DatabasePoolHandle::SqlServer(_) => {
-                return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+            DatabasePoolHandle::SqlServer(handle) => {
+                return sqlserver_objects::list_routines(
+                    &handle.pool,
+                    &database,
+                    routine_type.as_deref(),
+                )
+                .await;
             }
         }
     };
@@ -151,8 +157,14 @@ pub async fn get_routine_definition(
             DatabasePoolHandle::Sqlite(_) => {
                 return Err(DatabasePoolHandle::sqlite_unsupported_error());
             }
-            DatabasePoolHandle::SqlServer(_) => {
-                return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+            DatabasePoolHandle::SqlServer(handle) => {
+                return sqlserver_objects::get_routine_definition(
+                    &handle.pool,
+                    &database,
+                    &routine_name,
+                    &routine_type,
+                )
+                .await;
             }
         }
     };
@@ -226,7 +238,10 @@ pub async fn drop_routine(
                 return Err(DatabasePoolHandle::sqlite_unsupported_error());
             }
             DatabasePoolHandle::SqlServer(_) => {
-                return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+                return Err(
+                    "SQL Server 存储过程/函数当前仅支持列表和定义查看，请使用 SQL 编辑器执行删除"
+                        .to_string(),
+                );
             }
         }
     };
@@ -277,7 +292,15 @@ pub async fn list_events(
 
     let pool = {
         let mut manager = state.connection_manager.lock().await;
-        manager.get_pool_and_touch(&conn_id)?
+        match manager.get_database_pool_and_touch(&conn_id)? {
+            DatabasePoolHandle::MySql(pool) => pool,
+            DatabasePoolHandle::SqlServer(_) => {
+                return Err(sqlserver_objects::sqlserver_events_unsupported().to_string());
+            }
+            DatabasePoolHandle::Postgres(_) | DatabasePoolHandle::Sqlite(_) => {
+                return Err("当前数据库类型不支持 EVENT 管理".to_string());
+            }
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -331,7 +354,15 @@ pub async fn get_event_definition(
 
     let pool = {
         let mut manager = state.connection_manager.lock().await;
-        manager.get_pool_and_touch(&conn_id)?
+        match manager.get_database_pool_and_touch(&conn_id)? {
+            DatabasePoolHandle::MySql(pool) => pool,
+            DatabasePoolHandle::SqlServer(_) => {
+                return Err(sqlserver_objects::sqlserver_events_unsupported().to_string());
+            }
+            DatabasePoolHandle::Postgres(_) | DatabasePoolHandle::Sqlite(_) => {
+                return Err("当前数据库类型不支持 EVENT 管理".to_string());
+            }
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -375,7 +406,15 @@ pub async fn drop_event(
 
     let pool = {
         let mut manager = state.connection_manager.lock().await;
-        manager.get_pool_for_write(&conn_id)?
+        match manager.get_database_pool_for_write(&conn_id)? {
+            DatabasePoolHandle::MySql(pool) => pool,
+            DatabasePoolHandle::SqlServer(_) => {
+                return Err(sqlserver_objects::sqlserver_events_unsupported().to_string());
+            }
+            DatabasePoolHandle::Postgres(_) | DatabasePoolHandle::Sqlite(_) => {
+                return Err("当前数据库类型不支持 EVENT 管理".to_string());
+            }
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -408,7 +447,15 @@ pub async fn set_event_enabled(
 
     let pool = {
         let mut manager = state.connection_manager.lock().await;
-        manager.get_pool_for_write(&conn_id)?
+        match manager.get_database_pool_for_write(&conn_id)? {
+            DatabasePoolHandle::MySql(pool) => pool,
+            DatabasePoolHandle::SqlServer(_) => {
+                return Err(sqlserver_objects::sqlserver_events_unsupported().to_string());
+            }
+            DatabasePoolHandle::Postgres(_) | DatabasePoolHandle::Sqlite(_) => {
+                return Err("当前数据库类型不支持 EVENT 管理".to_string());
+            }
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;

@@ -30,6 +30,7 @@ import {
 } from "../../utils/listTableColumns";
 import { createListColumnAutoFit } from "../../utils/columnAutoFitWidth";
 import { useAntTableScrollY } from "../../hooks/useAntTableScrollY";
+import { normalizeDatabaseType } from "../../utils/connectionConfig";
 
 const { Text } = Typography;
 
@@ -96,6 +97,9 @@ export function RoutineList({ remeasureKey }: RoutineListProps = {}) {
 
   const connId = activeConnection?.connId ?? "";
   const database = selectedDatabase ?? "";
+  const isSqlServer =
+    normalizeDatabaseType(activeConnection?.config.database_type) ===
+    "sqlserver";
   const writeBlocked = clientReadOnly || readOnlyDb;
 
   const {
@@ -147,50 +151,58 @@ export function RoutineList({ remeasureKey }: RoutineListProps = {}) {
     };
   }, [connId, database]);
 
-  const showDdl = useCallback(async (row: RoutineInfo) => {
-    if (!connId || !database) return;
-    try {
-      const ddl = await api.getRoutineDefinition(
-        connId,
-        database,
-        row.name,
-        row.routine_type,
-        row.identity_arguments
-      );
-      setDdlTitle(
-        row.identity_arguments
-          ? `${row.routine_type} ${row.name}(${row.identity_arguments})`
-          : `${row.routine_type} ${row.name}`
-      );
-      setDdlText(ddl);
-      setDdlOpen(true);
-    } catch (e) {
-      msg.error(`读取 DDL 失败: ${e}`);
-    }
-  }, [connId, database, msg]);
+  const showDdl = useCallback(
+    async (row: RoutineInfo) => {
+      if (!connId || !database) return;
+      try {
+        const ddl = await api.getRoutineDefinition(
+          connId,
+          database,
+          row.name,
+          row.routine_type,
+          row.identity_arguments
+        );
+        setDdlTitle(
+          row.identity_arguments
+            ? `${row.routine_type} ${row.name}(${row.identity_arguments})`
+            : `${row.routine_type} ${row.name}`
+        );
+        setDdlText(ddl);
+        setDdlOpen(true);
+      } catch (e) {
+        msg.error(`读取 DDL 失败: ${e}`);
+      }
+    },
+    [connId, database, msg]
+  );
 
-  const handleDrop = useCallback(async (row: RoutineInfo) => {
-    if (!connId || !database) return;
-    try {
-      await api.dropRoutine(
-        connId,
-        database,
-        row.name,
-        row.routine_type,
-        row.identity_arguments
-      );
-      msg.success(
-        row.identity_arguments
-          ? `已删除 ${row.routine_type}「${row.name}(${row.identity_arguments})」`
-          : `已删除 ${row.routine_type}「${row.name}」`
-      );
-      load();
-    } catch (e) {
-      msg.error(`删除失败: ${e}`);
-    }
-  }, [connId, database, load, msg]);
+  const handleDrop = useCallback(
+    async (row: RoutineInfo) => {
+      if (!connId || !database) return;
+      try {
+        await api.dropRoutine(
+          connId,
+          database,
+          row.name,
+          row.routine_type,
+          row.identity_arguments
+        );
+        msg.success(
+          row.identity_arguments
+            ? `已删除 ${row.routine_type}「${row.name}(${row.identity_arguments})」`
+            : `已删除 ${row.routine_type}「${row.name}」`
+        );
+        load();
+      } catch (e) {
+        msg.error(`删除失败: ${e}`);
+      }
+    },
+    [connId, database, load, msg]
+  );
 
-  const columnDefinitions = useMemo<Record<string, ColumnsType<RoutineInfo>[number]>>(
+  const columnDefinitions = useMemo<
+    Record<string, ColumnsType<RoutineInfo>[number]>
+  >(
     () => ({
       name: {
         title: "名称",
@@ -242,41 +254,38 @@ export function RoutineList({ remeasureKey }: RoutineListProps = {}) {
                 onClick={() => void showDdl(row)}
               />
             </Tooltip>
-            <Popconfirm
-              title={`删除 ${row.routine_type}？`}
-              description="此操作不可恢复。"
-              okText="删除"
-              cancelText="取消"
-              okButtonProps={{ danger: true }}
-              disabled={writeBlocked}
-              onConfirm={() => void handleDrop(row)}
-            >
-              <Button
-                type="link"
-                size="small"
-                danger
-                icon={<DeleteOutlined />}
+            {!isSqlServer && (
+              <Popconfirm
+                title={`删除 ${row.routine_type}？`}
+                description="此操作不可恢复。"
+                okText="删除"
+                cancelText="取消"
+                okButtonProps={{ danger: true }}
                 disabled={writeBlocked}
-              />
-            </Popconfirm>
+                onConfirm={() => void handleDrop(row)}
+              >
+                <Button
+                  type="link"
+                  size="small"
+                  danger
+                  icon={<DeleteOutlined />}
+                  disabled={writeBlocked}
+                />
+              </Popconfirm>
+            )}
           </Space>
         ),
       },
     }),
-    [handleDrop, showDdl, writeBlocked]
+    [handleDrop, isSqlServer, showDdl, writeBlocked]
   );
 
   const getAutoFitWidth = useMemo(
     () =>
-      createListColumnAutoFit(
-        columnDefinitions,
-        data,
-        getRoutineListCellText,
-        {
-          sortableHeaders: true,
-          minWidths: { a: DEFAULT_ROUTINE_LIST_COLUMN_WIDTHS.a },
-        }
-      ),
+      createListColumnAutoFit(columnDefinitions, data, getRoutineListCellText, {
+        sortableHeaders: true,
+        minWidths: { a: DEFAULT_ROUTINE_LIST_COLUMN_WIDTHS.a },
+      }),
     [columnDefinitions, data]
   );
 
@@ -289,7 +298,13 @@ export function RoutineList({ remeasureKey }: RoutineListProps = {}) {
         handleColumnResize,
         { sortableHeaders: true, getAutoFitWidth }
       ),
-    [columnDefinitions, columnOrder, getColumnWidth, handleColumnResize, getAutoFitWidth]
+    [
+      columnDefinitions,
+      columnOrder,
+      getColumnWidth,
+      handleColumnResize,
+      getAutoFitWidth,
+    ]
   );
 
   return (
@@ -318,7 +333,11 @@ export function RoutineList({ remeasureKey }: RoutineListProps = {}) {
             { value: "FUNCTION", label: "仅函数" },
           ]}
         />
-        <Button icon={<ReloadOutlined />} size="small" onClick={() => void load()}>
+        <Button
+          icon={<ReloadOutlined />}
+          size="small"
+          onClick={() => void load()}
+        >
           刷新
         </Button>
       </Space>

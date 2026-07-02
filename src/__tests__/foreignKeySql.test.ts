@@ -45,4 +45,33 @@ describe("foreignKeySql", () => {
     const sql = previewAddForeignKeySql("d", "t", req);
     expect(sql).toContain("REFERENCES `other`.`r` (`x`, `y`)");
   });
+
+  it("SQL Server 预览使用方括号并默认当前 schema", () => {
+    const req: AddForeignKeyRequest = {
+      constraint_name: "fk_orders_user",
+      columns: ["user_id"],
+      referenced_table: "users",
+      referenced_columns: ["id"],
+      on_update: "NO ACTION",
+      on_delete: "CASCADE",
+    };
+    const sql = previewAddForeignKeySql("dbo", "orders", req, "sqlserver");
+    expect(sql).toBe(
+      "ALTER TABLE [dbo].[orders] ADD CONSTRAINT [fk_orders_user] FOREIGN KEY ([user_id]) REFERENCES [dbo].[users] ([id]) ON UPDATE NO ACTION ON DELETE CASCADE"
+    );
+  });
+
+  it("SQL Server 预览拒绝 RESTRICT 引用动作", () => {
+    const req: AddForeignKeyRequest = {
+      constraint_name: "fk_orders_user",
+      columns: ["user_id"],
+      referenced_table: "users",
+      referenced_columns: ["id"],
+      on_update: "RESTRICT",
+      on_delete: "NO ACTION",
+    };
+    expect(() =>
+      previewAddForeignKeySql("dbo", "orders", req, "sqlserver")
+    ).toThrow(/SQL Server.*NO ACTION/);
+  });
 });

@@ -27,6 +27,7 @@ import { IndexEditor } from "./IndexEditor";
 import { useClientReadOnly } from "../../hooks/useClientReadOnly";
 import { useAntTableScrollY } from "../../hooks/useAntTableScrollY";
 import { normalizeDatabaseType } from "../../utils/connectionConfig";
+import { isConnectionGloballyReadOnly } from "../../utils/sqlFileIoUi";
 
 const { Text } = Typography;
 
@@ -54,8 +55,11 @@ export function IndexList() {
   const connId = activeConnection?.connId ?? "";
   const database = selectedDatabase ?? "";
   const table = selectedTable ?? "";
-  const isSqlite =
-    normalizeDatabaseType(activeConnection?.config.database_type) === "sqlite";
+  const databaseType = activeConnection?.config.database_type;
+  const normalizedDbType = normalizeDatabaseType(databaseType);
+  const isSqlite = normalizedDbType === "sqlite";
+  const [readOnlyDb, setReadOnlyDb] = useState(false);
+  const writeBlocked = clientReadOnly || readOnlyDb;
 
   // 加载索引列表
   const loadIndexes = useCallback(async () => {
@@ -85,8 +89,37 @@ export function IndexList() {
     loadIndexes();
   }, [tableStructure, loadIndexes]);
 
+  useEffect(() => {
+    let cancel = false;
+    if (!connId || !database || isSqlite) {
+      setReadOnlyDb(false);
+      return;
+    }
+    void (async () => {
+      try {
+        const ro = await isConnectionGloballyReadOnly(
+          connId,
+          database,
+          databaseType
+        );
+        if (!cancel) setReadOnlyDb(ro);
+      } catch {
+        if (!cancel) setReadOnlyDb(false);
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [connId, database, databaseType, isSqlite]);
+
   // 删除索引
   const handleDelete = async (indexName: string) => {
+    if (writeBlocked) {
+      messageApi.warning(
+        clientReadOnly ? "只读连接无法删除索引" : "当前数据库只读，无法删除索引"
+      );
+      return;
+    }
     try {
       await api.deleteIndex(connId, database, table, indexName);
       messageApi.success(`索引 "${indexName}" 已删除`);
@@ -109,12 +142,24 @@ export function IndexList() {
 
   // 打开新建
   const handleOpenCreate = () => {
+    if (writeBlocked) {
+      messageApi.warning(
+        clientReadOnly ? "只读连接无法新建索引" : "当前数据库只读，无法新建索引"
+      );
+      return;
+    }
     setEditingIndex(null);
     setEditorOpen(true);
   };
 
   // 打开编辑
   const handleOpenEdit = (index: IndexInfo) => {
+    if (writeBlocked) {
+      messageApi.warning(
+        clientReadOnly ? "只读连接无法编辑索引" : "当前数据库只读，无法编辑索引"
+      );
+      return;
+    }
     setEditingIndex(index);
     setEditorOpen(true);
   };
@@ -221,13 +266,19 @@ export function IndexList() {
           <Space size={4}>
             {!record.is_primary && (
               <Tooltip
-                title={clientReadOnly ? "只读连接无法编辑索引" : "编辑索引"}
+                title={
+                  writeBlocked
+                    ? clientReadOnly
+                      ? "只读连接无法编辑索引"
+                      : "当前数据库只读，无法编辑索引"
+                    : "编辑索引"
+                }
               >
                 <Button
                   type="text"
                   size="small"
                   icon={<EditOutlined />}
-                  disabled={clientReadOnly}
+                  disabled={writeBlocked}
                   onClick={() => handleOpenEdit(record)}
                 />
               </Tooltip>
@@ -241,14 +292,14 @@ export function IndexList() {
                   okText="确认删除"
                   cancelText="取消"
                   okButtonProps={{ danger: true }}
-                  disabled={clientReadOnly}
+                  disabled={writeBlocked}
                 >
                   <Button
                     type="text"
                     size="small"
                     icon={<DeleteOutlined />}
                     danger
-                    disabled={clientReadOnly}
+                    disabled={writeBlocked}
                   />
                 </Popconfirm>
               </Tooltip>
@@ -259,14 +310,14 @@ export function IndexList() {
                 okText="删除"
                 cancelText="取消"
                 okButtonProps={{ danger: true }}
-                disabled={clientReadOnly}
+                disabled={writeBlocked}
               >
                 <Button
                   type="text"
                   size="small"
                   icon={<DeleteOutlined />}
                   danger
-                  disabled={clientReadOnly}
+                  disabled={writeBlocked}
                 />
               </Popconfirm>
             )}
@@ -305,12 +356,20 @@ export function IndexList() {
               loading={loading}
             />
           </Tooltip>
-          <Tooltip title={clientReadOnly ? "只读连接无法新建索引" : undefined}>
+          <Tooltip
+            title={
+              writeBlocked
+                ? clientReadOnly
+                  ? "只读连接无法新建索引"
+                  : "当前数据库只读，无法新建索引"
+                : undefined
+            }
+          >
             <Button
               icon={<PlusOutlined />}
               size="small"
               type="primary"
-              disabled={clientReadOnly}
+              disabled={writeBlocked}
               onClick={handleOpenCreate}
             >
               新建索引

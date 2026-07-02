@@ -40,6 +40,12 @@ const DEFAULT_SQLITE_TRIGGER_BODY = `BEGIN
   SELECT RAISE(IGNORE);
 END`;
 
+/** 默认触发器语句体模板（SQL Server） */
+const DEFAULT_SQLSERVER_TRIGGER_BODY = `-- 在此编写触发器逻辑
+-- 可通过 inserted / deleted 伪表读取变更行
+INSERT INTO audit_log(action_name)
+SELECT 'INSERT' FROM inserted;`;
+
 export function TriggerEditor({
   open,
   onCancel,
@@ -59,11 +65,15 @@ export function TriggerEditor({
   const normalizedDbType = normalizeDatabaseType(dbType);
   const isPostgres = normalizedDbType === "postgres";
   const isSqlite = normalizedDbType === "sqlite";
+  const isSqlServer = normalizedDbType === "sqlserver";
+  const defaultTiming = isSqlServer ? "AFTER" : "BEFORE";
   const defaultBody = isPostgres
     ? DEFAULT_PG_TRIGGER_BODY
     : isSqlite
       ? DEFAULT_SQLITE_TRIGGER_BODY
-      : DEFAULT_TRIGGER_BODY;
+      : isSqlServer
+        ? DEFAULT_SQLSERVER_TRIGGER_BODY
+        : DEFAULT_TRIGGER_BODY;
   const [triggerBody, setTriggerBody] = useState(defaultBody);
 
   const isEdit = !!editingTrigger;
@@ -79,9 +89,13 @@ export function TriggerEditor({
       setTriggerBody(editingTrigger.statement || defaultBody);
     } else if (open && !editingTrigger) {
       form.resetFields();
+      form.setFieldsValue({
+        timing: defaultTiming,
+        event: "INSERT",
+      });
       setTriggerBody(defaultBody);
     }
-  }, [open, editingTrigger, form, defaultBody]);
+  }, [open, editingTrigger, form, defaultBody, defaultTiming]);
 
   // 构建预览 SQL（按方言切换标识符引用与语法）
   const buildPreviewSql = (): string => {
@@ -93,6 +107,9 @@ export function TriggerEditor({
     }
     if (isSqlite) {
       return `CREATE TRIGGER "${name}"\n${timing} ${event} ON "${database}"."${table}"\n${triggerBody}`;
+    }
+    if (isSqlServer) {
+      return `CREATE TRIGGER [${database}].[${name}] ON [${database}].[${table}]\nAFTER ${event}\nAS\nBEGIN\n  SET NOCOUNT ON;\n  ${triggerBody}\nEND`;
     }
     return `CREATE TRIGGER \`${database}\`.\`${name}\`\n${timing} ${event} ON \`${database}\`.\`${table}\`\nFOR EACH ROW\n${triggerBody}`;
   };
@@ -114,7 +131,9 @@ export function TriggerEditor({
         setError(
           isPostgres
             ? "触发器执行动作不能为空（PostgreSQL 需指定 EXECUTE FUNCTION ...）"
-            : "触发器语句体不能为空"
+            : isSqlServer
+              ? "触发器语句体不能为空（SQL Server 使用 inserted / deleted 伪表）"
+              : "触发器语句体不能为空"
         );
         setSubmitting(false);
         return;
@@ -187,7 +206,7 @@ export function TriggerEditor({
         layout="vertical"
         size="small"
         initialValues={{
-          timing: "BEFORE",
+          timing: defaultTiming,
           event: "INSERT",
         }}
       >
@@ -222,6 +241,7 @@ export function TriggerEditor({
                   ? [{ label: "INSTEAD OF (视图)", value: "INSTEAD OF" }]
                   : []),
               ]}
+              disabled={isSqlServer}
             />
           </Form.Item>
 
@@ -258,7 +278,9 @@ export function TriggerEditor({
               <Text type="secondary" style={{ fontSize: 11 }}>
                 {isPostgres
                   ? "(PostgreSQL 需调用已存在的触发器函数，如 EXECUTE FUNCTION fn())"
-                  : "(支持 SQL 语法高亮)"}
+                  : isSqlServer
+                    ? "(SQL Server 当前入口仅支持 AFTER，使用 inserted / deleted 伪表)"
+                    : "(支持 SQL 语法高亮)"}
               </Text>
             </Space>
           }

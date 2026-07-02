@@ -9,4 +9,5 @@ pub mod sql_utils;
 pub mod sqlite;
 pub mod sqlserver;
 pub mod sqlserver_ddl;
+pub mod sqlserver_objects;
 pub mod ssh_tunnel;

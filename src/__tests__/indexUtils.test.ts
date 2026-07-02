@@ -21,7 +21,9 @@ function makeIndex(overrides: Partial<IndexInfo> = {}): IndexInfo {
 
 describe("getIndexKind", () => {
   it("FULLTEXT 索引 → 返回 FULLTEXT", () => {
-    expect(getIndexKind(makeIndex({ index_type: "FULLTEXT" }))).toBe("FULLTEXT");
+    expect(getIndexKind(makeIndex({ index_type: "FULLTEXT" }))).toBe(
+      "FULLTEXT"
+    );
   });
 
   it("SPATIAL 索引 → 返回 SPATIAL", () => {
@@ -29,15 +31,15 @@ describe("getIndexKind", () => {
   });
 
   it("唯一索引 (BTREE) → 返回 UNIQUE", () => {
-    expect(
-      getIndexKind(makeIndex({ unique: true, index_type: "BTREE" }))
-    ).toBe("UNIQUE");
+    expect(getIndexKind(makeIndex({ unique: true, index_type: "BTREE" }))).toBe(
+      "UNIQUE"
+    );
   });
 
   it("唯一索引 (HASH) → 返回 UNIQUE", () => {
-    expect(
-      getIndexKind(makeIndex({ unique: true, index_type: "HASH" }))
-    ).toBe("UNIQUE");
+    expect(getIndexKind(makeIndex({ unique: true, index_type: "HASH" }))).toBe(
+      "UNIQUE"
+    );
   });
 
   it("普通索引 (BTREE) → 返回 INDEX", () => {
@@ -47,9 +49,9 @@ describe("getIndexKind", () => {
   });
 
   it("普通索引 (HASH) → 返回 INDEX", () => {
-    expect(
-      getIndexKind(makeIndex({ unique: false, index_type: "HASH" }))
-    ).toBe("INDEX");
+    expect(getIndexKind(makeIndex({ unique: false, index_type: "HASH" }))).toBe(
+      "INDEX"
+    );
   });
 
   it("FULLTEXT 优先于 unique 判断", () => {
@@ -69,11 +71,21 @@ describe("getIndexMethod", () => {
   });
 
   it("FULLTEXT 索引 → 返回 undefined", () => {
-    expect(getIndexMethod(makeIndex({ index_type: "FULLTEXT" }))).toBeUndefined();
+    expect(
+      getIndexMethod(makeIndex({ index_type: "FULLTEXT" }))
+    ).toBeUndefined();
   });
 
   it("SPATIAL 索引 → 返回 undefined", () => {
-    expect(getIndexMethod(makeIndex({ index_type: "SPATIAL" }))).toBeUndefined();
+    expect(
+      getIndexMethod(makeIndex({ index_type: "SPATIAL" }))
+    ).toBeUndefined();
+  });
+
+  it("SQL Server 索引不回填索引方法", () => {
+    expect(
+      getIndexMethod(makeIndex({ index_type: "NONCLUSTERED" }), "sqlserver")
+    ).toBeUndefined();
   });
 });
 
@@ -113,9 +125,7 @@ describe("indexColumnsToFormValues", () => {
         ],
       })
     );
-    expect(result).toEqual([
-      { column_name: "name", length: 10, order: "ASC" },
-    ]);
+    expect(result).toEqual([{ column_name: "name", length: 10, order: "ASC" }]);
   });
 
   it("列排序为 DESC", () => {
@@ -180,8 +190,20 @@ describe("indexColumnsToFormValues", () => {
       })
     );
     expect(result).toHaveLength(3);
-    expect(result[0]).toEqual({ column_name: "user_id", length: undefined, order: "ASC" });
-    expect(result[1]).toEqual({ column_name: "created_at", length: undefined, order: "DESC" });
-    expect(result[2]).toEqual({ column_name: "name", length: 20, order: "ASC" });
+    expect(result[0]).toEqual({
+      column_name: "user_id",
+      length: undefined,
+      order: "ASC",
+    });
+    expect(result[1]).toEqual({
+      column_name: "created_at",
+      length: undefined,
+      order: "DESC",
+    });
+    expect(result[2]).toEqual({
+      column_name: "name",
+      length: 20,
+      order: "ASC",
+    });
   });
 });

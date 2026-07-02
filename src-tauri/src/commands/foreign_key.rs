@@ -2,6 +2,7 @@ use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
 use crate::db::postgres_objects;
 use crate::db::sql_utils::esc_id;
 use crate::db::sqlite;
+use crate::db::sqlserver_objects;
 use crate::models::types::{AddForeignKeyRequest, ForeignKeyInfo};
 use crate::AppState;
 use mysql_async::prelude::*;
@@ -57,8 +58,8 @@ pub async fn list_foreign_keys(
             DatabasePoolHandle::Sqlite(handle) => {
                 return sqlite::list_foreign_keys(&handle.pool, &database, &table).await;
             }
-            DatabasePoolHandle::SqlServer(_) => {
-                return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+            DatabasePoolHandle::SqlServer(handle) => {
+                return sqlserver_objects::list_foreign_keys(&handle.pool, &database, &table).await;
             }
         }
     };
@@ -308,8 +309,14 @@ pub async fn add_foreign_key(
             DatabasePoolHandle::Sqlite(_) => {
                 return Err(SQLITE_FOREIGN_KEY_WRITE_UNSUPPORTED.to_string());
             }
-            DatabasePoolHandle::SqlServer(_) => {
-                return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+            DatabasePoolHandle::SqlServer(handle) => {
+                return sqlserver_objects::add_foreign_key(
+                    &handle.pool,
+                    &database,
+                    &table,
+                    &request,
+                )
+                .await;
             }
         }
     };
@@ -351,8 +358,14 @@ pub async fn drop_foreign_key(
             DatabasePoolHandle::Sqlite(_) => {
                 return Err(SQLITE_FOREIGN_KEY_WRITE_UNSUPPORTED.to_string());
             }
-            DatabasePoolHandle::SqlServer(_) => {
-                return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+            DatabasePoolHandle::SqlServer(handle) => {
+                return sqlserver_objects::drop_foreign_key(
+                    &handle.pool,
+                    &database,
+                    &table,
+                    &constraint_name,
+                )
+                .await;
             }
         }
     };

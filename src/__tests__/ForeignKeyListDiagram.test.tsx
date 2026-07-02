@@ -43,6 +43,18 @@ const mockPostgresConnection = {
   },
 };
 
+const mockSqlServerConnection = {
+  connId: "conn-1",
+  config: {
+    id: "conn-1",
+    name: "SQL Server",
+    host: "localhost",
+    port: 1433,
+    username: "sa",
+    database_type: "sqlserver" as const,
+  },
+};
+
 describe("ForeignKeyList 关系图", () => {
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
@@ -139,5 +151,39 @@ describe("ForeignKeyList 关系图", () => {
 
     expect(screen.getByText(/数据库会返回具体错误/)).toBeInTheDocument();
     expect(screen.queryByText(/MySQL 会返回具体错误/)).not.toBeInTheDocument();
+  });
+
+  it("SQL Server 删除外键确认文案使用 DROP CONSTRAINT 术语", async () => {
+    useConnectionStore.setState({
+      activeConnections: { "conn-1": mockSqlServerConnection },
+      activeConnId: "conn-1",
+      activeConnection: mockSqlServerConnection,
+    });
+    vi.mocked(api.listForeignKeys).mockResolvedValue([
+      {
+        constraint_name: "fk_orders_user",
+        direction: "outgoing",
+        table_schema: "dbo",
+        table_name: "orders",
+        column_names: ["user_id"],
+        referenced_table_schema: "dbo",
+        referenced_table_name: "users",
+        referenced_column_names: ["id"],
+        update_rule: "NO ACTION",
+        delete_rule: "CASCADE",
+      },
+    ]);
+
+    const { container } = render(<ForeignKeyList />);
+    await waitFor(() => expect(screen.getByText("fk_orders_user")).toBeInTheDocument());
+
+    const deleteButton = container.querySelector(
+      ".ant-table-cell-fix-right .ant-btn-dangerous"
+    ) as HTMLButtonElement | null;
+    expect(deleteButton).not.toBeNull();
+    fireEvent.click(deleteButton!);
+
+    expect(await screen.findByText(/DROP CONSTRAINT/)).toBeInTheDocument();
+    expect(screen.queryByText(/DROP FOREIGN KEY/)).not.toBeInTheDocument();
   });
 });

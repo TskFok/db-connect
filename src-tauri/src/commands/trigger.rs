@@ -2,6 +2,7 @@ use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
 use crate::db::postgres_objects;
 use crate::db::sql_utils::esc_id;
 use crate::db::sqlite;
+use crate::db::sqlserver_objects;
 use crate::models::types::{CreateTriggerRequest, TriggerInfo};
 use crate::AppState;
 use mysql_async::prelude::*;
@@ -26,8 +27,9 @@ pub async fn list_triggers(
             DatabasePoolHandle::Sqlite(handle) => {
                 return sqlite::list_triggers(&handle.pool, &database, table.as_deref()).await;
             }
-            DatabasePoolHandle::SqlServer(_) => {
-                return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+            DatabasePoolHandle::SqlServer(handle) => {
+                return sqlserver_objects::list_triggers(&handle.pool, &database, table.as_deref())
+                    .await;
             }
         }
     };
@@ -115,8 +117,14 @@ pub async fn get_trigger_definition(
                 )
                 .await;
             }
-            DatabasePoolHandle::SqlServer(_) => {
-                return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+            DatabasePoolHandle::SqlServer(handle) => {
+                return sqlserver_objects::get_trigger_definition(
+                    &handle.pool,
+                    &database,
+                    table.as_deref(),
+                    &trigger_name,
+                )
+                .await;
             }
         }
     };
@@ -165,8 +173,14 @@ pub async fn create_trigger(
             DatabasePoolHandle::Sqlite(handle) => {
                 return sqlite::create_trigger(&handle.pool, &database, &table, &request).await;
             }
-            DatabasePoolHandle::SqlServer(_) => {
-                return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+            DatabasePoolHandle::SqlServer(handle) => {
+                return sqlserver_objects::create_trigger(
+                    &handle.pool,
+                    &database,
+                    &table,
+                    &request,
+                )
+                .await;
             }
         }
     };
@@ -215,8 +229,9 @@ pub async fn drop_trigger(
             DatabasePoolHandle::Sqlite(handle) => {
                 return sqlite::drop_trigger(&handle.pool, &database, &trigger_name).await;
             }
-            DatabasePoolHandle::SqlServer(_) => {
-                return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+            DatabasePoolHandle::SqlServer(handle) => {
+                return sqlserver_objects::drop_trigger(&handle.pool, &database, &trigger_name)
+                    .await;
             }
         }
     };
