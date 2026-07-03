@@ -518,10 +518,10 @@ pub fn build_alter_column_sqls(
     if request.column_placement.is_some() {
         return Err("SQL Server 不支持调整列顺序".to_string());
     }
-    if validate_extra(&request.extra)? || current.extra.to_ascii_lowercase().contains("identity") {
-        if !current.extra.eq_ignore_ascii_case(request.extra.trim()) {
-            return Err("SQL Server 不支持通过 ALTER COLUMN 修改 identity 属性".to_string());
-        }
+    if (validate_extra(&request.extra)? || current.extra.to_ascii_lowercase().contains("identity"))
+        && !current.extra.eq_ignore_ascii_case(request.extra.trim())
+    {
+        return Err("SQL Server 不支持通过 ALTER COLUMN 修改 identity 属性".to_string());
     }
 
     let mut sqls = Vec::new();

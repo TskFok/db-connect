@@ -1420,7 +1420,7 @@ pub async fn batch_update_rows(
 
     let mut total = 0u64;
     for (sql, params) in &statements {
-        match execute_with_text_params(&mut client, &sql, &params).await {
+        match execute_with_text_params(&mut client, sql, params).await {
             Ok(affected) => total += affected,
             Err(err) => {
                 let _ =

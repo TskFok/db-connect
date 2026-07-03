@@ -545,35 +545,25 @@ impl SqlServerDialect {
     }
 
     fn with_statement_main_select_start(&self, upper_sql: &str) -> Option<usize> {
-        let Some(mut idx) = self.consume_keyword(upper_sql, 0, "WITH") else {
-            return None;
-        };
+        let mut idx = self.consume_keyword(upper_sql, 0, "WITH")?;
 
         loop {
             idx = self.skip_ws(upper_sql, idx);
-            let Some(next) = self.skip_identifier(upper_sql, idx) else {
-                return None;
-            };
+            let next = self.skip_identifier(upper_sql, idx)?;
             idx = self.skip_ws(upper_sql, next);
 
             if upper_sql.as_bytes().get(idx) == Some(&b'(') {
-                let Some(next) = self.skip_balanced_parentheses(upper_sql, idx) else {
-                    return None;
-                };
+                let next = self.skip_balanced_parentheses(upper_sql, idx)?;
                 idx = self.skip_ws(upper_sql, next);
             }
 
-            let Some(next) = self.consume_keyword(upper_sql, idx, "AS") else {
-                return None;
-            };
+            let next = self.consume_keyword(upper_sql, idx, "AS")?;
             idx = self.skip_ws(upper_sql, next);
 
             if upper_sql.as_bytes().get(idx) != Some(&b'(') {
                 return None;
             }
-            let Some(next) = self.skip_balanced_parentheses(upper_sql, idx) else {
-                return None;
-            };
+            let next = self.skip_balanced_parentheses(upper_sql, idx)?;
             idx = self.skip_ws(upper_sql, next);
 
             if upper_sql.as_bytes().get(idx) == Some(&b',') {
