@@ -41,12 +41,14 @@ async function main() {
     ensureOriginExists();
 
     await writeNextFiles(nextFiles);
+    syncCargoLockfile();
     git([
       "add",
       "package.json",
       "package-lock.json",
       "src-tauri/tauri.conf.json",
       "src-tauri/Cargo.toml",
+      "src-tauri/Cargo.lock",
       "src/appVersion.ts",
     ]);
     git(["commit", "-m", `发布 v${nextVersion}`]);
@@ -162,6 +164,18 @@ async function writeNextFiles(files) {
   await writeJson(paths.tauriConfig, files.tauriConfig);
   await writeFile(paths.cargoToml, files.cargoToml);
   await writeFile(paths.appVersion, files.appVersion);
+}
+
+function syncCargoLockfile() {
+  execFileSync(
+    "cargo",
+    ["update", "--workspace", "--offline", "--manifest-path", paths.cargoToml],
+    {
+      cwd: rootDir,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }
+  );
 }
 
 async function readJson(path) {
