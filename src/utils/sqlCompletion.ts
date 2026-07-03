@@ -229,8 +229,82 @@ export const SQLSERVER_KEYWORDS = [
   "SET SHOWPLAN_XML",
 ];
 
+/** ClickHouse 常用关键词（用于补全） */
+export const CLICKHOUSE_KEYWORDS = [
+  "SELECT",
+  "INSERT",
+  "CREATE",
+  "DROP",
+  "ALTER",
+  "SHOW",
+  "DESCRIBE",
+  "EXPLAIN",
+  "WITH",
+  "FORMAT",
+  "ENGINE",
+  "MERGE TREE",
+  "ORDER BY",
+  "PARTITION BY",
+  "SAMPLE",
+  "LIMIT BY",
+  "FROM",
+  "WHERE",
+  "GROUP BY",
+  "HAVING",
+  "LIMIT",
+  "OFFSET",
+  "JOIN",
+  "LEFT JOIN",
+  "INNER JOIN",
+  "ON",
+  "USING",
+  "TABLE",
+  "DATABASE",
+  "VIEW",
+  "MATERIALIZED VIEW",
+  "FUNCTION",
+  "ARRAY JOIN",
+  "PREWHERE",
+  "FINAL",
+  "SETTINGS",
+  "TTL",
+  "PRIMARY KEY",
+  "SET",
+  "OPTIMIZE",
+  "TRUNCATE",
+  "SYSTEM",
+  "KILL QUERY",
+  "INT8",
+  "INT16",
+  "INT32",
+  "INT64",
+  "UINT8",
+  "UINT16",
+  "UINT32",
+  "UINT64",
+  "FLOAT32",
+  "FLOAT64",
+  "DECIMAL",
+  "STRING",
+  "FIXEDSTRING",
+  "DATE",
+  "DATETIME",
+  "DATETIME64",
+  "UUID",
+  "ARRAY",
+  "TUPLE",
+  "MAP",
+  "NULLABLE",
+  "LOWCARDINALITY",
+];
+
 /** SQL 方言：决定标识符引用方式与关键词集合 */
-export type SqlDialect = "mysql" | "postgres" | "sqlite" | "sqlserver";
+export type SqlDialect =
+  | "mysql"
+  | "postgres"
+  | "sqlite"
+  | "sqlserver"
+  | "clickhouse";
 
 export interface SqlCompletionOptions {
   /** 数据库方言，默认 mysql */
@@ -242,6 +316,7 @@ export function getSqlKeywords(dialect: SqlDialect = "mysql"): string[] {
   if (dialect === "postgres") return POSTGRES_KEYWORDS;
   if (dialect === "sqlite") return SQLITE_KEYWORDS;
   if (dialect === "sqlserver") return SQLSERVER_KEYWORDS;
+  if (dialect === "clickhouse") return CLICKHOUSE_KEYWORDS;
   return MYSQL_KEYWORDS;
 }
 
@@ -292,6 +367,8 @@ export function buildSqlSuggestions(
         ? "SQLite 关键词"
         : dialect === "sqlserver"
           ? "SQL Server 关键词"
+          : dialect === "clickhouse"
+            ? "ClickHouse 关键词"
           : "MySQL 关键词";
   const dbDetail =
     dialect === "postgres" || dialect === "sqlserver" ? "schema" : "数据库";

@@ -15,6 +15,12 @@ describe("systemDatabase", () => {
     expect(isSystemDatabase("pg_toast_temp_1")).toBe(true);
   });
 
+  it("应识别 ClickHouse 系统库", () => {
+    expect(isSystemDatabase("system")).toBe(true);
+    expect(isSystemDatabase("INFORMATION_SCHEMA")).toBe(true);
+    expect(isSystemDatabase("information_schema")).toBe(true);
+  });
+
   it("用户库/schema 不应视为系统对象", () => {
     expect(isSystemDatabase("my_app")).toBe(false);
     expect(isSystemDatabase("public")).toBe(false);

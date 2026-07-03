@@ -11,6 +11,7 @@ describe("sqlFormat", () => {
       expect(sqlDialectToFormatterLanguage("postgres")).toBe("postgresql");
       expect(sqlDialectToFormatterLanguage("sqlite")).toBe("sqlite");
       expect(sqlDialectToFormatterLanguage("sqlserver")).toBe("transactsql");
+      expect(sqlDialectToFormatterLanguage("clickhouse")).toBe("clickhouse");
     });
   });
 
@@ -33,6 +34,14 @@ describe("sqlFormat", () => {
       const pg = formatSql("select * from public.users", { dialect: "postgres" });
       expect(pg).toContain("SELECT");
       expect(pg).toContain("public.users");
+    });
+
+    it("ClickHouse 方言应使用专用格式化语言且不抛错", () => {
+      const formatted = formatSql("select * from events format JSON", {
+        dialect: "clickhouse",
+      });
+      expect(formatted).toContain("SELECT");
+      expect(formatted).toContain("FORMAT");
     });
 
     it("应保留多条语句之间的分号结构", () => {

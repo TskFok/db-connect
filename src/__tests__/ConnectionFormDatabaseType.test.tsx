@@ -120,6 +120,28 @@ describe("ConnectionForm database type defaults", () => {
     expect(screen.getByLabelText("高危 SQL")).toBeInTheDocument();
   });
 
+  it("新建连接可选择 ClickHouse，自动切换到 8123 端口并保留服务端连接字段", async () => {
+    render(<ConnectionForm />);
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "数据库类型" }));
+    fireEvent.click(await screen.findByText("ClickHouse"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("spinbutton", { name: "端口" })).toHaveValue(
+        "8123"
+      );
+    });
+    expect(screen.getByRole("textbox", { name: "主机地址" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "用户名" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "数据库" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "SQLite 文件" })).toBeNull();
+    expect(screen.getByText("SSL / TLS（ClickHouse）")).toBeInTheDocument();
+    expect(screen.getByText("SSH 隧道")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("高级：只读与安全"));
+    expect(screen.getByLabelText("只读连接")).toBeInTheDocument();
+    expect(screen.getByLabelText("高危 SQL")).toBeInTheDocument();
+  });
+
   it("保存 SQL Server 连接时提交 sqlserver 类型和常规服务端配置", async () => {
     mockApi.saveConnection.mockResolvedValue(undefined);
     mockApi.listSavedConnections.mockResolvedValue([]);
@@ -152,6 +174,43 @@ describe("ConnectionForm database type defaults", () => {
         username: "sa",
         password: undefined,
         database: "appdb",
+        read_only: true,
+      });
+    });
+  });
+
+  it("保存 ClickHouse 连接时提交 clickhouse 类型和常规服务端配置", async () => {
+    mockApi.saveConnection.mockResolvedValue(undefined);
+    mockApi.listSavedConnections.mockResolvedValue([]);
+    render(<ConnectionForm />);
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "数据库类型" }));
+    fireEvent.click(await screen.findByText("ClickHouse"));
+    fireEvent.change(screen.getByRole("textbox", { name: "连接名称" }), {
+      target: { value: "ClickHouse Dev" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "主机地址" }), {
+      target: { value: "clickhouse.example.com" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "用户名" }), {
+      target: { value: "default" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "数据库" }), {
+      target: { value: "analytics" },
+    });
+    fireEvent.click(screen.getByText("高级：只读与安全"));
+    fireEvent.click(screen.getByLabelText("只读连接"));
+    fireEvent.click(screen.getByRole("button", { name: /保存$/ }));
+
+    await waitFor(() => {
+      expect(mockApi.saveConnection).toHaveBeenCalledWith({
+        database_type: "clickhouse",
+        name: "ClickHouse Dev",
+        host: "clickhouse.example.com",
+        port: 8123,
+        username: "default",
+        password: undefined,
+        database: "analytics",
         read_only: true,
       });
     });

@@ -13,7 +13,12 @@ export interface SshConfig {
 }
 
 /** 数据库类型 */
-export type DatabaseType = "mysql" | "postgres" | "sqlite" | "sqlserver";
+export type DatabaseType =
+  | "mysql"
+  | "postgres"
+  | "sqlite"
+  | "sqlserver"
+  | "clickhouse";
 
 /** 数据库连接配置 */
 export interface ConnectionConfig {

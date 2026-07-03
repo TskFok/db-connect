@@ -114,12 +114,14 @@ describe("connectionStore", () => {
   });
 
   describe("database type utilities", () => {
-    it("应该识别 SQLite/SQL Server 并保留未知类型回退到 MySQL", () => {
+    it("应该识别 SQLite/SQL Server/ClickHouse 并保留未知类型回退到 MySQL", () => {
       expect(normalizeDatabaseType("sqlite")).toBe("sqlite");
       expect(normalizeDatabaseType("sqlserver")).toBe("sqlserver");
+      expect(normalizeDatabaseType("clickhouse")).toBe("clickhouse");
       expect(normalizeDatabaseType("unknown")).toBe("mysql");
       expect(defaultPortForDatabaseType("sqlite")).toBe(0);
       expect(defaultPortForDatabaseType("sqlserver")).toBe(1433);
+      expect(defaultPortForDatabaseType("clickhouse")).toBe(8123);
     });
   });
 

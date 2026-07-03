@@ -213,6 +213,8 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
           ? "sqlite"
           : databaseType === "sqlserver"
             ? "sqlserver"
+            : databaseType === "clickhouse"
+              ? "clickhouse"
             : "mysql";
   }, [databaseType]);
 

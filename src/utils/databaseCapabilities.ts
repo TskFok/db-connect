@@ -126,6 +126,26 @@ const SQLSERVER_CAPABILITIES: DatabaseCapabilities = {
   databaseObjectNoun: "schema",
 };
 
+const CLICKHOUSE_CAPABILITIES: DatabaseCapabilities = {
+  sqlEditor: true,
+  databaseManagement: false,
+  tableBrowsing: true,
+  tableDataEditing: false,
+  schemaManagement: false,
+  routineManagement: false,
+  eventManagement: false,
+  triggerManagement: false,
+  indexManagement: false,
+  foreignKeyManagement: false,
+  sqlFileImportExport: false,
+  savedSql: true,
+  favoriteTables: true,
+  charsetAndCollation: false,
+  storageEngine: false,
+  columnReordering: false,
+  databaseObjectNoun: "数据库",
+};
+
 export function getDatabaseCapabilities(
   databaseType: DatabaseType | string | null | undefined
 ): DatabaseCapabilities {
@@ -133,5 +153,6 @@ export function getDatabaseCapabilities(
   if (normalized === "postgres") return POSTGRES_CAPABILITIES;
   if (normalized === "sqlite") return SQLITE_CAPABILITIES;
   if (normalized === "sqlserver") return SQLSERVER_CAPABILITIES;
+  if (normalized === "clickhouse") return CLICKHOUSE_CAPABILITIES;
   return MYSQL_CAPABILITIES;
 }
