@@ -30,6 +30,9 @@ pub async fn list_indexes(
             DatabasePoolHandle::SqlServer(handle) => {
                 return sqlserver_objects::list_indexes(&handle.pool, &database, &table).await;
             }
+            DatabasePoolHandle::ClickHouse(_) => {
+                return Err(DatabasePoolHandle::clickhouse_unsupported_error());
+            }
         }
     };
 
@@ -136,6 +139,9 @@ pub async fn create_index(
                 return sqlserver_objects::create_index(&handle.pool, &database, &table, &request)
                     .await;
             }
+            DatabasePoolHandle::ClickHouse(_) => {
+                return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
+            }
         }
     };
 
@@ -210,6 +216,9 @@ pub async fn delete_index(
             DatabasePoolHandle::SqlServer(handle) => {
                 return sqlserver_objects::drop_index(&handle.pool, &database, &table, &index_name)
                     .await;
+            }
+            DatabasePoolHandle::ClickHouse(_) => {
+                return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
             }
         }
     };

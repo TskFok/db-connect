@@ -3,7 +3,7 @@ use crate::db::sql_utils::{
     esc_id, esc_str, mysql_count_query, mysql_paginated_select,
     mysql_sql_editor_allowed_on_read_only_connection, validate_where_clause,
 };
-use crate::db::{postgres, sqlite, sqlserver};
+use crate::db::{clickhouse, postgres, sqlite, sqlserver};
 use crate::models::types::{QueryResult, SessionInfo, SqlExecuteResult};
 use crate::{AppState, RunningQuery};
 use mysql_async::prelude::*;
@@ -492,6 +492,9 @@ pub async fn query_table_count(
             return sqlserver::query_table_count(&handle.pool, &database, &table, where_clause)
                 .await;
         }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_unsupported_error());
+        }
     };
 
     let where_sql = match &where_clause {
@@ -649,6 +652,9 @@ pub async fn query_table_data(
             )
             .await;
         }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_unsupported_error());
+        }
     };
 
     let start = Instant::now();
@@ -788,6 +794,9 @@ pub async fn insert_row(
         }
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver::insert_row(&handle.pool, &database, &table, values).await;
+        }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
         }
     };
 
@@ -958,6 +967,9 @@ pub async fn update_row(
             return sqlserver::update_row(&handle.pool, &database, &table, primary_keys, updates)
                 .await;
         }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
+        }
     };
 
     if updates.is_empty() {
@@ -1035,6 +1047,9 @@ pub async fn batch_update_rows(
             return sqlserver::batch_update_rows(&handle.pool, &database, &table, sqlserver_rows)
                 .await;
         }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
+        }
     };
 
     if rows.is_empty() {
@@ -1100,6 +1115,9 @@ pub async fn delete_rows(
         }
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver::delete_rows(&handle.pool, &database, &table, primary_keys).await;
+        }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
         }
     };
 
@@ -1180,6 +1198,9 @@ pub async fn query_full_rows(
                 primary_key_values,
             )
             .await;
+        }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_unsupported_error());
         }
     };
 
@@ -1382,6 +1403,33 @@ pub async fn execute_sql(
 
             result
         }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            let registered_id = execution_id.clone();
+            if let Some(eid) = &registered_id {
+                state
+                    .running_queries
+                    .lock()
+                    .await
+                    .insert(eid.clone(), RunningQuery::ClickHouseUnsupported);
+            }
+
+            let client = match database
+                .as_deref()
+                .map(str::trim)
+                .filter(|db| !db.is_empty())
+            {
+                Some(db) => handle.client.as_ref().clone().with_database(db.to_string()),
+                None => handle.client.as_ref().clone(),
+            };
+            let start = Instant::now();
+            let result = clickhouse::run_sql_on_client(&client, &sql, read_only, start).await;
+
+            if let Some(eid) = registered_id {
+                state.running_queries.lock().await.remove(&eid);
+            }
+
+            result
+        }
     }
 }
 
@@ -1422,7 +1470,8 @@ pub async fn cancel_query(
                     DatabasePoolHandle::MySql(pool) => pool,
                     DatabasePoolHandle::Postgres(_)
                     | DatabasePoolHandle::Sqlite(_)
-                    | DatabasePoolHandle::SqlServer(_) => {
+                    | DatabasePoolHandle::SqlServer(_)
+                    | DatabasePoolHandle::ClickHouse(_) => {
                         return Err("当前运行中查询不是 MySQL 查询".to_string());
                     }
                 }
@@ -1439,6 +1488,9 @@ pub async fn cancel_query(
         }
         RunningQuery::SqlServerUnsupported => {
             return sqlserver::cancel_query().await;
+        }
+        RunningQuery::ClickHouseUnsupported => {
+            return Err("ClickHouse 暂不支持主动取消查询".to_string());
         }
     }
 
@@ -1497,6 +1549,17 @@ pub async fn get_session_info(
         }
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver::get_session_info(&handle.pool, database, read_only).await;
+        }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            let client = match database
+                .as_deref()
+                .map(str::trim)
+                .filter(|db| !db.is_empty())
+            {
+                Some(db) => handle.client.as_ref().clone().with_database(db.to_string()),
+                None => handle.client.as_ref().clone(),
+            };
+            return clickhouse::get_session_info(&client, read_only).await;
         }
     };
 
@@ -1599,6 +1662,25 @@ pub async fn explain_sql(
             validate_sql_input(trimmed)?;
             let start = Instant::now();
             sqlserver::explain_sql_on_pool(&handle.pool, trimmed, analyze, start).await
+        }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            let explain_stmt = if trimmed.to_uppercase().starts_with("EXPLAIN") {
+                trimmed.to_string()
+            } else {
+                format!("EXPLAIN {}", trimmed)
+            };
+            validate_sql_input(&explain_stmt)?;
+
+            let client = match database
+                .as_deref()
+                .map(str::trim)
+                .filter(|db| !db.is_empty())
+            {
+                Some(db) => handle.client.as_ref().clone().with_database(db.to_string()),
+                None => handle.client.as_ref().clone(),
+            };
+            let start = Instant::now();
+            clickhouse::run_sql_on_client(&client, &explain_stmt, false, start).await
         }
     }
 }

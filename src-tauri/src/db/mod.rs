@@ -1,4 +1,5 @@
 pub mod adapter;
+pub mod clickhouse;
 pub mod connection;
 pub mod dialect;
 pub mod postgres;

@@ -6,7 +6,7 @@ use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
 use crate::db::sql_utils::{
     esc_id, esc_str, validate_column_extra, validate_column_type, validate_engine_name,
 };
-use crate::db::{postgres, sqlite, sqlserver};
+use crate::db::{clickhouse, postgres, sqlite, sqlserver};
 use crate::db::{postgres_ddl, sqlserver_ddl};
 use crate::models::types::{
     ColumnInfo, CreateTableRequest, DatabaseInfo, SqlCompletionColumn, SqlCompletionMetadata,
@@ -35,6 +35,9 @@ pub async fn list_databases(
         DatabasePoolHandle::Sqlite(handle) => return sqlite::list_databases(&handle.pool).await,
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver::list_schemas(&handle.pool).await
+        }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            return clickhouse::list_databases(&handle.client).await;
         }
     };
 
@@ -70,6 +73,9 @@ pub async fn list_tables(
         }
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver::list_tables(&handle.pool, &database).await;
+        }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            return clickhouse::list_tables(&handle.client, &database).await;
         }
     };
 
@@ -138,6 +144,9 @@ pub async fn get_table_structure(
         }
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver::get_table_structure(&handle.pool, &database, &table).await;
+        }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            return clickhouse::get_table_structure(&handle.client, &database, &table).await;
         }
     };
 
@@ -337,6 +346,9 @@ pub async fn get_sql_completion_metadata(
         DatabasePoolHandle::SqlServer(handle) => {
             sqlserver::get_sql_completion_metadata(&handle.pool, database).await
         }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            clickhouse::get_sql_completion_metadata(&handle.client, database).await
+        }
     }
 }
 
@@ -363,6 +375,9 @@ pub async fn get_table_definition(
         }
         DatabasePoolHandle::SqlServer(_) => {
             return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+        }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_unsupported_error());
         }
     };
 
@@ -419,6 +434,9 @@ pub async fn get_database_info(
         }
         DatabasePoolHandle::SqlServer(_) => {
             return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+        }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_unsupported_error());
         }
     };
 
@@ -483,6 +501,9 @@ pub async fn alter_database_charset(
         DatabasePoolHandle::SqlServer(_) => {
             return Err("SQL Server 暂不支持修改数据库字符集/排序规则".to_string());
         }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -540,6 +561,9 @@ pub async fn drop_database(
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver_ddl::drop_schema(&handle.pool, &database).await;
         }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
+        }
     };
 
     validate_drop_database_name(&database)?;
@@ -579,6 +603,9 @@ pub async fn create_database(
         }
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver_ddl::create_schema(&handle.pool, &name).await;
+        }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
         }
     };
 
@@ -648,6 +675,9 @@ pub async fn rename_database(
         }
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver_ddl::rename_schema(&handle.pool, &old_name, &new_name).await;
+        }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
         }
     };
 
@@ -722,6 +752,9 @@ pub async fn rename_table(
             return sqlserver_ddl::rename_table(&handle.pool, &database, &old_name, &new_name)
                 .await;
         }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -765,6 +798,9 @@ pub async fn alter_table_engine(
         }
         DatabasePoolHandle::SqlServer(_) => {
             return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
         }
     };
 
@@ -810,6 +846,9 @@ pub async fn get_primary_keys(
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver::fetch_edit_locator(&handle.pool, &database, &table).await;
         }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            return clickhouse::fetch_primary_keys(&handle.client, &database, &table).await;
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -854,6 +893,9 @@ pub async fn drop_table(
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver_ddl::drop_table(&handle.pool, &database, &table).await;
         }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -890,6 +932,9 @@ pub async fn truncate_table(
         }
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver_ddl::truncate_table(&handle.pool, &database, &table).await;
+        }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
         }
     };
 
@@ -935,6 +980,9 @@ pub async fn create_table(
         }
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver_ddl::create_table(&handle.pool, &database, &request).await;
+        }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
         }
     };
 

@@ -2167,6 +2167,9 @@ pub async fn import_sql_file(
                 }
             }
         }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
+        }
     }
 
     let _ = app.emit(
@@ -2522,6 +2525,9 @@ pub async fn export_database_to_file(
                 file,
             )
             .await;
+        }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_unsupported_error());
         }
     };
     let mut conn = get_conn_with_retry(&pool).await?;

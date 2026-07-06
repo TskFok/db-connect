@@ -25,6 +25,7 @@ rusqlite = { version = "0.38", features = ["bundled"] }
 tiberius = { version = "0.12.3", default-features = false, features = ["tds73", "native-tls"] }
 bb8 = "0.9"
 bb8-tiberius = { version = "0.16.0", default-features = false, features = ["with-tokio", "tds73"] }
+clickhouse_rs = { package = "clickhouse", version = "0.15", default-features = false, features = ["rustls-tls", "lz4"] }
 native-tls = "0.2"
 futures-util = "0.3"
 tokio = { version = "1", features = ["full"] }

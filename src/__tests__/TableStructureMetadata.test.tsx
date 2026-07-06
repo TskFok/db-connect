@@ -194,4 +194,74 @@ describe("TableStructure 表元数据", () => {
     expect(screen.getByText(/编辑列/)).toBeInTheDocument();
     expect(screen.queryByText("主键")).not.toBeInTheDocument();
   });
+
+  it("ClickHouse 结构元数据显示排序键信息且禁用 DDL 操作入口", () => {
+    useConnectionStore.setState({
+      activeConnections: {
+        "conn-1": {
+          ...mockActiveConnection,
+          config: {
+            ...mockActiveConnection.config,
+            port: 8123,
+            database_type: "clickhouse",
+          },
+        },
+      },
+      activeConnId: "conn-1",
+      activeConnection: {
+        ...mockActiveConnection,
+        config: {
+          ...mockActiveConnection.config,
+          port: 8123,
+          database_type: "clickhouse",
+        },
+      },
+    });
+    useDatabaseStore.setState({
+      selectedDatabase: "analytics",
+      selectedTable: "events",
+      tableStructure: [
+        {
+          name: "id",
+          column_type: "UInt64",
+          nullable: false,
+          key: "PRI",
+          default_value: null,
+          extra: "",
+          comment: "",
+        },
+        {
+          name: "created_at",
+          column_type: "DateTime",
+          nullable: false,
+          key: "",
+          default_value: "DEFAULT now()",
+          extra: "sorting key",
+          comment: "创建时间",
+        },
+      ],
+      selectedTableInfo: {
+        name: "events",
+        table_type: "TABLE",
+        engine: "MergeTree",
+        rows: null,
+        data_length: 4096,
+        index_length: null,
+        comment: "事件表",
+      },
+    });
+
+    render(<TableStructure />);
+
+    expect(screen.queryByText("引擎")).not.toBeInTheDocument();
+    expect(screen.getByText("sorting key")).toBeInTheDocument();
+    expect(screen.queryByLabelText("拖拽调整顺序")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /新增列/ })).toBeDisabled();
+    screen.getAllByLabelText("编辑列").forEach((button) => {
+      expect(button).toBeDisabled();
+    });
+    screen.getAllByLabelText("删除列").forEach((button) => {
+      expect(button).toBeDisabled();
+    });
+  });
 });

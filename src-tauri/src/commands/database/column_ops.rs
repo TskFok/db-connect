@@ -84,6 +84,9 @@ pub async fn alter_column(
             validate_column_type(&request.column_type)?;
             return sqlserver_ddl::alter_column(&handle.pool, &database, &table, &request).await;
         }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -238,6 +241,9 @@ pub async fn add_column(
             validate_column_type(&request.column_type)?;
             return sqlserver_ddl::add_column(&handle.pool, &database, &table, &request).await;
         }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -295,6 +301,9 @@ pub async fn drop_column(
         }
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver_ddl::drop_column(&handle.pool, &database, &table, &column_name).await;
+        }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
         }
     };
 

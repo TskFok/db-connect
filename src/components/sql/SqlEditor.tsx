@@ -175,9 +175,11 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     () =>
       databaseType === "sqlite"
         ? false
-        : databaseType === "postgres"
-          ? true
-          : supportsExplainAnalyze(prefetchedVersion ?? ""),
+        : databaseType === "clickhouse"
+          ? false
+          : databaseType === "postgres"
+            ? true
+            : supportsExplainAnalyze(prefetchedVersion ?? ""),
     [databaseType, prefetchedVersion]
   );
 
@@ -215,7 +217,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
             ? "sqlserver"
             : databaseType === "clickhouse"
               ? "clickhouse"
-            : "mysql";
+              : "mysql";
   }, [databaseType]);
 
   useEffect(() => {
@@ -520,6 +522,10 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     const { connId: cid } = execParamsRef.current;
     const execId = currentExecutionIdRef.current;
     if (!cid || !execId) return;
+    if (databaseType === "clickhouse") {
+      message.warning("ClickHouse 暂不支持主动取消查询");
+      return;
+    }
     try {
       const canceled = await api.cancelQuery(cid, execId);
       if (canceled) {
@@ -530,7 +536,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     } catch (e) {
       message.error(`取消查询失败: ${String(e)}`);
     }
-  }, []);
+  }, [databaseType]);
 
   const tabExecuteNonce = useDatabaseStore((s) =>
     tabId ? ((s.sqlTabExecuteNonce ?? {})[tabId] ?? 0) : 0
@@ -656,6 +662,17 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
         connectionId: "connection_id",
       };
     }
+    if (databaseType === "clickhouse") {
+      return {
+        version: "version()",
+        hostname: "hostName()",
+        readOnly: "readonly setting",
+        timeoutHelp: "ClickHouse 首版返回 0；查询结果通过 max_result_rows 限制",
+        timeZone: "timezone()",
+        database: "currentDatabase()",
+        connectionId: "无连接 ID",
+      };
+    }
     return {
       version: "@@version",
       hostname: "@@hostname",
@@ -712,7 +729,9 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
               title={
                 databaseType === "sqlite"
                   ? "停止当前查询（SQLite 暂不支持主动取消）"
-                  : "停止当前查询（KILL QUERY）"
+                  : databaseType === "clickhouse"
+                    ? "停止当前查询（ClickHouse 暂不支持主动取消）"
+                    : "停止当前查询（KILL QUERY）"
               }
             >
               <Button
@@ -775,9 +794,11 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
                   ? databaseType === "postgres"
                     ? "EXPLAIN ANALYZE（PostgreSQL）"
                     : "EXPLAIN ANALYZE（MySQL 8.0.18+ / MariaDB 10.7+ 等）"
-                  : databaseType === "sqlite"
-                    ? "SQLite 暂不支持 EXPLAIN ANALYZE，请使用左侧 EXPLAIN"
-                    : `当前版本「${prefetchedVersion ?? "未知"}」可能不支持 EXPLAIN ANALYZE，请使用左侧 EXPLAIN 或升级实例`
+                  : databaseType === "clickhouse"
+                    ? "ClickHouse 暂不支持 EXPLAIN ANALYZE，请使用左侧 EXPLAIN"
+                    : databaseType === "sqlite"
+                      ? "SQLite 暂不支持 EXPLAIN ANALYZE，请使用左侧 EXPLAIN"
+                      : `当前版本「${prefetchedVersion ?? "未知"}」可能不支持 EXPLAIN ANALYZE，请使用左侧 EXPLAIN 或升级实例`
             }
           >
             <Button
@@ -800,7 +821,9 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
                 ? "查看 PostgreSQL 版本、连接 ID、只读状态等"
                 : databaseType === "sqlite"
                   ? "查看 SQLite 版本、只读状态、database 等"
-                  : "查看 @@version、连接 ID、@@read_only 等"
+                  : databaseType === "clickhouse"
+                    ? "查看 ClickHouse 版本、主机、当前 database、时区等"
+                    : "查看 @@version、连接 ID、@@read_only 等"
             }
           >
             <Button

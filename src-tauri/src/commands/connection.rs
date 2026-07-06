@@ -1,6 +1,6 @@
 use crate::crypto;
 use crate::db::connection::{ConnectionManager, DatabasePoolHandle};
-use crate::db::{postgres, sqlite, sqlserver};
+use crate::db::{clickhouse, postgres, sqlite, sqlserver};
 use crate::models::types::{
     redact_connection_secrets, ConnectionConfig, ConnectionGroup, TestResult, PASSWORD_REDACTED,
 };
@@ -531,6 +531,9 @@ pub async fn ping_connection(state: State<'_, AppState>, conn_id: String) -> Res
         Some(DatabasePoolHandle::Postgres(handle)) => Ok(postgres::ping_pool(&handle.pool).await),
         Some(DatabasePoolHandle::Sqlite(handle)) => Ok(sqlite::ping_pool(&handle.pool).await),
         Some(DatabasePoolHandle::SqlServer(handle)) => Ok(sqlserver::ping_pool(&handle.pool).await),
+        Some(DatabasePoolHandle::ClickHouse(handle)) => {
+            Ok(clickhouse::ping_pool(&handle.client).await)
+        }
         None => Ok(false),
     }
 }
@@ -1019,6 +1022,37 @@ mod tests {
     }
 
     #[test]
+    fn test_connection_transfer_json_preserves_clickhouse_type() {
+        let json = r#"{
+            "format": "db-connect.connections",
+            "version": 1,
+            "connections": [
+                {
+                    "id": "clickhouse-conn",
+                    "database_type": "clickhouse",
+                    "name": "ClickHouse",
+                    "host": "ch.example.com",
+                    "port": 8123,
+                    "username": "default",
+                    "password": null,
+                    "database": "analytics",
+                    "ssh": null
+                }
+            ],
+            "groups": []
+        }"#;
+
+        let parsed = parse_connection_transfer_json(json).expect("transfer JSON should parse");
+
+        assert_eq!(parsed.connections.len(), 1);
+        assert_eq!(
+            parsed.connections[0].database_type,
+            DatabaseType::ClickHouse
+        );
+        assert_eq!(parsed.connections[0].database.as_deref(), Some("analytics"));
+    }
+
+    #[test]
     fn test_export_connection_storage_json_includes_sqlserver_type() {
         let storage = ConnectionStorageData {
             groups: vec![],
@@ -1052,6 +1086,45 @@ mod tests {
         assert!(json.contains("\"database_type\": \"sqlserver\""));
         assert_eq!(parsed.connections[0].database_type, DatabaseType::SqlServer);
         assert_eq!(parsed.connections[0].port, 1433);
+    }
+
+    #[test]
+    fn test_export_connection_storage_json_includes_clickhouse_type() {
+        let storage = ConnectionStorageData {
+            groups: vec![],
+            connections: vec![ConnectionConfig {
+                id: Some("clickhouse-conn".to_string()),
+                database_type: DatabaseType::ClickHouse,
+                name: "ClickHouse".to_string(),
+                host: "ch.example.com".to_string(),
+                port: 8123,
+                username: "default".to_string(),
+                password: Some("secret".to_string()),
+                database: Some("analytics".to_string()),
+                sqlite_path: None,
+                ssh: None,
+                ssl_mode: Some("required".to_string()),
+                ssl_ca_path: None,
+                ssl_pkcs12_path: None,
+                ssl_tls_hostname: None,
+                ssl_pkcs12_password: None,
+                client_charset: None,
+                session_init_commands: None,
+                read_only: Some(true),
+                skip_dangerous_sql_confirm: None,
+                group_id: None,
+            }],
+        };
+
+        let json = export_connection_storage_json(&storage).expect("export should serialize");
+        let parsed = parse_connection_transfer_json(&json).expect("export should reparse");
+
+        assert!(json.contains("\"database_type\": \"clickhouse\""));
+        assert_eq!(
+            parsed.connections[0].database_type,
+            DatabaseType::ClickHouse
+        );
+        assert_eq!(parsed.connections[0].port, 8123);
     }
 
     #[test]
