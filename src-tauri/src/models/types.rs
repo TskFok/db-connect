@@ -479,6 +479,9 @@ pub struct CreateTableRequest {
     pub primary_keys: Vec<String>,
     /// 存储引擎 (如 InnoDB)
     pub engine: String,
+    /// ClickHouse 排序键列名列表；空或缺省时使用 ORDER BY tuple()
+    #[serde(default)]
+    pub order_by: Option<Vec<String>>,
     /// 表注释
     pub comment: String,
 }

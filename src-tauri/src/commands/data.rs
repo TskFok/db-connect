@@ -49,6 +49,10 @@ fn sql_editor_allowed_on_read_only_connection(sql: &str) -> bool {
     mysql_sql_editor_allowed_on_read_only_connection(sql)
 }
 
+fn clickhouse_row_mutation_unsupported_error() -> String {
+    "ClickHouse 暂不支持表格行级更新/删除，请使用 SQL 编辑器执行明确的 ALTER TABLE ... UPDATE/DELETE mutation".to_string()
+}
+
 fn mysql_scalar_display(v: Option<&MyValue>) -> String {
     match v {
         None | Some(MyValue::NULL) => String::new(),
@@ -492,8 +496,9 @@ pub async fn query_table_count(
             return sqlserver::query_table_count(&handle.pool, &database, &table, where_clause)
                 .await;
         }
-        DatabasePoolHandle::ClickHouse(_) => {
-            return Err(DatabasePoolHandle::clickhouse_unsupported_error());
+        DatabasePoolHandle::ClickHouse(handle) => {
+            return clickhouse::query_table_count(&handle.client, &database, &table, where_clause)
+                .await;
         }
     };
 
@@ -652,8 +657,27 @@ pub async fn query_table_data(
             )
             .await;
         }
-        DatabasePoolHandle::ClickHouse(_) => {
-            return Err(DatabasePoolHandle::clickhouse_unsupported_error());
+        DatabasePoolHandle::ClickHouse(handle) => {
+            let borrowed_sort_fields = sort_fields
+                .as_deref()
+                .unwrap_or(&[])
+                .iter()
+                .map(|field| (field.column.as_str(), field.order.as_str()))
+                .collect::<Vec<_>>();
+            return clickhouse::query_table_data(
+                &handle.client,
+                clickhouse::ClickHouseTableDataQuery {
+                    database: &database,
+                    table: &table,
+                    page,
+                    page_size,
+                    sort_fields: borrowed_sort_fields,
+                    where_clause,
+                    select_columns,
+                    skip_count,
+                },
+            )
+            .await;
         }
     };
 
@@ -795,8 +819,8 @@ pub async fn insert_row(
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver::insert_row(&handle.pool, &database, &table, values).await;
         }
-        DatabasePoolHandle::ClickHouse(_) => {
-            return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
+        DatabasePoolHandle::ClickHouse(handle) => {
+            return clickhouse::insert_row(&handle.client, &database, &table, values).await;
         }
     };
 
@@ -968,7 +992,7 @@ pub async fn update_row(
                 .await;
         }
         DatabasePoolHandle::ClickHouse(_) => {
-            return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
+            return Err(clickhouse_row_mutation_unsupported_error());
         }
     };
 
@@ -1048,7 +1072,7 @@ pub async fn batch_update_rows(
                 .await;
         }
         DatabasePoolHandle::ClickHouse(_) => {
-            return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
+            return Err(clickhouse_row_mutation_unsupported_error());
         }
     };
 
@@ -1117,7 +1141,7 @@ pub async fn delete_rows(
             return sqlserver::delete_rows(&handle.pool, &database, &table, primary_keys).await;
         }
         DatabasePoolHandle::ClickHouse(_) => {
-            return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
+            return Err(clickhouse_row_mutation_unsupported_error());
         }
     };
 
@@ -1199,8 +1223,16 @@ pub async fn query_full_rows(
             )
             .await;
         }
-        DatabasePoolHandle::ClickHouse(_) => {
-            return Err(DatabasePoolHandle::clickhouse_unsupported_error());
+        DatabasePoolHandle::ClickHouse(handle) => {
+            return clickhouse::query_full_rows(
+                &handle.client,
+                &database,
+                &table,
+                &primary_key_column,
+                primary_key_values,
+                primary_keys,
+            )
+            .await;
         }
     };
 

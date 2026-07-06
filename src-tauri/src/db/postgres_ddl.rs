@@ -859,6 +859,7 @@ mod tests {
             ],
             primary_keys: vec!["id".to_string()],
             engine: "".to_string(),
+            order_by: None,
             comment: "用户表".to_string(),
         };
         let (sql, after) = build_create_table_sqls("public", &req).unwrap();
@@ -891,6 +892,7 @@ mod tests {
             }],
             primary_keys: vec![],
             engine: "".to_string(),
+            order_by: None,
             comment: "".to_string(),
         };
         let (sql, after) = build_create_table_sqls("public", &req).unwrap();
@@ -905,6 +907,7 @@ mod tests {
             columns: vec![],
             primary_keys: vec![],
             engine: "".to_string(),
+            order_by: None,
             comment: "".to_string(),
         };
         assert!(build_create_table_sqls("public", &req).is_err());

@@ -394,6 +394,8 @@ export interface CreateTableRequest {
   primary_keys: string[];
   /** 存储引擎 (如 InnoDB) */
   engine: string;
+  /** ClickHouse ORDER BY 列名列表；空数组由后端使用 ORDER BY tuple() */
+  order_by?: string[] | null;
   /** 表注释 */
   comment: string;
 }

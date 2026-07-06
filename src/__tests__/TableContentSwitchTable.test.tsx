@@ -199,7 +199,7 @@ describe("TableContent 多表切换", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("ClickHouse 表详情显示元数据相关标签并隐藏未开放数据与对象管理标签", () => {
+  it("ClickHouse 表详情显示数据/结构/SQL/创建表标签并隐藏未开放对象管理标签", () => {
     useConnectionStore.setState({
       activeConnection: {
         connId: "ch-1",
@@ -232,16 +232,11 @@ describe("TableContent 多表切换", () => {
 
     render(<TableContent />);
 
-    expect(
-      screen.queryByRole("tab", { name: /数据/ })
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /数据/ })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /结构/ })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /SQL/ })).toBeInTheDocument();
-    expect(screen.getByTestId("mock-structure")).toBeInTheDocument();
-    expect(screen.queryByTestId("mock-table-data")).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("tab", { name: /创建表/ })
-    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("mock-table-data")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /创建表/ })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: /索引/ })).not.toBeInTheDocument();
     expect(
       screen.queryByRole("tab", { name: /触发器/ })

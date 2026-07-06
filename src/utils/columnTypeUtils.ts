@@ -212,6 +212,47 @@ export const SQLSERVER_LENGTH_TYPES = new Set([
 export const SQLSERVER_SCALE_TYPES = new Set(["decimal", "numeric"]);
 export const SQLSERVER_UNSIGNED_TYPES = new Set<string>();
 
+/** ClickHouse 常用类型建议。复杂类型直接作为完整类型文本提交，不再追加长度/unsigned。 */
+export const CLICKHOUSE_DATA_TYPES = [
+  {
+    label: "数值类型",
+    options: [
+      { label: "UInt64", value: "UInt64" },
+      { label: "Int64", value: "Int64" },
+      { label: "Float64", value: "Float64" },
+      { label: "Decimal(18,2)", value: "Decimal(18,2)" },
+    ],
+  },
+  {
+    label: "字符串类型",
+    options: [
+      { label: "String", value: "String" },
+      { label: "LowCardinality(String)", value: "LowCardinality(String)" },
+    ],
+  },
+  {
+    label: "日期时间类型",
+    options: [
+      { label: "Date", value: "Date" },
+      { label: "DateTime", value: "DateTime" },
+      { label: "DateTime64(3)", value: "DateTime64(3)" },
+    ],
+  },
+  {
+    label: "其他类型",
+    options: [
+      { label: "Bool", value: "Bool" },
+      { label: "UUID", value: "UUID" },
+      { label: "Array(String)", value: "Array(String)" },
+      { label: "Nullable(String)", value: "Nullable(String)" },
+    ],
+  },
+];
+
+export const CLICKHOUSE_LENGTH_TYPES = new Set<string>();
+export const CLICKHOUSE_SCALE_TYPES = new Set<string>();
+export const CLICKHOUSE_UNSIGNED_TYPES = new Set<string>();
+
 /** 解析后的列类型结构 */
 export interface ParsedColumnType {
   /** 基础数据类型 (如 varchar, int) */

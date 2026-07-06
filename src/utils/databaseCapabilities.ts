@@ -128,10 +128,10 @@ const SQLSERVER_CAPABILITIES: DatabaseCapabilities = {
 
 const CLICKHOUSE_CAPABILITIES: DatabaseCapabilities = {
   sqlEditor: true,
-  databaseManagement: false,
+  databaseManagement: true,
   tableBrowsing: true,
   tableDataEditing: false,
-  schemaManagement: false,
+  schemaManagement: true,
   routineManagement: false,
   eventManagement: false,
   triggerManagement: false,

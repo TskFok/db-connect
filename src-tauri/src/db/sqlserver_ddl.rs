@@ -889,6 +889,7 @@ mod tests {
             ],
             primary_keys: vec!["id".to_string()],
             engine: "".to_string(),
+            order_by: None,
             comment: "用户表".to_string(),
         };
 
@@ -918,6 +919,7 @@ mod tests {
             }],
             primary_keys: vec![],
             engine: "".to_string(),
+            order_by: None,
             comment: "".to_string(),
         };
 

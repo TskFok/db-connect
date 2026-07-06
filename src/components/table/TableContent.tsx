@@ -58,7 +58,7 @@ export function TableContent() {
 
   const tabItems = useMemo(() => {
     const base: { key: string; label: ReactNode; children: ReactNode }[] = [];
-    if (databaseType !== "clickhouse") {
+    if (capabilities.tableBrowsing) {
       base.push({
         key: "data",
         label: (

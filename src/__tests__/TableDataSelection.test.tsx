@@ -877,6 +877,36 @@ describe("TableData 行勾选隔离", () => {
     expect(screen.getByLabelText("新增行")).toBeDisabled();
   });
 
+  it("ClickHouse 允许受控新增行但不显示行级删除入口", async () => {
+    useConnectionStore.setState({
+      activeConnection: {
+        ...mockActiveConnection,
+        config: {
+          ...mockActiveConnection.config,
+          database_type: "clickhouse" as const,
+        },
+      },
+    });
+
+    const { container } = render(<TableData />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Alice")).toBeInTheDocument();
+    });
+
+    expect(screen.getByLabelText("新增行")).not.toBeDisabled();
+
+    const bodyCheckboxes = Array.from(
+      container.querySelectorAll(".virtual-data-table-row .ant-checkbox-input")
+    ) as HTMLInputElement[];
+    expect(bodyCheckboxes.length).toBeGreaterThan(0);
+
+    fireEvent.click(bodyCheckboxes[0]!);
+
+    expect(screen.queryByLabelText(/删除选中的/)).not.toBeInTheDocument();
+    expect(screen.queryByText("提交修改")).not.toBeInTheDocument();
+  });
+
   it("有筛选条件时：查询 SQL 不在表格上方内联展示，可通过旁侧图标弹窗查看并复制", async () => {
     const filteredUsersSnapshot = {
       ...usersSnapshot,

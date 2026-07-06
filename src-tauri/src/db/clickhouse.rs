@@ -1,6 +1,6 @@
 use crate::models::types::{
-    ColumnInfo, ConnectionConfig, SessionInfo, SqlCompletionColumn, SqlCompletionMetadata,
-    SqlCompletionTable, SqlExecuteResult, TableInfo,
+    ColumnInfo, ConnectionConfig, QueryResult, SessionInfo, SqlCompletionColumn,
+    SqlCompletionMetadata, SqlCompletionTable, SqlExecuteResult, TableInfo,
 };
 use clickhouse_rs::query::Query;
 use clickhouse_rs::Client;
@@ -8,6 +8,7 @@ use serde::de::{DeserializeOwned, Error as DeError};
 use serde::{Deserialize, Deserializer};
 use serde_json::Value as JsonValue;
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -186,6 +187,10 @@ struct ClickHouseReadOnlySettingRow {
     readonly: u8,
 }
 
+fn parse_json_result_body(body: &str) -> Result<ClickHouseJsonResultBody, String> {
+    serde_json::from_str(body).map_err(|e| format!("解析 ClickHouse JSON 结果失败: {}", e))
+}
+
 fn deserialize_opt_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
 where
     D: Deserializer<'de>,
@@ -262,6 +267,113 @@ pub(crate) fn fetch_primary_keys_sql() -> &'static str {
      FROM system.columns \
      WHERE database = ? AND table = ? AND is_in_primary_key = 1 \
      ORDER BY position"
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ClickHouseDialect;
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ClickHouseSelectPage<'a> {
+    pub(crate) columns_sql: &'a str,
+    pub(crate) database: &'a str,
+    pub(crate) table: &'a str,
+    pub(crate) where_sql: &'a str,
+    pub(crate) order_sql: &'a str,
+    pub(crate) limit: u64,
+    pub(crate) offset: u64,
+}
+
+#[derive(Debug)]
+pub(crate) struct ClickHouseTableDataQuery<'a> {
+    pub(crate) database: &'a str,
+    pub(crate) table: &'a str,
+    pub(crate) page: u32,
+    pub(crate) page_size: u32,
+    pub(crate) sort_fields: Vec<(&'a str, &'a str)>,
+    pub(crate) where_clause: Option<String>,
+    pub(crate) select_columns: Option<Vec<String>>,
+    pub(crate) skip_count: Option<bool>,
+}
+
+impl ClickHouseDialect {
+    pub(crate) fn identifier(&self, name: &str) -> String {
+        format!("`{}`", name.replace('`', "``"))
+    }
+
+    pub(crate) fn string_literal(&self, value: &str) -> String {
+        format!("'{}'", value.replace('\'', "''"))
+    }
+
+    pub(crate) fn table_ref(&self, database: &str, table: &str) -> String {
+        format!("{}.{}", self.identifier(database), self.identifier(table))
+    }
+
+    pub(crate) fn order_by(&self, fields: &[(&str, &str)]) -> String {
+        let parts = fields
+            .iter()
+            .filter_map(|(column, order)| {
+                let column = column.trim();
+                if column.is_empty() {
+                    return None;
+                }
+                let direction = if order.eq_ignore_ascii_case("DESC") {
+                    "DESC"
+                } else {
+                    "ASC"
+                };
+                Some(format!("{} {}", self.identifier(column), direction))
+            })
+            .collect::<Vec<_>>();
+        if parts.is_empty() {
+            String::new()
+        } else {
+            format!(" ORDER BY {}", parts.join(", "))
+        }
+    }
+
+    pub(crate) fn count_query(&self, database: &str, table: &str, where_sql: &str) -> String {
+        format!(
+            "SELECT count() FROM {}{}",
+            self.table_ref(database, table),
+            where_sql
+        )
+    }
+
+    pub(crate) fn paginated_select(&self, page: ClickHouseSelectPage<'_>) -> String {
+        format!(
+            "SELECT {} FROM {}{}{} LIMIT {} OFFSET {}",
+            page.columns_sql,
+            self.table_ref(page.database, page.table),
+            page.where_sql,
+            page.order_sql,
+            page.limit,
+            page.offset
+        )
+    }
+}
+
+pub(crate) fn clickhouse_id(name: &str) -> String {
+    ClickHouseDialect.identifier(name)
+}
+
+pub(crate) fn clickhouse_str(value: &str) -> String {
+    ClickHouseDialect.string_literal(value)
+}
+
+pub(crate) fn clickhouse_table_ref(database: &str, table: &str) -> String {
+    ClickHouseDialect.table_ref(database, table)
+}
+
+pub(crate) fn clickhouse_order_by(fields: &[(&str, &str)]) -> String {
+    ClickHouseDialect.order_by(fields)
+}
+
+pub(crate) fn clickhouse_count_query(database: &str, table: &str, where_sql: &str) -> String {
+    ClickHouseDialect.count_query(database, table, where_sql)
+}
+
+pub(crate) fn clickhouse_paginated_json_sql(page: ClickHouseSelectPage<'_>) -> String {
+    format!("{} FORMAT JSON", ClickHouseDialect.paginated_select(page))
 }
 
 pub(crate) fn session_info_sql() -> &'static str {
@@ -358,8 +470,7 @@ pub(crate) fn clickhouse_json_to_sql_execute_result(
     body: &str,
     elapsed: u64,
 ) -> Result<SqlExecuteResult, String> {
-    let parsed: ClickHouseJsonResultBody =
-        serde_json::from_str(body).map_err(|e| format!("解析 ClickHouse JSON 结果失败: {}", e))?;
+    let parsed = parse_json_result_body(body)?;
 
     let columns: Vec<String> = parsed.meta.into_iter().map(|m| m.name).collect();
     let rows: Vec<Vec<JsonValue>> = parsed
@@ -382,6 +493,163 @@ pub(crate) fn clickhouse_json_to_sql_execute_result(
         message: format!("返回 {} 行 (耗时 {}ms)", row_count, elapsed),
         execution_time_ms: elapsed,
     })
+}
+
+pub(crate) fn clickhouse_json_to_query_result(
+    body: &str,
+    total: u64,
+    elapsed: u64,
+) -> Result<QueryResult, String> {
+    let parsed = parse_json_result_body(body)?;
+
+    let columns: Vec<String> = parsed.meta.into_iter().map(|m| m.name).collect();
+    let rows: Vec<Vec<JsonValue>> = parsed
+        .data
+        .into_iter()
+        .map(|row| {
+            columns
+                .iter()
+                .map(|name| row.get(name).cloned().unwrap_or(JsonValue::Null))
+                .collect()
+        })
+        .collect();
+
+    Ok(QueryResult {
+        columns,
+        rows,
+        total,
+        execution_time_ms: elapsed,
+    })
+}
+
+fn clickhouse_json_literal(value: &JsonValue) -> Result<String, String> {
+    match value {
+        JsonValue::Null => Ok("NULL".to_string()),
+        JsonValue::Bool(v) => Ok(if *v { "true" } else { "false" }.to_string()),
+        JsonValue::Number(n) => Ok(n.to_string()),
+        JsonValue::String(s) => Ok(clickhouse_str(s)),
+        JsonValue::Array(_) | JsonValue::Object(_) => {
+            Err("ClickHouse 行定位暂不支持 Array/Object 类型值".to_string())
+        }
+    }
+}
+
+pub(crate) fn build_insert_json_each_row(
+    database: &str,
+    table: &str,
+    values: &HashMap<String, JsonValue>,
+) -> Result<(String, String), String> {
+    if values.is_empty() {
+        return Err("没有提供要插入的数据".to_string());
+    }
+
+    let mut columns = values.keys().cloned().collect::<Vec<_>>();
+    columns.sort();
+
+    let sql = format!(
+        "INSERT INTO {} ({}) FORMAT JSONEachRow",
+        clickhouse_table_ref(database, table),
+        columns
+            .iter()
+            .map(|column| clickhouse_id(column))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+
+    let mut row = serde_json::Map::new();
+    for column in columns {
+        row.insert(
+            column.clone(),
+            values.get(&column).cloned().unwrap_or(JsonValue::Null),
+        );
+    }
+    let payload = format!(
+        "{}\n",
+        serde_json::to_string(&row)
+            .map_err(|e| format!("序列化 ClickHouse 插入数据失败: {}", e))?
+    );
+
+    Ok((sql, payload))
+}
+
+fn build_full_rows_where_from_primary_key_maps(
+    primary_keys: Vec<HashMap<String, JsonValue>>,
+) -> Result<String, String> {
+    if primary_keys.is_empty() {
+        return Err("缺少可安全定位列，无法查询完整行数据".to_string());
+    }
+
+    let mut columns = primary_keys[0].keys().cloned().collect::<Vec<_>>();
+    columns.sort();
+    if columns.is_empty() {
+        return Err("缺少可安全定位列，无法查询完整行数据".to_string());
+    }
+
+    for row in &primary_keys {
+        if row.len() != columns.len() || columns.iter().any(|column| !row.contains_key(column)) {
+            return Err("存在不完整的 ClickHouse 行定位值".to_string());
+        }
+    }
+
+    let clauses = primary_keys
+        .iter()
+        .map(|row| {
+            columns
+                .iter()
+                .map(|column| {
+                    let value = row
+                        .get(column)
+                        .ok_or_else(|| "存在不完整的 ClickHouse 行定位值".to_string())?;
+                    Ok(format!(
+                        "{} = {}",
+                        clickhouse_id(column),
+                        clickhouse_json_literal(value)?
+                    ))
+                })
+                .collect::<Result<Vec<_>, String>>()
+                .map(|parts| format!("({})", parts.join(" AND ")))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    Ok(clauses.join(" OR "))
+}
+
+pub(crate) fn build_full_rows_sql(
+    database: &str,
+    table: &str,
+    primary_key_column: Option<&str>,
+    primary_key_values: Vec<JsonValue>,
+) -> Result<String, String> {
+    let column = primary_key_column
+        .map(str::trim)
+        .filter(|column| !column.is_empty())
+        .ok_or_else(|| "缺少可安全定位列，无法查询完整行数据".to_string())?;
+    if primary_key_values.is_empty() {
+        return Err("缺少可安全定位列，无法查询完整行数据".to_string());
+    }
+    let values = primary_key_values
+        .iter()
+        .map(clickhouse_json_literal)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(format!(
+        "SELECT * FROM {} WHERE {} IN ({}) FORMAT JSON",
+        clickhouse_table_ref(database, table),
+        clickhouse_id(column),
+        values.join(", ")
+    ))
+}
+
+pub(crate) fn build_full_rows_sql_by_primary_keys(
+    database: &str,
+    table: &str,
+    primary_keys: Vec<HashMap<String, JsonValue>>,
+) -> Result<String, String> {
+    let where_sql = build_full_rows_where_from_primary_key_maps(primary_keys)?;
+    Ok(format!(
+        "SELECT * FROM {} WHERE {} FORMAT JSON",
+        clickhouse_table_ref(database, table),
+        where_sql
+    ))
 }
 
 async fn fetch_json_result(client: &Client, sql: &str, context: &str) -> Result<String, String> {
@@ -581,6 +849,151 @@ pub async fn fetch_primary_keys(
     )
     .await?;
     Ok(rows.into_iter().map(|row| row.name).collect())
+}
+
+fn where_sql_from_clause(where_clause: Option<String>) -> Result<String, String> {
+    match where_clause {
+        Some(w) if !w.trim().is_empty() => {
+            crate::db::sql_utils::validate_where_clause(&w)?;
+            Ok(format!(" WHERE {}", w))
+        }
+        _ => Ok(String::new()),
+    }
+}
+
+fn clickhouse_count_from_json(body: &str) -> Result<u64, String> {
+    let parsed = parse_json_result_body(body)?;
+    let first_name = parsed
+        .meta
+        .first()
+        .map(|meta| meta.name.as_str())
+        .ok_or_else(|| "ClickHouse count 查询未返回列信息".to_string())?;
+    let value = parsed
+        .data
+        .first()
+        .and_then(|row| row.get(first_name))
+        .ok_or_else(|| "ClickHouse count 查询未返回数据".to_string())?;
+    match value {
+        JsonValue::Number(n) => n
+            .as_u64()
+            .ok_or_else(|| "ClickHouse count 返回了非法数值".to_string()),
+        JsonValue::String(s) => s
+            .parse::<u64>()
+            .map_err(|e| format!("解析 ClickHouse count 失败: {}", e)),
+        _ => Err("ClickHouse count 返回了非数字结果".to_string()),
+    }
+}
+
+pub async fn query_table_count(
+    client: &Client,
+    database: &str,
+    table: &str,
+    where_clause: Option<String>,
+) -> Result<u64, String> {
+    let where_sql = where_sql_from_clause(where_clause)?;
+    let sql = clickhouse_count_query(database, table, &where_sql);
+    let body = fetch_json_result(client, &sql, "查询总数失败").await?;
+    clickhouse_count_from_json(&body)
+}
+
+pub async fn query_table_data(
+    client: &Client,
+    request: ClickHouseTableDataQuery<'_>,
+) -> Result<QueryResult, String> {
+    let start = Instant::now();
+    let ClickHouseTableDataQuery {
+        database,
+        table,
+        page,
+        page_size,
+        sort_fields,
+        where_clause,
+        select_columns,
+        skip_count,
+    } = request;
+    let where_sql = where_sql_from_clause(where_clause)?;
+
+    let total = if skip_count == Some(true) {
+        0
+    } else {
+        let sql = clickhouse_count_query(database, table, &where_sql);
+        let body = fetch_json_result(client, &sql, "查询总数失败").await?;
+        clickhouse_count_from_json(&body)?
+    };
+
+    let select_part = match select_columns {
+        Some(cols) if !cols.is_empty() => {
+            let pk_cols = fetch_primary_keys(client, database, table).await?;
+            let mut merged = cols;
+            for pk in pk_cols {
+                if !merged.iter().any(|column| column == &pk) {
+                    merged.push(pk);
+                }
+            }
+            merged
+                .iter()
+                .map(|column| clickhouse_id(column))
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+        _ => "*".to_string(),
+    };
+
+    let order_sql = clickhouse_order_by(&sort_fields);
+    let offset = page.saturating_sub(1) as u64 * page_size as u64;
+    let sql = clickhouse_paginated_json_sql(ClickHouseSelectPage {
+        columns_sql: &select_part,
+        database,
+        table,
+        where_sql: &where_sql,
+        order_sql: &order_sql,
+        limit: page_size as u64,
+        offset,
+    });
+    let body = fetch_json_result(client, &sql, "查询数据失败").await?;
+    clickhouse_json_to_query_result(&body, total, start.elapsed().as_millis() as u64)
+}
+
+pub async fn insert_row(
+    client: &Client,
+    database: &str,
+    table: &str,
+    values: HashMap<String, JsonValue>,
+) -> Result<u64, String> {
+    let (sql, payload) = build_insert_json_each_row(database, table, &values)?;
+    let query = format!("{}\n{}", sql, payload);
+    client
+        .query(&query)
+        .execute()
+        .await
+        .map_err(|e| format!("插入数据失败: {}", e))?;
+    Ok(1)
+}
+
+pub async fn query_full_rows(
+    client: &Client,
+    database: &str,
+    table: &str,
+    primary_key_column: &str,
+    primary_key_values: Vec<JsonValue>,
+    primary_keys: Option<Vec<HashMap<String, JsonValue>>>,
+) -> Result<QueryResult, String> {
+    let start = Instant::now();
+    let sql = match primary_keys {
+        Some(rows) if !rows.is_empty() => {
+            build_full_rows_sql_by_primary_keys(database, table, rows)?
+        }
+        _ => build_full_rows_sql(
+            database,
+            table,
+            Some(primary_key_column),
+            primary_key_values,
+        )?,
+    };
+    let body = fetch_json_result(client, &sql, "查询完整行数据失败").await?;
+    let mut result = clickhouse_json_to_query_result(&body, 0, start.elapsed().as_millis() as u64)?;
+    result.total = result.rows.len() as u64;
+    Ok(result)
 }
 
 fn clickhouse_grant_privileges(line: &str) -> Option<&str> {
@@ -1002,6 +1415,122 @@ mod tests {
         );
         assert_eq!(result.message, "返回 1 行 (耗时 12ms)");
         assert_eq!(result.execution_time_ms, 12);
+    }
+
+    #[test]
+    fn clickhouse_dialect_builds_table_read_sql() {
+        let dialect = super::ClickHouseDialect;
+        assert_eq!(dialect.identifier("we`ird"), "`we``ird`");
+        assert_eq!(dialect.string_literal("Bob's"), "'Bob''s'");
+        assert_eq!(
+            dialect.table_ref("analytics", "events"),
+            "`analytics`.`events`"
+        );
+        assert_eq!(
+            dialect.order_by(&[("created_at", "desc"), ("id", "ASC"), ("", "DESC")]),
+            " ORDER BY `created_at` DESC, `id` ASC"
+        );
+        assert_eq!(
+            dialect.count_query("analytics", "events", " WHERE `kind` = 'login'"),
+            "SELECT count() FROM `analytics`.`events` WHERE `kind` = 'login'"
+        );
+        assert_eq!(
+            dialect.paginated_select(super::ClickHouseSelectPage {
+                columns_sql: "`id`, `created_at`",
+                database: "analytics",
+                table: "events",
+                where_sql: " WHERE `kind` = 'login'",
+                order_sql: " ORDER BY `created_at` DESC",
+                limit: 50,
+                offset: 100,
+            }),
+            "SELECT `id`, `created_at` FROM `analytics`.`events` WHERE `kind` = 'login' ORDER BY `created_at` DESC LIMIT 50 OFFSET 100"
+        );
+    }
+
+    #[test]
+    fn clickhouse_select_sql_ends_with_json_format() {
+        let sql = super::clickhouse_paginated_json_sql(super::ClickHouseSelectPage {
+            columns_sql: "`id`, `name`",
+            database: "analytics",
+            table: "events",
+            where_sql: " WHERE `id` > 10",
+            order_sql: " ORDER BY `id` DESC",
+            limit: 25,
+            offset: 50,
+        });
+        assert_eq!(
+            sql,
+            "SELECT `id`, `name` FROM `analytics`.`events` WHERE `id` > 10 ORDER BY `id` DESC LIMIT 25 OFFSET 50 FORMAT JSON"
+        );
+    }
+
+    #[test]
+    fn clickhouse_json_query_result_maps_query_result() {
+        let body = serde_json::json!({
+            "meta": [
+                { "name": "id", "type": "UInt64" },
+                { "name": "name", "type": "String" }
+            ],
+            "data": [
+                { "id": "3258946454736595494", "name": "Alice" },
+                { "id": "2", "name": "Bob" }
+            ],
+            "rows": 2
+        })
+        .to_string();
+
+        let result = super::clickhouse_json_to_query_result(&body, 42, 7)
+            .expect("valid ClickHouse JSON result");
+
+        assert_eq!(result.columns, vec!["id", "name"]);
+        assert_eq!(
+            result.rows,
+            vec![
+                vec![
+                    serde_json::json!("3258946454736595494"),
+                    serde_json::json!("Alice")
+                ],
+                vec![serde_json::json!("2"), serde_json::json!("Bob")],
+            ]
+        );
+        assert_eq!(result.total, 42);
+        assert_eq!(result.execution_time_ms, 7);
+    }
+
+    #[test]
+    fn clickhouse_insert_json_each_row_sql_and_payload_are_deterministic() {
+        let mut values = std::collections::HashMap::new();
+        values.insert("name".to_string(), serde_json::json!("Alice"));
+        values.insert("id".to_string(), serde_json::json!("3258946454736595494"));
+        values.insert("active".to_string(), serde_json::json!(true));
+
+        let (sql, payload) =
+            super::build_insert_json_each_row("analytics", "events", &values).unwrap();
+
+        assert_eq!(
+            sql,
+            "INSERT INTO `analytics`.`events` (`active`, `id`, `name`) FORMAT JSONEachRow"
+        );
+        assert_eq!(
+            payload,
+            "{\"active\":true,\"id\":\"3258946454736595494\",\"name\":\"Alice\"}\n"
+        );
+    }
+
+    #[test]
+    fn clickhouse_full_rows_requires_safe_locator() {
+        let err = super::build_full_rows_sql("analytics", "events", None, vec![]).unwrap_err();
+        assert!(err.contains("缺少可安全定位列"));
+
+        let mut pk = std::collections::HashMap::new();
+        pk.insert("id".to_string(), serde_json::json!(1));
+        pk.insert("tenant_id".to_string(), serde_json::json!("acme"));
+        let sql =
+            super::build_full_rows_sql_by_primary_keys("analytics", "events", vec![pk]).unwrap();
+        assert!(sql.contains("SELECT * FROM `analytics`.`events` WHERE"));
+        assert!(sql.contains("(`id` = 1 AND `tenant_id` = 'acme')"));
+        assert!(sql.ends_with("FORMAT JSON"));
     }
 
     #[tokio::test]
