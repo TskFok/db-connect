@@ -61,6 +61,9 @@ pub async fn list_foreign_keys(
             DatabasePoolHandle::SqlServer(handle) => {
                 return sqlserver_objects::list_foreign_keys(&handle.pool, &database, &table).await;
             }
+            DatabasePoolHandle::ClickHouse(_) => {
+                return Err(DatabasePoolHandle::clickhouse_unsupported_error());
+            }
         }
     };
 
@@ -318,6 +321,9 @@ pub async fn add_foreign_key(
                 )
                 .await;
             }
+            DatabasePoolHandle::ClickHouse(_) => {
+                return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
+            }
         }
     };
 
@@ -366,6 +372,9 @@ pub async fn drop_foreign_key(
                     &constraint_name,
                 )
                 .await;
+            }
+            DatabasePoolHandle::ClickHouse(_) => {
+                return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
             }
         }
     };

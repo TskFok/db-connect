@@ -1,3 +1,4 @@
+use crate::db::clickhouse::ClickHousePoolHandle;
 use crate::db::sqlserver::SqlServerPool;
 use crate::models::types::DatabaseType;
 use deadpool_postgres::Pool as PgPool;
@@ -22,6 +23,10 @@ pub struct SqliteDatabaseAdapter {
 
 pub struct SqlServerDatabaseAdapter {
     pool: SqlServerPool,
+}
+
+pub struct ClickHouseDatabaseAdapter {
+    handle: ClickHousePoolHandle,
 }
 
 impl MySqlDatabaseAdapter {
@@ -101,5 +106,25 @@ impl SqlServerDatabaseAdapter {
 impl DatabaseAdapter for SqlServerDatabaseAdapter {
     fn database_type(&self) -> DatabaseType {
         DatabaseType::SqlServer
+    }
+}
+
+impl ClickHouseDatabaseAdapter {
+    pub fn new(handle: ClickHousePoolHandle) -> Self {
+        Self { handle }
+    }
+
+    pub fn pool_clone(&self) -> ClickHousePoolHandle {
+        self.handle.clone()
+    }
+
+    pub fn close(&self) {
+        let _ = &self.handle;
+    }
+}
+
+impl DatabaseAdapter for ClickHouseDatabaseAdapter {
+    fn database_type(&self) -> DatabaseType {
+        DatabaseType::ClickHouse
     }
 }

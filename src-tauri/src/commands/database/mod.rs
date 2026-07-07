@@ -6,11 +6,11 @@ use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
 use crate::db::sql_utils::{
     esc_id, esc_str, validate_column_extra, validate_column_type, validate_engine_name,
 };
-use crate::db::{postgres, sqlite, sqlserver};
+use crate::db::{clickhouse, postgres, sqlite, sqlserver};
 use crate::db::{postgres_ddl, sqlserver_ddl};
 use crate::models::types::{
-    ColumnInfo, CreateTableRequest, DatabaseInfo, SqlCompletionColumn, SqlCompletionMetadata,
-    SqlCompletionTable, TableInfo,
+    ColumnInfo, CreateTableColumnDef, CreateTableRequest, DatabaseInfo, SqlCompletionColumn,
+    SqlCompletionMetadata, SqlCompletionTable, TableInfo,
 };
 use crate::AppState;
 use mysql_async::params;
@@ -35,6 +35,9 @@ pub async fn list_databases(
         DatabasePoolHandle::Sqlite(handle) => return sqlite::list_databases(&handle.pool).await,
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver::list_schemas(&handle.pool).await
+        }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            return clickhouse::list_databases(&handle.client).await;
         }
     };
 
@@ -70,6 +73,9 @@ pub async fn list_tables(
         }
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver::list_tables(&handle.pool, &database).await;
+        }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            return clickhouse::list_tables(&handle.client, &database).await;
         }
     };
 
@@ -138,6 +144,9 @@ pub async fn get_table_structure(
         }
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver::get_table_structure(&handle.pool, &database, &table).await;
+        }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            return clickhouse::get_table_structure(&handle.client, &database, &table).await;
         }
     };
 
@@ -337,6 +346,9 @@ pub async fn get_sql_completion_metadata(
         DatabasePoolHandle::SqlServer(handle) => {
             sqlserver::get_sql_completion_metadata(&handle.pool, database).await
         }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            clickhouse::get_sql_completion_metadata(&handle.client, database).await
+        }
     }
 }
 
@@ -363,6 +375,9 @@ pub async fn get_table_definition(
         }
         DatabasePoolHandle::SqlServer(_) => {
             return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+        }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_unsupported_error());
         }
     };
 
@@ -419,6 +434,13 @@ pub async fn get_database_info(
         }
         DatabasePoolHandle::SqlServer(_) => {
             return Err(DatabasePoolHandle::sqlserver_unsupported_error());
+        }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Ok(DatabaseInfo {
+                name: database,
+                character_set: String::new(),
+                collation: String::new(),
+            });
         }
     };
 
@@ -483,6 +505,9 @@ pub async fn alter_database_charset(
         DatabasePoolHandle::SqlServer(_) => {
             return Err("SQL Server 暂不支持修改数据库字符集/排序规则".to_string());
         }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err("ClickHouse 不支持修改数据库字符集/排序规则".to_string());
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -517,6 +542,209 @@ fn validate_drop_database_name(database: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_clickhouse_database_name_for_drop(database: &str) -> Result<(), String> {
+    let db = database.trim();
+    if db.is_empty() {
+        return Err("数据库名称不能为空".to_string());
+    }
+    let lower = db.to_lowercase();
+    if matches!(lower.as_str(), "system" | "information_schema") {
+        return Err(format!("禁止删除系统库 `{}`", db));
+    }
+    Ok(())
+}
+
+fn build_clickhouse_create_database_sql(name: &str) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("数据库名称不能为空".to_string());
+    }
+    Ok(format!(
+        "CREATE DATABASE {}",
+        clickhouse::clickhouse_id(name)
+    ))
+}
+
+fn build_clickhouse_drop_database_sql(database: &str) -> Result<String, String> {
+    validate_clickhouse_database_name_for_drop(database)?;
+    Ok(format!(
+        "DROP DATABASE {}",
+        clickhouse::clickhouse_id(database.trim())
+    ))
+}
+
+fn build_clickhouse_rename_database_sql(old_name: &str, new_name: &str) -> Result<String, String> {
+    let old_name = old_name.trim();
+    let new_name = new_name.trim();
+    if old_name.is_empty() || new_name.is_empty() {
+        return Err("数据库名称不能为空".to_string());
+    }
+    Ok(format!(
+        "RENAME DATABASE {} TO {}",
+        clickhouse::clickhouse_id(old_name),
+        clickhouse::clickhouse_id(new_name)
+    ))
+}
+
+fn build_clickhouse_rename_table_sql(
+    database: &str,
+    old_name: &str,
+    new_name: &str,
+) -> Result<String, String> {
+    let old_name = old_name.trim();
+    let new_name = new_name.trim();
+    if old_name.is_empty() || new_name.is_empty() {
+        return Err("表名不能为空".to_string());
+    }
+    Ok(format!(
+        "RENAME TABLE {} TO {}",
+        clickhouse::clickhouse_table_ref(database, old_name),
+        clickhouse::clickhouse_table_ref(database, new_name)
+    ))
+}
+
+fn build_clickhouse_drop_table_sql(database: &str, table: &str) -> Result<String, String> {
+    let table = table.trim();
+    if table.is_empty() {
+        return Err("表名不能为空".to_string());
+    }
+    Ok(format!(
+        "DROP TABLE {}",
+        clickhouse::clickhouse_table_ref(database, table)
+    ))
+}
+
+fn build_clickhouse_truncate_table_sql(database: &str, table: &str) -> Result<String, String> {
+    let table = table.trim();
+    if table.is_empty() {
+        return Err("表名不能为空".to_string());
+    }
+    Ok(format!(
+        "TRUNCATE TABLE {}",
+        clickhouse::clickhouse_table_ref(database, table)
+    ))
+}
+
+fn clickhouse_nullable_column_type(column_type: &str, nullable: bool) -> String {
+    let trimmed = column_type.trim();
+    if !nullable {
+        return trimmed.to_string();
+    }
+    let compact: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
+    if compact.starts_with("Nullable(") || compact.starts_with("LowCardinality(Nullable(") {
+        return trimmed.to_string();
+    }
+    if compact.starts_with("LowCardinality(") && trimmed.ends_with(')') {
+        let Some(open) = trimmed.find('(') else {
+            return format!("Nullable({})", trimmed);
+        };
+        let inner = &trimmed[open + 1..trimmed.len() - 1];
+        return format!("LowCardinality(Nullable({}))", inner.trim());
+    }
+    format!("Nullable({})", trimmed)
+}
+
+fn build_clickhouse_column_definition(col: &CreateTableColumnDef) -> Result<String, String> {
+    validate_column_type(&col.column_type)?;
+    if !col.extra.trim().is_empty() {
+        return Err("ClickHouse 暂不支持列 extra 属性".to_string());
+    }
+
+    let mut parts = vec![
+        clickhouse::clickhouse_id(&col.name),
+        clickhouse_nullable_column_type(&col.column_type, col.nullable),
+    ];
+
+    if let Some(default_value) = col.default_value.as_deref() {
+        let default_value = default_value.trim();
+        if !default_value.is_empty() {
+            validate_column_type(default_value).map_err(|_| "列默认值包含非法字符".to_string())?;
+            parts.push(format!("DEFAULT {}", default_value));
+        }
+    }
+
+    if !col.comment.trim().is_empty() {
+        parts.push(format!(
+            "COMMENT {}",
+            clickhouse::clickhouse_str(col.comment.trim())
+        ));
+    }
+
+    Ok(parts.join(" "))
+}
+
+fn build_clickhouse_create_table_sql(
+    database: &str,
+    request: &CreateTableRequest,
+) -> Result<String, String> {
+    if request.columns.is_empty() {
+        return Err("至少需要定义一个列".to_string());
+    }
+
+    let engine = if request.engine.trim().is_empty() {
+        "MergeTree"
+    } else {
+        request.engine.trim()
+    };
+    validate_engine_name(engine)?;
+
+    let column_defs = request
+        .columns
+        .iter()
+        .map(build_clickhouse_column_definition)
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|definition| format!("  {}", definition))
+        .collect::<Vec<_>>();
+
+    let order_by = match request.order_by.as_ref() {
+        Some(columns) if !columns.is_empty() => {
+            let cols = columns
+                .iter()
+                .map(|column| column.trim())
+                .filter(|column| !column.is_empty())
+                .map(clickhouse::clickhouse_id)
+                .collect::<Vec<_>>();
+            if cols.is_empty() {
+                "tuple()".to_string()
+            } else {
+                format!("({})", cols.join(", "))
+            }
+        }
+        _ => "tuple()".to_string(),
+    };
+
+    let comment_clause = if request.comment.trim().is_empty() {
+        String::new()
+    } else {
+        format!(
+            " COMMENT {}",
+            clickhouse::clickhouse_str(request.comment.trim())
+        )
+    };
+
+    Ok(format!(
+        "CREATE TABLE {} (\n{}\n) ENGINE = {} ORDER BY {}{}",
+        clickhouse::clickhouse_table_ref(database, &request.table_name),
+        column_defs.join(",\n"),
+        engine,
+        order_by,
+        comment_clause
+    ))
+}
+
+async fn execute_clickhouse_ddl(
+    client: &clickhouse_rs::Client,
+    sql: String,
+    context: &str,
+) -> Result<(), String> {
+    client
+        .query(&sql)
+        .execute()
+        .await
+        .map_err(|e| format!("{}: {}", context, e))
+}
+
 /// 删除数据库（DROP DATABASE）
 #[tauri::command]
 pub async fn drop_database(
@@ -539,6 +767,10 @@ pub async fn drop_database(
         }
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver_ddl::drop_schema(&handle.pool, &database).await;
+        }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            let sql = build_clickhouse_drop_database_sql(&database)?;
+            return execute_clickhouse_ddl(&handle.client, sql, "删除数据库失败").await;
         }
     };
 
@@ -579,6 +811,10 @@ pub async fn create_database(
         }
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver_ddl::create_schema(&handle.pool, &name).await;
+        }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            let sql = build_clickhouse_create_database_sql(&name)?;
+            return execute_clickhouse_ddl(&handle.client, sql, "创建数据库失败").await;
         }
     };
 
@@ -648,6 +884,15 @@ pub async fn rename_database(
         }
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver_ddl::rename_schema(&handle.pool, &old_name, &new_name).await;
+        }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            let sql = build_clickhouse_rename_database_sql(&old_name, &new_name)?;
+            return execute_clickhouse_ddl(
+                &handle.client,
+                sql,
+                "重命名数据库失败，当前 ClickHouse 版本可能不支持 RENAME DATABASE",
+            )
+            .await;
         }
     };
 
@@ -722,6 +967,10 @@ pub async fn rename_table(
             return sqlserver_ddl::rename_table(&handle.pool, &database, &old_name, &new_name)
                 .await;
         }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            let sql = build_clickhouse_rename_table_sql(&database, &old_name, &new_name)?;
+            return execute_clickhouse_ddl(&handle.client, sql, "重命名表失败").await;
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -765,6 +1014,9 @@ pub async fn alter_table_engine(
         }
         DatabasePoolHandle::SqlServer(_) => {
             return Err(DatabasePoolHandle::sqlserver_write_unsupported_error());
+        }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err("ClickHouse 暂不支持通过表结构面板修改表引擎，请使用 SQL 编辑器执行明确的 ALTER TABLE".to_string());
         }
     };
 
@@ -810,6 +1062,9 @@ pub async fn get_primary_keys(
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver::fetch_edit_locator(&handle.pool, &database, &table).await;
         }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            return clickhouse::fetch_primary_keys(&handle.client, &database, &table).await;
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -854,6 +1109,10 @@ pub async fn drop_table(
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver_ddl::drop_table(&handle.pool, &database, &table).await;
         }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            let sql = build_clickhouse_drop_table_sql(&database, &table)?;
+            return execute_clickhouse_ddl(&handle.client, sql, "删除表失败").await;
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -890,6 +1149,10 @@ pub async fn truncate_table(
         }
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver_ddl::truncate_table(&handle.pool, &database, &table).await;
+        }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            let sql = build_clickhouse_truncate_table_sql(&database, &table)?;
+            return execute_clickhouse_ddl(&handle.client, sql, "清空表失败").await;
         }
     };
 
@@ -935,6 +1198,10 @@ pub async fn create_table(
         }
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver_ddl::create_table(&handle.pool, &database, &request).await;
+        }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            let sql = build_clickhouse_create_table_sql(&database, &request)?;
+            return execute_clickhouse_ddl(&handle.client, sql, "新建表失败").await;
         }
     };
 
@@ -1451,6 +1718,7 @@ mod tests {
             ],
             primary_keys: vec!["id".to_string()],
             engine: "InnoDB".to_string(),
+            order_by: None,
             comment: "用户表".to_string(),
         };
 
@@ -1516,6 +1784,7 @@ mod tests {
             }],
             primary_keys: vec![],
             engine: "MyISAM".to_string(),
+            order_by: None,
             comment: "".to_string(),
         };
 
@@ -1577,6 +1846,7 @@ mod tests {
             ],
             primary_keys: vec!["order_id".to_string(), "item_id".to_string()],
             engine: "InnoDB".to_string(),
+            order_by: None,
             comment: "".to_string(),
         };
 
@@ -1624,6 +1894,7 @@ mod tests {
             columns: vec![],
             primary_keys: vec![],
             engine: "InnoDB".to_string(),
+            order_by: None,
             comment: "".to_string(),
         };
         assert!(request.columns.is_empty());
@@ -1651,5 +1922,106 @@ mod tests {
         let table = "logs";
         let sql = format!("TRUNCATE TABLE `{}`.`{}`", db, table);
         assert_eq!(sql, "TRUNCATE TABLE `myapp`.`logs`");
+    }
+
+    #[test]
+    fn test_clickhouse_database_and_table_ddl_sql_format() {
+        assert_eq!(
+            build_clickhouse_create_database_sql("analytics").unwrap(),
+            "CREATE DATABASE `analytics`"
+        );
+        assert_eq!(
+            build_clickhouse_drop_database_sql("analytics").unwrap(),
+            "DROP DATABASE `analytics`"
+        );
+        assert!(build_clickhouse_drop_database_sql("system").is_err());
+        assert_eq!(
+            build_clickhouse_rename_database_sql("old_db", "new_db").unwrap(),
+            "RENAME DATABASE `old_db` TO `new_db`"
+        );
+        assert_eq!(
+            build_clickhouse_rename_table_sql("analytics", "old", "new").unwrap(),
+            "RENAME TABLE `analytics`.`old` TO `analytics`.`new`"
+        );
+        assert_eq!(
+            build_clickhouse_drop_table_sql("analytics", "events").unwrap(),
+            "DROP TABLE `analytics`.`events`"
+        );
+        assert_eq!(
+            build_clickhouse_truncate_table_sql("analytics", "events").unwrap(),
+            "TRUNCATE TABLE `analytics`.`events`"
+        );
+    }
+
+    #[test]
+    fn test_clickhouse_create_table_defaults_to_mergetree_tuple_order() {
+        let request = CreateTableRequest {
+            table_name: "events".to_string(),
+            columns: vec![
+                CreateTableColumnDef {
+                    name: "id".to_string(),
+                    column_type: "UInt64".to_string(),
+                    nullable: false,
+                    default_value: None,
+                    extra: "".to_string(),
+                    comment: "identifier".to_string(),
+                },
+                CreateTableColumnDef {
+                    name: "payload".to_string(),
+                    column_type: "String".to_string(),
+                    nullable: true,
+                    default_value: None,
+                    extra: "".to_string(),
+                    comment: "".to_string(),
+                },
+            ],
+            primary_keys: vec!["id".to_string()],
+            engine: "MergeTree".to_string(),
+            order_by: None,
+            comment: "event facts".to_string(),
+        };
+
+        let sql = build_clickhouse_create_table_sql("analytics", &request).unwrap();
+
+        assert_eq!(
+            sql,
+            "CREATE TABLE `analytics`.`events` (\n  `id` UInt64 COMMENT 'identifier',\n  `payload` Nullable(String)\n) ENGINE = MergeTree ORDER BY tuple() COMMENT 'event facts'"
+        );
+    }
+
+    #[test]
+    fn test_clickhouse_create_table_uses_explicit_order_by_columns() {
+        let request = CreateTableRequest {
+            table_name: "events".to_string(),
+            columns: vec![
+                CreateTableColumnDef {
+                    name: "tenant_id".to_string(),
+                    column_type: "String".to_string(),
+                    nullable: false,
+                    default_value: None,
+                    extra: "".to_string(),
+                    comment: "".to_string(),
+                },
+                CreateTableColumnDef {
+                    name: "created_at".to_string(),
+                    column_type: "DateTime".to_string(),
+                    nullable: false,
+                    default_value: Some("now()".to_string()),
+                    extra: "".to_string(),
+                    comment: "".to_string(),
+                },
+            ],
+            primary_keys: vec![],
+            engine: "ReplacingMergeTree".to_string(),
+            order_by: Some(vec!["tenant_id".to_string(), "created_at".to_string()]),
+            comment: "".to_string(),
+        };
+
+        let sql = build_clickhouse_create_table_sql("analytics", &request).unwrap();
+
+        assert_eq!(
+            sql,
+            "CREATE TABLE `analytics`.`events` (\n  `tenant_id` String,\n  `created_at` DateTime DEFAULT now()\n) ENGINE = ReplacingMergeTree ORDER BY (`tenant_id`, `created_at`)"
+        );
     }
 }

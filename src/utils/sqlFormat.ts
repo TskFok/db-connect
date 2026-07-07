@@ -15,6 +15,8 @@ export function sqlDialectToFormatterLanguage(
       return "sqlite";
     case "sqlserver":
       return "transactsql";
+    case "clickhouse":
+      return "clickhouse";
     case "mysql":
     default:
       return "mysql";

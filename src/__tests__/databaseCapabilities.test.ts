@@ -95,6 +95,28 @@ describe("getDatabaseCapabilities", () => {
     expect(caps.databaseObjectNoun).toBe("schema");
   });
 
+  it("ClickHouse 开放 SQL、浏览、基础 DDL、导入导出、收藏和保存 SQL，仍禁用行级表格编辑", () => {
+    const caps = getDatabaseCapabilities("clickhouse");
+
+    expect(caps.sqlEditor).toBe(true);
+    expect(caps.tableBrowsing).toBe(true);
+    expect(caps.savedSql).toBe(true);
+    expect(caps.favoriteTables).toBe(true);
+    expect(caps.databaseManagement).toBe(true);
+    expect(caps.tableDataEditing).toBe(false);
+    expect(caps.schemaManagement).toBe(true);
+    expect(caps.routineManagement).toBe(false);
+    expect(caps.eventManagement).toBe(false);
+    expect(caps.triggerManagement).toBe(false);
+    expect(caps.indexManagement).toBe(false);
+    expect(caps.foreignKeyManagement).toBe(false);
+    expect(caps.sqlFileImportExport).toBe(true);
+    expect(caps.charsetAndCollation).toBe(false);
+    expect(caps.storageEngine).toBe(false);
+    expect(caps.columnReordering).toBe(false);
+    expect(caps.databaseObjectNoun).toBe("数据库");
+  });
+
   it("未知类型回退到 MySQL 能力集，避免静默禁用所有功能", () => {
     expect(getDatabaseCapabilities("unknown-db").tableDataEditing).toBe(true);
     expect(getDatabaseCapabilities(null).tableDataEditing).toBe(true);

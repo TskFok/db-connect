@@ -1,3 +1,4 @@
+use crate::db::clickhouse;
 use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
 use crate::db::postgres;
 use crate::db::postgres_ddl::format_pg_error;
@@ -18,6 +19,8 @@ use std::io::BufWriter;
 use std::io::ErrorKind;
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 use tauri::AppHandle;
 use tauri::Emitter;
@@ -117,6 +120,15 @@ async fn run_one_sqlserver_batch(
         .await
         .map(|_| ())
         .map_err(|e| sqlserver::normalize_sqlserver_error("导入 SQL", e.to_string()))
+}
+
+async fn run_one_clickhouse_statement(
+    client: &clickhouse_rs::Client,
+    stmt: &str,
+) -> Result<(), String> {
+    clickhouse::run_sql_on_client(client, stmt, false, Instant::now())
+        .await
+        .map(|_| ())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -253,6 +265,82 @@ struct SqlServerForeignKeyMeta {
     delete_action: String,
     update_action: String,
     columns: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ClickHouseExportRelationKind {
+    Table,
+    View,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ClickHouseExportRelation {
+    name: String,
+    relation_kind: ClickHouseExportRelationKind,
+    ddl: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ClickHouseExportMetadata {
+    database: String,
+    tables: Vec<ClickHouseExportRelation>,
+    views: Vec<ClickHouseExportRelation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ClickHouseExportDataBlock {
+    table: String,
+    rows_sql: String,
+    row_count: u64,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ClickHouseExportTableRow {
+    name: String,
+    object_type: String,
+    create_table_query: String,
+}
+
+struct ClickHouseExportRequest<'a> {
+    database: &'a str,
+    file_path: String,
+    include_data: bool,
+    max_rows: u64,
+    file: BufWriter<std::fs::File>,
+    cancel_token: Option<&'a SqlExportCancelToken>,
+}
+
+#[derive(Debug, Clone)]
+struct SqlExportCancelToken {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl SqlExportCancelToken {
+    fn new() -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn from_arc(cancelled: Arc<AtomicBool>) -> Self {
+        Self { cancelled }
+    }
+
+    fn flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.cancelled)
+    }
+
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    fn check(&self) -> Result<(), String> {
+        if self.cancelled.load(Ordering::SeqCst) {
+            Err("导出已取消".to_string())
+        } else {
+            Ok(())
+        }
+    }
 }
 
 fn ensure_semicolon(sql: &str) -> String {
@@ -401,14 +489,246 @@ fn split_sqlserver_batches(sql: &str) -> Vec<String> {
 }
 
 fn split_import_sql_for_database_type(database_type: &str, sql_text: &str) -> Vec<String> {
-    if database_type.trim().eq_ignore_ascii_case("sqlserver") {
+    let database_type = database_type.trim();
+    if database_type.eq_ignore_ascii_case("sqlserver") {
         return split_sqlserver_batches(sql_text);
+    }
+    if database_type.eq_ignore_ascii_case("clickhouse") {
+        return split_clickhouse_import_statements(sql_text);
     }
     split_sql_statements(sql_text)
         .into_iter()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect()
+}
+
+fn strip_leading_import_comments(mut sql: &str) -> &str {
+    loop {
+        let trimmed = sql.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("--") {
+            match rest.find('\n') {
+                Some(pos) => {
+                    sql = &rest[pos + 1..];
+                    continue;
+                }
+                None => return "",
+            }
+        }
+        if let Some(rest) = trimmed.strip_prefix('#') {
+            match rest.find('\n') {
+                Some(pos) => {
+                    sql = &rest[pos + 1..];
+                    continue;
+                }
+                None => return "",
+            }
+        }
+        if let Some(rest) = trimmed.strip_prefix("/*") {
+            match rest.find("*/") {
+                Some(pos) => {
+                    sql = &rest[pos + 2..];
+                    continue;
+                }
+                None => return "",
+            }
+        }
+        return trimmed;
+    }
+}
+
+fn clickhouse_insert_uses_format_payload(stmt: &str) -> bool {
+    let stripped = strip_leading_import_comments(stmt);
+    if !stripped
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect::<String>()
+        .eq_ignore_ascii_case("INSERT")
+    {
+        return false;
+    }
+
+    let tokens = stripped
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|token| !token.is_empty())
+        .map(|token| token.to_ascii_uppercase())
+        .collect::<Vec<_>>();
+    tokens.iter().any(|token| token == "FORMAT")
+}
+
+fn semicolon_is_line_terminator(chars: &[char], pos: usize) -> bool {
+    let mut i = pos;
+    while i > 0 {
+        let c = chars[i - 1];
+        if c == '\n' || c == '\r' {
+            break;
+        }
+        if !c.is_whitespace() {
+            return false;
+        }
+        i -= 1;
+    }
+
+    let mut j = pos + 1;
+    while j < chars.len() {
+        let c = chars[j];
+        if c == '\n' || c == '\r' {
+            return true;
+        }
+        if !c.is_whitespace() {
+            return false;
+        }
+        j += 1;
+    }
+    true
+}
+
+fn split_clickhouse_import_statements(sql: &str) -> Vec<String> {
+    let trimmed = sql.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+
+    let chars = trimmed.chars().collect::<Vec<_>>();
+    let mut result = Vec::new();
+    let mut current = String::new();
+    let mut i = 0usize;
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut in_backtick = false;
+    let mut dollar_quote_tag: Option<String> = None;
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    let mut escaped = false;
+
+    while i < chars.len() {
+        let c = chars[i];
+        if let Some(tag) = dollar_quote_tag.as_ref() {
+            if starts_with_chars(&chars, i, tag) {
+                current.push_str(tag);
+                i += tag.chars().count();
+                dollar_quote_tag = None;
+            } else {
+                current.push(c);
+                i += 1;
+            }
+            continue;
+        }
+        if in_line_comment {
+            current.push(c);
+            if c == '\n' {
+                in_line_comment = false;
+            }
+            i += 1;
+            continue;
+        }
+        if in_block_comment {
+            if c == '*' && chars.get(i + 1) == Some(&'/') {
+                current.push('*');
+                current.push('/');
+                in_block_comment = false;
+                i += 2;
+            } else {
+                current.push(c);
+                i += 1;
+            }
+            continue;
+        }
+        if escaped {
+            current.push(c);
+            escaped = false;
+            i += 1;
+            continue;
+        }
+        if c == '\\' && (in_single || in_double) {
+            escaped = true;
+            current.push(c);
+            i += 1;
+            continue;
+        }
+        if !in_single && !in_double && !in_backtick {
+            if c == '-' && chars.get(i + 1) == Some(&'-') {
+                current.push('-');
+                current.push('-');
+                in_line_comment = true;
+                i += 2;
+                continue;
+            }
+            if c == '#' {
+                current.push(c);
+                in_line_comment = true;
+                i += 1;
+                continue;
+            }
+            if c == '/' && chars.get(i + 1) == Some(&'*') {
+                current.push('/');
+                current.push('*');
+                in_block_comment = true;
+                i += 2;
+                continue;
+            }
+            if c == '\'' {
+                in_single = true;
+                current.push(c);
+                i += 1;
+                continue;
+            }
+            if c == '"' {
+                in_double = true;
+                current.push(c);
+                i += 1;
+                continue;
+            }
+            if c == '`' {
+                in_backtick = true;
+                current.push(c);
+                i += 1;
+                continue;
+            }
+            if c == '$' {
+                if let Some(tag) = read_pg_dollar_quote_tag(&chars, i) {
+                    current.push_str(&tag);
+                    i += tag.chars().count();
+                    dollar_quote_tag = Some(tag);
+                    continue;
+                }
+            }
+            if c == ';' {
+                let stmt = current.trim();
+                if clickhouse_insert_uses_format_payload(stmt)
+                    && !semicolon_is_line_terminator(&chars, i)
+                {
+                    current.push(c);
+                    i += 1;
+                    continue;
+                }
+                if !stmt.is_empty() {
+                    result.push(stmt.to_string());
+                }
+                current.clear();
+                i += 1;
+                continue;
+            }
+        } else {
+            if c == '\'' && in_single {
+                in_single = false;
+            }
+            if c == '"' && in_double {
+                in_double = false;
+            }
+            if c == '`' && in_backtick {
+                in_backtick = false;
+            }
+        }
+        current.push(c);
+        i += 1;
+    }
+
+    let last = current.trim();
+    if !last.is_empty() {
+        result.push(last.to_string());
+    }
+    result
 }
 
 fn starts_with_chars(chars: &[char], start: usize, expected: &str) -> bool {
@@ -2032,6 +2352,9 @@ pub async fn import_sql_file(
         DatabasePoolHandle::SqlServer(_) => {
             split_import_sql_for_database_type("sqlserver", &sql_text)
         }
+        DatabasePoolHandle::ClickHouse(_) => {
+            split_import_sql_for_database_type("clickhouse", &sql_text)
+        }
         _ => split_import_sql_for_database_type("mysql", &sql_text),
     };
     let total = statements.len() as u32;
@@ -2167,6 +2490,39 @@ pub async fn import_sql_file(
                 }
             }
         }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            let client = match database
+                .as_deref()
+                .map(str::trim)
+                .filter(|db| !db.is_empty())
+            {
+                Some(db) => handle.client.as_ref().clone().with_database(db.to_string()),
+                None => handle.client.as_ref().clone(),
+            };
+
+            for (i, stmt) in statements.iter().enumerate() {
+                match run_one_clickhouse_statement(&client, stmt).await {
+                    Ok(()) => ok += 1,
+                    Err(e) => {
+                        failed += 1;
+                        record_import_failure(&mut failures, (i + 1) as u32, stmt, e);
+                    }
+                }
+                let done = (i + 1) as u32;
+                if done == 1
+                    || done == total
+                    || done.is_multiple_of(IMPORT_PROGRESS_EMIT_INTERVAL as u32)
+                {
+                    let _ = app.emit(
+                        "sql-import-progress",
+                        SqlImportProgress {
+                            current: done,
+                            total,
+                        },
+                    );
+                }
+            }
+        }
     }
 
     let _ = app.emit(
@@ -2249,6 +2605,347 @@ fn write_insert_batch<W: Write>(
     )
     .map_err(|e| format_fs_err("写入导出文件失败", e))?;
     Ok(())
+}
+
+fn build_clickhouse_export_metadata_sql() -> &'static str {
+    "SELECT name, \
+            CASE WHEN engine IN ('View', 'MaterializedView', 'LiveView') \
+                 THEN 'VIEW' ELSE 'TABLE' END AS object_type, \
+            create_table_query \
+     FROM system.tables \
+     WHERE database = ? \
+       AND engine != 'Dictionary' \
+     ORDER BY object_type, name"
+}
+
+async fn fetch_clickhouse_json_each_rows<T>(
+    query: clickhouse_rs::query::Query,
+    context: &str,
+) -> Result<Vec<T>, String>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let mut cursor = query
+        .fetch_bytes("JSONEachRow")
+        .map_err(|e| format!("{}: {}", context, e))?;
+    let bytes = cursor
+        .collect()
+        .await
+        .map_err(|e| format!("{}: {}", context, e))?;
+    let text = std::str::from_utf8(bytes.as_ref())
+        .map_err(|e| format!("{}: ClickHouse 返回了非 UTF-8 JSONEachRow: {}", context, e))?;
+    clickhouse::parse_json_each_rows(text).map_err(|e| format!("{}: {}", context, e))
+}
+
+async fn load_clickhouse_export_metadata(
+    client: &clickhouse_rs::Client,
+    database: &str,
+) -> Result<ClickHouseExportMetadata, String> {
+    let rows: Vec<ClickHouseExportTableRow> = fetch_clickhouse_json_each_rows(
+        client
+            .query(build_clickhouse_export_metadata_sql())
+            .bind(database),
+        "读取 ClickHouse 导出元数据失败",
+    )
+    .await?;
+
+    let mut tables = Vec::new();
+    let mut views = Vec::new();
+    for row in rows {
+        if row.create_table_query.trim().is_empty() {
+            continue;
+        }
+        let relation_kind = if row.object_type.eq_ignore_ascii_case("VIEW") {
+            ClickHouseExportRelationKind::View
+        } else {
+            ClickHouseExportRelationKind::Table
+        };
+        let relation = ClickHouseExportRelation {
+            name: row.name,
+            relation_kind: relation_kind.clone(),
+            ddl: row.create_table_query,
+        };
+        match relation_kind {
+            ClickHouseExportRelationKind::Table => tables.push(relation),
+            ClickHouseExportRelationKind::View => views.push(relation),
+        }
+    }
+
+    Ok(ClickHouseExportMetadata {
+        database: database.to_string(),
+        tables,
+        views,
+    })
+}
+
+fn count_clickhouse_values_rows(rows_sql: &str) -> u64 {
+    let chars = rows_sql.chars().collect::<Vec<_>>();
+    let mut count = 0u64;
+    let mut depth = 0usize;
+    let mut in_single = false;
+    let mut escaped = false;
+    let mut i = 0usize;
+
+    while i < chars.len() {
+        let c = chars[i];
+        if in_single {
+            if escaped {
+                escaped = false;
+                i += 1;
+                continue;
+            }
+            if c == '\\' {
+                escaped = true;
+                i += 1;
+                continue;
+            }
+            if c == '\'' {
+                if chars.get(i + 1) == Some(&'\'') {
+                    i += 2;
+                    continue;
+                }
+                in_single = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        if c == '\'' {
+            in_single = true;
+            i += 1;
+            continue;
+        }
+        if c == '(' {
+            if depth == 0 {
+                count += 1;
+            }
+            depth += 1;
+        } else if c == ')' && depth > 0 {
+            depth -= 1;
+        }
+        i += 1;
+    }
+
+    count
+}
+
+async fn fetch_clickhouse_values_rows(
+    client: &clickhouse_rs::Client,
+    sql: &str,
+    context: &str,
+) -> Result<String, String> {
+    let mut cursor = client
+        .query(sql)
+        .with_setting("wait_end_of_query", "1")
+        .fetch_bytes("Values")
+        .map_err(|e| format!("{}: {}", context, e))?;
+    let bytes = cursor
+        .collect()
+        .await
+        .map_err(|e| format!("{}: {}", context, e))?;
+    std::str::from_utf8(bytes.as_ref())
+        .map(str::to_string)
+        .map_err(|e| format!("{}: ClickHouse 返回了非 UTF-8 Values: {}", context, e))
+}
+
+/// 按表导出数据是用户显式选择的业务循环；元数据仍由 `system.tables` 一次性读取。
+async fn load_clickhouse_export_data_blocks(
+    app: &AppHandle,
+    client: &clickhouse_rs::Client,
+    metadata: &ClickHouseExportMetadata,
+    max_rows: u64,
+    progress_offset: u32,
+    total_steps: u32,
+    cancel_token: Option<&SqlExportCancelToken>,
+) -> Result<(Vec<ClickHouseExportDataBlock>, u64), String> {
+    let mut blocks = Vec::new();
+    let mut insert_rows = 0u64;
+
+    for (idx, table) in metadata.tables.iter().enumerate() {
+        if let Some(token) = cancel_token {
+            token.check()?;
+        }
+        let sql = format!(
+            "SELECT * FROM {} LIMIT {}",
+            clickhouse::clickhouse_table_ref(&metadata.database, &table.name),
+            max_rows
+        );
+        let rows_sql = fetch_clickhouse_values_rows(
+            client,
+            &sql,
+            &format!("导出 ClickHouse 表 `{}` 数据失败", table.name),
+        )
+        .await?;
+        if let Some(token) = cancel_token {
+            token.check()?;
+        }
+        let row_count = count_clickhouse_values_rows(&rows_sql);
+        if row_count > 0 {
+            insert_rows += row_count;
+            blocks.push(ClickHouseExportDataBlock {
+                table: table.name.clone(),
+                rows_sql,
+                row_count,
+            });
+        }
+        let _ = app.emit(
+            "sql-export-progress",
+            SqlExportProgress {
+                current: progress_offset + idx as u32 + 1,
+                total: total_steps.max(1),
+            },
+        );
+    }
+
+    Ok((blocks, insert_rows))
+}
+
+fn push_clickhouse_relations_script(out: &mut String, relations: &[ClickHouseExportRelation]) {
+    for relation in relations {
+        out.push('\n');
+        match relation.relation_kind {
+            ClickHouseExportRelationKind::Table => {
+                out.push_str(&format!("/* table `{}` */\n", relation.name));
+            }
+            ClickHouseExportRelationKind::View => {
+                out.push_str(&format!("/* view `{}` */\n", relation.name));
+            }
+        }
+        out.push_str(&ensure_semicolon(&relation.ddl));
+        out.push('\n');
+    }
+}
+
+fn build_clickhouse_export_script(
+    metadata: &ClickHouseExportMetadata,
+    data_blocks: &[ClickHouseExportDataBlock],
+    include_data: bool,
+    max_rows: u64,
+) -> Result<String, String> {
+    let mut out = String::new();
+    out.push_str("-- DB Connect ClickHouse export\n");
+    out.push_str(&format!(
+        "-- Source database: {} | include_data: {} | max_rows_per_table: {}\n",
+        metadata.database, include_data, max_rows
+    ));
+    out.push_str("-- ClickHouse 首版不导出触发器、外键、例程或事件。\n");
+    out.push_str(&format!(
+        "CREATE DATABASE IF NOT EXISTS {};\n",
+        clickhouse::clickhouse_id(&metadata.database)
+    ));
+    out.push_str(&format!(
+        "USE {};\n",
+        clickhouse::clickhouse_id(&metadata.database)
+    ));
+
+    push_clickhouse_relations_script(&mut out, &metadata.tables);
+    push_clickhouse_relations_script(&mut out, &metadata.views);
+
+    if include_data {
+        out.push_str("\n/* Data */\n");
+        out.push_str(
+            "-- ClickHouse data export is a per-table business loop using SELECT ... FORMAT Values; metadata is not queried in this loop.\n",
+        );
+        for block in data_blocks {
+            if block.rows_sql.trim().is_empty() {
+                continue;
+            }
+            out.push('\n');
+            out.push_str(&format!(
+                "/* `{}` rows: {} */\n",
+                block.table, block.row_count
+            ));
+            out.push_str(&format!(
+                "INSERT INTO {} FORMAT Values\n",
+                clickhouse::clickhouse_table_ref(&metadata.database, &block.table)
+            ));
+            out.push_str(block.rows_sql.trim_end());
+            out.push_str("\n;\n");
+        }
+    }
+
+    Ok(out)
+}
+
+async fn export_clickhouse_database_to_file_impl(
+    app: &AppHandle,
+    client: &clickhouse_rs::Client,
+    request: ClickHouseExportRequest<'_>,
+) -> Result<ExportSqlFileResult, String> {
+    let start = Instant::now();
+    let ClickHouseExportRequest {
+        database,
+        file_path,
+        include_data,
+        max_rows,
+        mut file,
+        cancel_token,
+    } = request;
+    let metadata = load_clickhouse_export_metadata(client, database).await?;
+    if let Some(token) = cancel_token {
+        token.check()?;
+    }
+    let metadata_steps = metadata.tables.len() + metadata.views.len();
+    let data_steps = if include_data {
+        metadata.tables.len()
+    } else {
+        0
+    };
+    let total_steps_u32 = (metadata_steps + data_steps).max(1) as u32;
+    let _ = app.emit(
+        "sql-export-progress",
+        SqlExportProgress {
+            current: 0,
+            total: total_steps_u32,
+        },
+    );
+
+    let (data_blocks, insert_rows) = if include_data {
+        load_clickhouse_export_data_blocks(
+            app,
+            client,
+            &metadata,
+            max_rows,
+            metadata_steps as u32,
+            total_steps_u32,
+            cancel_token,
+        )
+        .await?
+    } else {
+        (Vec::new(), 0)
+    };
+    if let Some(token) = cancel_token {
+        token.check()?;
+    }
+
+    let script = build_clickhouse_export_script(&metadata, &data_blocks, include_data, max_rows)?;
+    file.write_all(script.as_bytes())
+        .map_err(|e| format_fs_err("写入导出文件失败", e))?;
+    file.flush()
+        .map_err(|e| format_fs_err("写入导出文件失败", e))?;
+    drop(file);
+
+    let path = Path::new(&file_path);
+    crate::util::secure_fs::set_secure_file_permissions(path)
+        .map_err(|e| format!("设置文件权限失败: {}", e))?;
+
+    let _ = app.emit(
+        "sql-export-progress",
+        SqlExportProgress {
+            current: total_steps_u32,
+            total: total_steps_u32,
+        },
+    );
+
+    Ok(ExportSqlFileResult {
+        tables_exported: metadata.tables.len() as u32,
+        views_exported: metadata.views.len() as u32,
+        triggers_exported: 0,
+        events_exported: 0,
+        insert_rows,
+        file_path,
+        elapsed_ms: start.elapsed().as_millis() as u64,
+    })
 }
 
 async fn export_postgres_database_to_file_impl(
@@ -2459,8 +3156,27 @@ async fn export_sqlserver_database_to_file_impl(
     })
 }
 
+#[tauri::command]
+pub async fn cancel_sql_export(
+    state: State<'_, AppState>,
+    export_id: String,
+) -> Result<bool, String> {
+    let token = {
+        let exports = state.running_sql_exports.lock().await;
+        exports.get(export_id.trim()).cloned()
+    };
+
+    let Some(token) = token else {
+        return Ok(false);
+    };
+
+    SqlExportCancelToken::from_arc(token).cancel();
+    Ok(true)
+}
+
 /// 将当前库导出为 .sql（表/视图的 CREATE；可选导出表数据为 INSERT，每表最多 `max_rows_per_table` 行）。
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn export_database_to_file(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -2469,6 +3185,7 @@ pub async fn export_database_to_file(
     file_path: String,
     include_data: bool,
     max_rows_per_table: u32,
+    export_id: Option<String>,
 ) -> Result<ExportSqlFileResult, String> {
     if database.trim().is_empty() {
         return Err("请选择要导出的数据库".to_string());
@@ -2522,6 +3239,39 @@ pub async fn export_database_to_file(
                 file,
             )
             .await;
+        }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            let cancel_registration = export_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(|id| (id.to_string(), SqlExportCancelToken::new()));
+            if let Some((id, token)) = &cancel_registration {
+                state
+                    .running_sql_exports
+                    .lock()
+                    .await
+                    .insert(id.clone(), token.flag());
+            }
+
+            let result = export_clickhouse_database_to_file_impl(
+                &app,
+                &handle.client,
+                ClickHouseExportRequest {
+                    database: &database,
+                    file_path,
+                    include_data,
+                    max_rows,
+                    file,
+                    cancel_token: cancel_registration.as_ref().map(|(_, token)| token),
+                },
+            )
+            .await;
+
+            if let Some((id, _)) = cancel_registration {
+                state.running_sql_exports.lock().await.remove(&id);
+            }
+            return result;
         }
     };
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -3234,5 +3984,120 @@ DROP SCHEMA [old_schema]\n";
             preview.dangerous_statements[1].statement_preview,
             "DROP SCHEMA [old_schema]"
         );
+    }
+
+    #[test]
+    fn clickhouse_import_splitter_keeps_format_payload_semicolons() {
+        let sql = r#"
+CREATE TABLE `analytics`.`events`
+(
+  `id` UInt64,
+  `payload` String
+)
+ENGINE = MergeTree
+ORDER BY id;
+
+INSERT INTO `analytics`.`events` FORMAT JSONEachRow
+{"id":1,"payload":"keeps;semicolon"}
+{"id":2,"payload":"second row"}
+;
+
+INSERT INTO `analytics`.`events` (`id`, `payload`) VALUES (3, 'values;semicolon');
+"#;
+
+        let statements = split_import_sql_for_database_type("clickhouse", sql);
+
+        assert_eq!(statements.len(), 3, "{:#?}", statements);
+        assert!(statements[0].contains("CREATE TABLE `analytics`.`events`"));
+        assert!(statements[0].contains("ORDER BY id"));
+        assert!(statements[1].starts_with("INSERT INTO `analytics`.`events` FORMAT JSONEachRow"));
+        assert!(statements[1].contains("keeps;semicolon"));
+        assert!(statements[2].contains("VALUES (3, 'values;semicolon')"));
+    }
+
+    #[test]
+    fn clickhouse_import_preview_detects_dangerous_statements() {
+        let sql = r#"
+SELECT 'DROP DATABASE is only data';
+TRUNCATE TABLE `analytics`.`events`;
+DROP DATABASE `old_analytics`;
+"#;
+
+        let preview = preview_sql_file_dangerous_statements("clickhouse", sql);
+
+        assert_eq!(preview.statements_total, 3);
+        assert_eq!(preview.dangerous_statements_total, 2);
+        assert_eq!(preview.dangerous_statements[0].statement_index, 2);
+        assert_eq!(
+            preview.dangerous_statements[0].statement_preview,
+            "TRUNCATE TABLE `analytics`.`events`"
+        );
+        assert_eq!(preview.dangerous_statements[1].statement_index, 3);
+    }
+
+    #[test]
+    fn clickhouse_export_metadata_query_uses_single_system_tables_query() {
+        let sql = build_clickhouse_export_metadata_sql();
+
+        assert!(sql.contains("system.tables"));
+        assert!(sql.contains("create_table_query"));
+        assert!(sql.contains("database = ?"));
+        assert!(!sql.contains("system.columns"));
+    }
+
+    #[test]
+    fn clickhouse_values_row_count_counts_comma_separated_rows() {
+        assert_eq!(
+            count_clickhouse_values_rows("(1,'Ada'),(2,'Bob'),(3,'Eve')"),
+            3
+        );
+        assert_eq!(
+            count_clickhouse_values_rows("(1,'comma, inside string'),(2,'paren ) inside string')"),
+            2
+        );
+    }
+
+    #[test]
+    fn sql_export_cancel_token_reports_cancelled() {
+        let token = SqlExportCancelToken::new();
+
+        assert!(token.check().is_ok());
+        token.cancel();
+        assert_eq!(token.check().unwrap_err(), "导出已取消");
+    }
+
+    #[test]
+    fn clickhouse_export_script_includes_database_objects_and_values_data() {
+        let metadata = ClickHouseExportMetadata {
+            database: "analytics".to_string(),
+            tables: vec![ClickHouseExportRelation {
+                name: "events".to_string(),
+                relation_kind: ClickHouseExportRelationKind::Table,
+                ddl: "CREATE TABLE `analytics`.`events` (`id` UInt64, `payload` String) ENGINE = MergeTree ORDER BY id"
+                    .to_string(),
+            }],
+            views: vec![ClickHouseExportRelation {
+                name: "events_view".to_string(),
+                relation_kind: ClickHouseExportRelationKind::View,
+                ddl: "CREATE VIEW `analytics`.`events_view` AS SELECT id FROM `analytics`.`events`"
+                    .to_string(),
+            }],
+        };
+        let data = vec![ClickHouseExportDataBlock {
+            table: "events".to_string(),
+            rows_sql: "(1,'Ada')\n(2,'Bob')\n".to_string(),
+            row_count: 2,
+        }];
+
+        let script = build_clickhouse_export_script(&metadata, &data, true, 100).unwrap();
+
+        assert!(script.contains("CREATE DATABASE IF NOT EXISTS `analytics`;"));
+        assert!(script.contains("USE `analytics`;"));
+        assert!(script.contains("CREATE TABLE `analytics`.`events`"));
+        assert!(script.contains("CREATE VIEW `analytics`.`events_view`"));
+        assert!(script.contains("INSERT INTO `analytics`.`events` FORMAT Values"));
+        assert!(script.contains("(1,'Ada')"));
+        assert!(script.contains("-- ClickHouse data export is a per-table business loop"));
+        assert!(!script.contains("FOREIGN_KEY_CHECKS"));
     }
 }

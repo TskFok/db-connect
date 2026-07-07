@@ -114,12 +114,14 @@ describe("connectionStore", () => {
   });
 
   describe("database type utilities", () => {
-    it("应该识别 SQLite/SQL Server 并保留未知类型回退到 MySQL", () => {
+    it("应该识别 SQLite/SQL Server/ClickHouse 并保留未知类型回退到 MySQL", () => {
       expect(normalizeDatabaseType("sqlite")).toBe("sqlite");
       expect(normalizeDatabaseType("sqlserver")).toBe("sqlserver");
+      expect(normalizeDatabaseType("clickhouse")).toBe("clickhouse");
       expect(normalizeDatabaseType("unknown")).toBe("mysql");
       expect(defaultPortForDatabaseType("sqlite")).toBe(0);
       expect(defaultPortForDatabaseType("sqlserver")).toBe(1433);
+      expect(defaultPortForDatabaseType("clickhouse")).toBe(8123);
     });
   });
 
@@ -884,6 +886,33 @@ describe("connectionStore", () => {
       await useConnectionStore
         .getState()
         .connect({ ...base, database_type: "postgres" });
+
+      expect(mockApi.connect).toHaveBeenCalledTimes(1);
+      expect(useConnectionStore.getState().activeConnId).toBe("conn-b");
+    });
+
+    it("同一主机端口但 MySQL 与 ClickHouse 不应复用连接", async () => {
+      const base = {
+        name: "T",
+        host: "localhost",
+        port: 8123,
+        username: "default",
+        password: "p",
+      };
+      const existing = {
+        connId: "conn-a",
+        config: { ...base, database_type: "mysql" as const },
+      };
+      useConnectionStore.setState({
+        activeConnections: { "conn-a": existing },
+        activeConnId: "conn-a",
+        activeConnection: existing,
+      });
+      mockApi.connect.mockResolvedValue("conn-b");
+
+      await useConnectionStore
+        .getState()
+        .connect({ ...base, database_type: "clickhouse" });
 
       expect(mockApi.connect).toHaveBeenCalledTimes(1);
       expect(useConnectionStore.getState().activeConnId).toBe("conn-b");

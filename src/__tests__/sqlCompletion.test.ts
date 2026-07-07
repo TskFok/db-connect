@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  CLICKHOUSE_KEYWORDS,
   MYSQL_KEYWORDS,
   POSTGRES_KEYWORDS,
   SQLSERVER_KEYWORDS,
@@ -130,12 +131,25 @@ describe("sqlCompletion", () => {
     });
   });
 
+  describe("CLICKHOUSE_KEYWORDS", () => {
+    it("应包含 ClickHouse 常用关键词", () => {
+      expect(CLICKHOUSE_KEYWORDS).toContain("SELECT");
+      expect(CLICKHOUSE_KEYWORDS).toContain("FORMAT");
+      expect(CLICKHOUSE_KEYWORDS).toContain("ENGINE");
+      expect(CLICKHOUSE_KEYWORDS).toContain("MERGE TREE");
+      expect(CLICKHOUSE_KEYWORDS).toContain("ORDER BY");
+      expect(CLICKHOUSE_KEYWORDS).toContain("PARTITION BY");
+      expect(CLICKHOUSE_KEYWORDS).toContain("LIMIT BY");
+    });
+  });
+
   describe("getSqlKeywords", () => {
     it("按方言返回对应关键词集合", () => {
       expect(getSqlKeywords("mysql")).toBe(MYSQL_KEYWORDS);
       expect(getSqlKeywords("postgres")).toBe(POSTGRES_KEYWORDS);
       expect(getSqlKeywords("sqlite")).toBe(SQLITE_KEYWORDS);
       expect(getSqlKeywords("sqlserver")).toBe(SQLSERVER_KEYWORDS);
+      expect(getSqlKeywords("clickhouse")).toBe(CLICKHOUSE_KEYWORDS);
       // 默认 mysql
       expect(getSqlKeywords()).toBe(MYSQL_KEYWORDS);
     });
@@ -160,6 +174,11 @@ describe("sqlCompletion", () => {
     it("SQL Server 使用方括号并转义右方括号", () => {
       expect(quoteIdentifier("users", "sqlserver")).toBe("[users]");
       expect(quoteIdentifier("we]ird", "sqlserver")).toBe("[we]]ird]");
+    });
+
+    it("ClickHouse 使用反引号并转义反引号", () => {
+      expect(quoteIdentifier("users", "clickhouse")).toBe("`users`");
+      expect(quoteIdentifier("we`ird", "clickhouse")).toBe("`we``ird`");
     });
   });
 
@@ -230,6 +249,21 @@ describe("sqlCompletion", () => {
       expect(db?.insertText).toBe("[app]");
       expect(col?.insertText).toBe("[users].[id]");
       expect(suggestions.some((s) => s.label === "TOP")).toBe(true);
+    });
+
+    it("ClickHouse 方言下标识符使用反引号并提供 ClickHouse 关键词", () => {
+      const suggestions = buildSqlSuggestions(
+        fakeMonaco,
+        "",
+        schema,
+        fakeRange,
+        { dialect: "clickhouse" }
+      );
+      const db = suggestions.find((s) => s.label === "app");
+      const col = suggestions.find((s) => s.label === "users.id");
+      expect(db?.insertText).toBe("`app`");
+      expect(col?.insertText).toBe("`users`.`id`");
+      expect(suggestions.some((s) => s.label === "FORMAT")).toBe(true);
     });
 
     it("前缀过滤大小写不敏感地匹配表名", () => {

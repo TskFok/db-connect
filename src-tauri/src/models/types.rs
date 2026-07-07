@@ -34,6 +34,7 @@ pub enum DatabaseType {
     Postgres,
     Sqlite,
     SqlServer,
+    ClickHouse,
 }
 
 /// 数据库连接配置
@@ -478,6 +479,9 @@ pub struct CreateTableRequest {
     pub primary_keys: Vec<String>,
     /// 存储引擎 (如 InnoDB)
     pub engine: String,
+    /// ClickHouse 排序键列名列表；空或缺省时使用 ORDER BY tuple()
+    #[serde(default)]
+    pub order_by: Option<Vec<String>>,
     /// 表注释
     pub comment: String,
 }
@@ -807,6 +811,18 @@ mod tests {
 
         let serialized = serde_json::to_string(&c).unwrap();
         assert!(serialized.contains("\"database_type\":\"sqlserver\""));
+    }
+
+    #[test]
+    fn test_connection_config_serializes_clickhouse_type() {
+        let json = r#"{"database_type":"clickhouse","name":"ClickHouse","host":"ch.example.com","port":8123,"username":"default","password":null,"database":"analytics","ssh":null}"#;
+        let c: ConnectionConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(c.database_type, DatabaseType::ClickHouse);
+        assert_eq!(c.port, 8123);
+        assert_eq!(c.database.as_deref(), Some("analytics"));
+
+        let serialized = serde_json::to_string(&c).unwrap();
+        assert!(serialized.contains("\"database_type\":\"clickhouse\""));
     }
 
     #[test]

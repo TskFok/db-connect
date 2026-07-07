@@ -44,6 +44,7 @@ const DATABASE_TYPE_OPTIONS: Array<{
   { value: "postgres", label: "PostgreSQL" },
   { value: "sqlite", label: "SQLite" },
   { value: "sqlserver", label: "SQL Server" },
+  { value: "clickhouse", label: "ClickHouse" },
 ];
 
 const SSL_MODE_OPTIONS = [
@@ -96,6 +97,8 @@ export function ConnectionForm() {
         ? "SQLite"
         : currentDatabaseType === "sqlserver"
           ? "SQL Server"
+          : currentDatabaseType === "clickhouse"
+            ? "ClickHouse"
           : "MySQL";
 
   // editingConnection 变化时同步表单值（解决：先点新建再点编辑时配置不显示的问题）
@@ -400,6 +403,8 @@ export function ConnectionForm() {
                   ? "postgres"
                   : currentDatabaseType === "sqlserver"
                     ? "sa"
+                    : currentDatabaseType === "clickhouse"
+                      ? "default"
                     : "root"
               }
             />
@@ -413,7 +418,8 @@ export function ConnectionForm() {
             name="database"
             label={
               currentDatabaseType === "postgres" ||
-              currentDatabaseType === "sqlserver"
+              currentDatabaseType === "sqlserver" ||
+              currentDatabaseType === "clickhouse"
                 ? "数据库"
                 : "默认数据库"
             }
@@ -424,6 +430,8 @@ export function ConnectionForm() {
                   ? "PostgreSQL 物理 database，例如 postgres"
                   : currentDatabaseType === "sqlserver"
                     ? "SQL Server 物理 database，例如 master"
+                    : currentDatabaseType === "clickhouse"
+                      ? "ClickHouse database，例如 default"
                   : "可选，连接后自动选择的数据库"
               }
             />

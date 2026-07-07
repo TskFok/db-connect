@@ -11,6 +11,7 @@ use commands::{
 use db::connection::ConnectionManager;
 use db::postgres::PostgresCancelHandle;
 use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -19,12 +20,15 @@ pub enum RunningQuery {
     MySqlThread(u64),
     Postgres(Box<PostgresCancelHandle>),
     SqlServerUnsupported,
+    ClickHouseUnsupported,
 }
 
 pub struct AppState {
     pub connection_manager: Arc<Mutex<ConnectionManager>>,
     /// 正在执行的查询：执行令牌（execution_id）-> 数据库特定取消句柄。
     pub running_queries: Arc<Mutex<HashMap<String, RunningQuery>>>,
+    /// 正在导出的 SQL 文件：导出令牌（export_id）-> 协作式取消标记。
+    pub running_sql_exports: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
 }
 
 impl AppState {
@@ -32,6 +36,7 @@ impl AppState {
         Self {
             connection_manager: Arc::new(Mutex::new(ConnectionManager::new())),
             running_queries: Arc::new(Mutex::new(HashMap::new())),
+            running_sql_exports: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -109,6 +114,7 @@ pub fn run() {
             sql_file::preview_sql_file_import,
             sql_file::import_sql_file,
             sql_file::export_database_to_file,
+            sql_file::cancel_sql_export,
             index_cmd::list_indexes,
             index_cmd::create_index,
             index_cmd::delete_index,

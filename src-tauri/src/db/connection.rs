@@ -1,7 +1,8 @@
 use crate::db::adapter::{
-    DatabaseAdapter, MySqlDatabaseAdapter, PostgresDatabaseAdapter, SqlServerDatabaseAdapter,
-    SqliteDatabaseAdapter,
+    ClickHouseDatabaseAdapter, DatabaseAdapter, MySqlDatabaseAdapter, PostgresDatabaseAdapter,
+    SqlServerDatabaseAdapter, SqliteDatabaseAdapter,
 };
+use crate::db::clickhouse::{self, ClickHousePoolHandle};
 use crate::db::postgres::{self, PostgresCancelTls, PostgresPoolHandle};
 use crate::db::sqlite;
 use crate::db::sqlserver::{self, SqlServerPoolHandle};
@@ -163,12 +164,18 @@ pub struct SqlServerActiveConnection {
     pub ssh_tunnel: Option<SshTunnel>,
 }
 
+pub struct ClickHouseActiveConnection {
+    pub adapter: ClickHouseDatabaseAdapter,
+    pub ssh_tunnel: Option<SshTunnel>,
+}
+
 #[derive(Clone)]
 pub enum DatabasePoolHandle {
     MySql(Pool),
     Postgres(PostgresPoolHandle),
     Sqlite(sqlite::SqlitePoolHandle),
     SqlServer(SqlServerPoolHandle),
+    ClickHouse(ClickHousePoolHandle),
 }
 
 impl DatabasePoolHandle {
@@ -187,6 +194,14 @@ impl DatabasePoolHandle {
     pub fn sqlserver_write_unsupported_error() -> String {
         "SQL Server 暂不支持该写操作".to_string()
     }
+
+    pub fn clickhouse_unsupported_error() -> String {
+        "ClickHouse 暂不支持该操作".to_string()
+    }
+
+    pub fn clickhouse_write_unsupported_error() -> String {
+        "ClickHouse 暂不支持该写操作".to_string()
+    }
 }
 
 /// 活跃连接的数据库类型分发结构。
@@ -195,6 +210,7 @@ pub enum ActiveDatabaseConnection {
     Postgres(PostgresActiveConnection),
     Sqlite(SqliteActiveConnection),
     SqlServer(SqlServerActiveConnection),
+    ClickHouse(ClickHouseActiveConnection),
 }
 
 pub struct ActiveConnection {
@@ -208,10 +224,10 @@ impl ActiveDatabaseConnection {
     fn mysql_pool(&self) -> Result<Pool, String> {
         match self {
             ActiveDatabaseConnection::MySql(conn) => Ok(conn.adapter.pool_clone()),
-            ActiveDatabaseConnection::Postgres(_) | ActiveDatabaseConnection::Sqlite(_) => {
-                Err("当前连接不是 MySQL，不支持该操作".to_string())
-            }
-            ActiveDatabaseConnection::SqlServer(_) => {
+            ActiveDatabaseConnection::Postgres(_)
+            | ActiveDatabaseConnection::Sqlite(_)
+            | ActiveDatabaseConnection::SqlServer(_)
+            | ActiveDatabaseConnection::ClickHouse(_) => {
                 Err("当前连接不是 MySQL，不支持该操作".to_string())
             }
         }
@@ -238,6 +254,9 @@ impl ActiveDatabaseConnection {
                     pool: conn.adapter.pool_clone(),
                 })
             }
+            ActiveDatabaseConnection::ClickHouse(conn) => {
+                DatabasePoolHandle::ClickHouse(conn.adapter.pool_clone())
+            }
         }
     }
 
@@ -247,6 +266,7 @@ impl ActiveDatabaseConnection {
             ActiveDatabaseConnection::Postgres(conn) => conn.adapter.database_type(),
             ActiveDatabaseConnection::Sqlite(conn) => conn.adapter.database_type(),
             ActiveDatabaseConnection::SqlServer(conn) => conn.adapter.database_type(),
+            ActiveDatabaseConnection::ClickHouse(conn) => conn.adapter.database_type(),
         }
     }
 
@@ -280,6 +300,13 @@ impl ActiveDatabaseConnection {
                 conn.adapter.close();
                 Ok(())
             }
+            ActiveDatabaseConnection::ClickHouse(mut conn) => {
+                if let Some(tunnel) = conn.ssh_tunnel.take() {
+                    tunnel.close();
+                }
+                conn.adapter.close();
+                Ok(())
+            }
         }
     }
 
@@ -305,6 +332,12 @@ impl ActiveDatabaseConnection {
                 conn.adapter.close();
             }
             ActiveDatabaseConnection::SqlServer(mut conn) => {
+                if let Some(tunnel) = conn.ssh_tunnel.take() {
+                    tunnel.close();
+                }
+                conn.adapter.close();
+            }
+            ActiveDatabaseConnection::ClickHouse(mut conn) => {
                 if let Some(tunnel) = conn.ssh_tunnel.take() {
                     tunnel.close();
                 }
@@ -348,6 +381,7 @@ impl ConnectionManager {
             DatabaseType::Postgres => Self::prepare_postgres_connection(config).await,
             DatabaseType::Sqlite => Self::prepare_sqlite_connection(config).await,
             DatabaseType::SqlServer => Self::prepare_sqlserver_connection(config).await,
+            DatabaseType::ClickHouse => Self::prepare_clickhouse_connection(config).await,
         }
     }
 
@@ -511,6 +545,48 @@ impl ConnectionManager {
         Ok((conn_id, active))
     }
 
+    async fn prepare_clickhouse_connection(
+        config: ConnectionConfig,
+    ) -> Result<(String, ActiveConnection), String> {
+        let conn_id = uuid::Uuid::new_v4().to_string();
+
+        let (host, port, tunnel) = if let Some(ssh_config) = &config.ssh {
+            let tunnel = SshTunnel::start(ssh_config, &config.host, config.port).await?;
+            let local_port = tunnel.local_port();
+            (String::from("127.0.0.1"), local_port, Some(tunnel))
+        } else {
+            (config.host.clone(), config.port, None)
+        };
+
+        let handle = match clickhouse::build_clickhouse_client(&host, port, &config) {
+            Ok(handle) => handle,
+            Err(e) => {
+                if let Some(tunnel) = tunnel {
+                    tunnel.close();
+                }
+                return Err(e);
+            }
+        };
+
+        if let Err(e) = clickhouse::test_pool(&handle.client).await {
+            if let Some(tunnel) = tunnel {
+                tunnel.close();
+            }
+            return Err(format!("连接 ClickHouse 失败: {}", e));
+        }
+
+        let active = ActiveConnection {
+            database: ActiveDatabaseConnection::ClickHouse(ClickHouseActiveConnection {
+                adapter: ClickHouseDatabaseAdapter::new(handle),
+                ssh_tunnel: tunnel,
+            }),
+            config,
+            last_activity: Instant::now(),
+        };
+
+        Ok((conn_id, active))
+    }
+
     /// 注册一个已建立好的连接（仅写入 HashMap，调用方只需短暂持锁）。
     pub fn register(&mut self, conn_id: String, active: ActiveConnection) {
         self.connections.insert(conn_id, active);
@@ -551,6 +627,9 @@ impl ConnectionManager {
             Some(DatabasePoolHandle::Postgres(handle)) => postgres::ping_pool(&handle.pool).await,
             Some(DatabasePoolHandle::Sqlite(handle)) => sqlite::ping_pool(&handle.pool).await,
             Some(DatabasePoolHandle::SqlServer(handle)) => sqlserver::ping_pool(&handle.pool).await,
+            Some(DatabasePoolHandle::ClickHouse(handle)) => {
+                clickhouse::ping_pool(&handle.client).await
+            }
             None => false,
         }
     }
@@ -686,6 +765,7 @@ impl ConnectionManager {
             DatabaseType::Postgres => Self::test_postgres_connection(config).await,
             DatabaseType::Sqlite => Self::test_sqlite_connection(config).await,
             DatabaseType::SqlServer => Self::test_sqlserver_connection(config).await,
+            DatabaseType::ClickHouse => Self::test_clickhouse_connection(config).await,
         }
     }
 
@@ -789,6 +869,36 @@ impl ConnectionManager {
         };
 
         let result = sqlserver::test_pool(&handle.pool).await;
+        if let Some(tunnel) = tunnel {
+            tunnel.close();
+        }
+        result?;
+
+        Ok(start.elapsed().as_millis() as u64)
+    }
+
+    async fn test_clickhouse_connection(config: &ConnectionConfig) -> Result<u64, String> {
+        let start = Instant::now();
+
+        let (host, port, tunnel) = if let Some(ssh_config) = &config.ssh {
+            let tunnel = SshTunnel::start(ssh_config, &config.host, config.port).await?;
+            let local_port = tunnel.local_port();
+            (String::from("127.0.0.1"), local_port, Some(tunnel))
+        } else {
+            (config.host.clone(), config.port, None)
+        };
+
+        let handle = match clickhouse::build_clickhouse_client(&host, port, config) {
+            Ok(handle) => handle,
+            Err(e) => {
+                if let Some(tunnel) = tunnel {
+                    tunnel.close();
+                }
+                return Err(e);
+            }
+        };
+
+        let result = clickhouse::test_pool(&handle.client).await;
         if let Some(tunnel) = tunnel {
             tunnel.close();
         }

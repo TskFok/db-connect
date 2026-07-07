@@ -263,8 +263,9 @@ export function TableStructure() {
   );
   const isSqlite = databaseType === "sqlite";
   const isSqlServer = databaseType === "sqlserver";
+  const isClickHouse = databaseType === "clickhouse";
   const structureReadOnly =
-    clientReadOnly || isView || !capabilities.schemaManagement;
+    clientReadOnly || isView || !capabilities.schemaManagement || isClickHouse;
   const showEngine = capabilities.storageEngine;
   const columnReorderingEnabled = capabilities.columnReordering;
   const dataTypeOptions = isSqlite

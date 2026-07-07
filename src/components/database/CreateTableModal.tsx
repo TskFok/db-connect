@@ -3,6 +3,7 @@ import {
   Modal,
   Form,
   Select,
+  AutoComplete,
   Switch,
   Button,
   Space,
@@ -28,6 +29,10 @@ import {
   SQLSERVER_LENGTH_TYPES,
   SQLSERVER_SCALE_TYPES,
   SQLSERVER_UNSIGNED_TYPES,
+  CLICKHOUSE_DATA_TYPES,
+  CLICKHOUSE_LENGTH_TYPES,
+  CLICKHOUSE_SCALE_TYPES,
+  CLICKHOUSE_UNSIGNED_TYPES,
 } from "../../utils/columnTypeUtils";
 import { formColumnToDef } from "../../utils/createTableFormUtils";
 import { useConnectionStore } from "../../stores/connectionStore";
@@ -38,6 +43,13 @@ const { Text } = Typography;
 
 /** 常用 MySQL 引擎列表 */
 const ENGINE_OPTIONS = ["InnoDB", "MyISAM", "MEMORY", "CSV", "ARCHIVE"];
+const CLICKHOUSE_ENGINE_OPTIONS = [
+  "MergeTree",
+  "ReplacingMergeTree",
+  "SummingMergeTree",
+  "AggregatingMergeTree",
+  "CollapsingMergeTree",
+];
 
 /** 常用额外属性列表（MySQL） */
 const MYSQL_EXTRA_OPTIONS = [
@@ -84,44 +96,56 @@ export function CreateTableModal({
   );
   const isSqlite = databaseType === "sqlite";
   const isSqlServer = databaseType === "sqlserver";
-  const showEngine = capabilities.storageEngine;
+  const isClickHouse = databaseType === "clickhouse";
+  const showEngine = capabilities.storageEngine || isClickHouse;
+  const showMysqlEngine = capabilities.storageEngine && !isClickHouse;
   const dataTypeOptions = isSqlite
     ? SQLITE_DATA_TYPES
-    : isSqlServer
-      ? SQLSERVER_DATA_TYPES
-      : showEngine
-        ? MYSQL_DATA_TYPES
-        : POSTGRES_DATA_TYPES;
+    : isClickHouse
+      ? CLICKHOUSE_DATA_TYPES
+      : isSqlServer
+        ? SQLSERVER_DATA_TYPES
+        : showMysqlEngine
+          ? MYSQL_DATA_TYPES
+          : POSTGRES_DATA_TYPES;
   const lengthSet = isSqlite
     ? SQLITE_LENGTH_TYPES
-    : isSqlServer
-      ? SQLSERVER_LENGTH_TYPES
-      : showEngine
-        ? LENGTH_TYPES
-        : POSTGRES_LENGTH_TYPES;
+    : isClickHouse
+      ? CLICKHOUSE_LENGTH_TYPES
+      : isSqlServer
+        ? SQLSERVER_LENGTH_TYPES
+        : showMysqlEngine
+          ? LENGTH_TYPES
+          : POSTGRES_LENGTH_TYPES;
   const scaleSet = isSqlite
     ? SQLITE_SCALE_TYPES
-    : isSqlServer
-      ? SQLSERVER_SCALE_TYPES
-      : showEngine
-        ? SCALE_TYPES
-        : POSTGRES_SCALE_TYPES;
+    : isClickHouse
+      ? CLICKHOUSE_SCALE_TYPES
+      : isSqlServer
+        ? SQLSERVER_SCALE_TYPES
+        : showMysqlEngine
+          ? SCALE_TYPES
+          : POSTGRES_SCALE_TYPES;
   const unsignedSet = isSqlServer
     ? SQLSERVER_UNSIGNED_TYPES
-    : showEngine
+    : isClickHouse
+      ? CLICKHOUSE_UNSIGNED_TYPES
+      : showMysqlEngine
       ? UNSIGNED_TYPES
       : new Set<string>();
-  const extraOptions = showEngine
+  const extraOptions = showMysqlEngine
     ? MYSQL_EXTRA_OPTIONS
     : isSqlServer
       ? SQLSERVER_EXTRA_OPTIONS
       : POSTGRES_EXTRA_OPTIONS;
   const defaultDataType = isSqlite
     ? "TEXT"
+    : isClickHouse
+      ? "String"
     : isSqlServer
       ? "nvarchar"
       : "varchar";
-  const idDefault = showEngine
+  const idDefault = showMysqlEngine
     ? {
         name: "id",
         data_type: "bigint",
@@ -134,6 +158,19 @@ export function CreateTableModal({
         extra: "auto_increment",
         comment: "",
       }
+    : isClickHouse
+      ? {
+          name: "id",
+          data_type: "UInt64",
+          length: "",
+          scale: "",
+          unsigned: false,
+          nullable: false,
+          is_primary: false,
+          default_value: "",
+          extra: "",
+          comment: "",
+        }
     : isSqlite
       ? {
           name: "id",
@@ -174,6 +211,17 @@ export function CreateTableModal({
             comment: "",
           };
   const [form] = Form.useForm();
+  const watchedColumns = Form.useWatch("columns", form) as
+    | Record<string, unknown>[]
+    | undefined;
+  const orderByOptions = useMemo(
+    () =>
+      (watchedColumns ?? [])
+        .map((col) => ((col?.name as string) || "").trim())
+        .filter((name) => name.length > 0)
+        .map((name) => ({ label: name, value: name })),
+    [watchedColumns]
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -196,26 +244,42 @@ export function CreateTableModal({
             extra: "",
             comment: "",
           }))
+        : isClickHouse
+          ? rawColumns.map((col) => ({
+              ...col,
+              extra: "",
+              comment: "",
+            }))
         : rawColumns;
 
-      const primaryKeys: string[] = (values.columns || [])
-        .map((col: Record<string, unknown>) => ({
-          name: ((col.name as string) || "").trim(),
-          isPrimary: col.is_primary === true,
-        }))
-        .filter(
-          (col: { name: string; isPrimary: boolean }) =>
-            col.isPrimary && col.name.length > 0
-        )
-        .map((col: { name: string; isPrimary: boolean }) => col.name);
+      const primaryKeys: string[] = isClickHouse
+        ? []
+        : (values.columns || [])
+            .map((col: Record<string, unknown>) => ({
+              name: ((col.name as string) || "").trim(),
+              isPrimary: col.is_primary === true,
+            }))
+            .filter(
+              (col: { name: string; isPrimary: boolean }) =>
+                col.isPrimary && col.name.length > 0
+            )
+            .map((col: { name: string; isPrimary: boolean }) => col.name);
+      const orderBy = ((values.order_by as string[] | undefined) ?? [])
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0);
 
       const request: CreateTableRequest = {
         table_name: values.table_name.trim(),
         columns,
         primary_keys: primaryKeys,
-        // PostgreSQL 不需要 engine，后端读取此字段在 PG 路径下被忽略
-        engine: showEngine ? values.engine || "InnoDB" : "",
-        comment: isSqlite ? "" : (values.comment || "").trim(),
+        // PostgreSQL/SQLite 不需要 engine，后端读取此字段在对应路径下被忽略
+        engine: isClickHouse
+          ? values.engine || "MergeTree"
+          : showMysqlEngine
+            ? values.engine || "InnoDB"
+            : "",
+        order_by: isClickHouse ? orderBy : undefined,
+        comment: isSqlite || isClickHouse ? "" : (values.comment || "").trim(),
       };
 
       await onCreateTable(connId, database, request);
@@ -276,7 +340,8 @@ export function CreateTableModal({
         layout="vertical"
         size="small"
         initialValues={{
-          engine: "InnoDB",
+          engine: isClickHouse ? "MergeTree" : "InnoDB",
+          order_by: [],
           columns: [idDefault],
         }}
       >
@@ -302,15 +367,44 @@ export function CreateTableModal({
           </Form.Item>
 
           {showEngine && (
-            <Form.Item name="engine" label="存储引擎" style={{ width: 160 }}>
+            <Form.Item
+              name="engine"
+              label={isClickHouse ? "ClickHouse 引擎" : "存储引擎"}
+              style={{ width: isClickHouse ? 220 : 160 }}
+            >
+              {isClickHouse ? (
+                <AutoComplete
+                  options={CLICKHOUSE_ENGINE_OPTIONS.map((e) => ({
+                    label: e,
+                    value: e,
+                  }))}
+                  filterOption={(input, option) =>
+                    String(option?.value ?? "")
+                      .toLowerCase()
+                      .includes(input.toLowerCase())
+                  }
+                />
+              ) : (
+                <Select
+                  options={ENGINE_OPTIONS.map((e) => ({ label: e, value: e }))}
+                  showSearch
+                />
+              )}
+            </Form.Item>
+          )}
+
+          {isClickHouse && (
+            <Form.Item name="order_by" label="ORDER BY" style={{ width: 260 }}>
               <Select
-                options={ENGINE_OPTIONS.map((e) => ({ label: e, value: e }))}
-                showSearch
+                mode="tags"
+                options={orderByOptions}
+                tokenSeparators={[","]}
+                placeholder="默认 tuple()"
               />
             </Form.Item>
           )}
 
-          {!isSqlite && (
+          {!isSqlite && !isClickHouse && (
             <Form.Item name="comment" label="表注释" style={{ width: 300 }}>
               <SafeInput placeholder="可选" />
             </Form.Item>
@@ -355,12 +449,18 @@ export function CreateTableModal({
                   <span style={{ width: 130 }}>类型 *</span>
                   <span style={{ width: 70 }}>长度</span>
                   <span style={{ width: 70 }}>小数位</span>
-                  {!isSqlite && <span style={{ width: 50 }}>UNSIGNED</span>}
+                  {!isSqlite && !isClickHouse && (
+                    <span style={{ width: 50 }}>UNSIGNED</span>
+                  )}
                   <span style={{ width: 50 }}>可空</span>
-                  <span style={{ width: 50 }}>主键</span>
+                  {!isClickHouse && <span style={{ width: 50 }}>主键</span>}
                   <span style={{ width: 100 }}>默认值</span>
-                  {!isSqlite && <span style={{ width: 110 }}>额外</span>}
-                  {!isSqlite && <span style={{ width: 260 }}>注释</span>}
+                  {!isSqlite && !isClickHouse && (
+                    <span style={{ width: 110 }}>额外</span>
+                  )}
+                  {!isSqlite && !isClickHouse && (
+                    <span style={{ width: 260 }}>注释</span>
+                  )}
                 </div>
 
                 <div style={{ maxHeight: 320, overflow: "auto" }}>
@@ -469,7 +569,7 @@ export function CreateTableModal({
                         </Form.Item>
 
                         {/* UNSIGNED */}
-                        {!isSqlite && (
+                        {!isSqlite && !isClickHouse && (
                           <Form.Item
                             {...restField}
                             name={[name, "unsigned"]}
@@ -499,18 +599,20 @@ export function CreateTableModal({
                         </Form.Item>
 
                         {/* 主键 */}
-                        <Form.Item
-                          {...restField}
-                          name={[name, "is_primary"]}
-                          valuePropName="checked"
-                          style={{
-                            marginBottom: 0,
-                            width: 50,
-                            textAlign: "center",
-                          }}
-                        >
-                          <Switch size="small" />
-                        </Form.Item>
+                        {!isClickHouse && (
+                          <Form.Item
+                            {...restField}
+                            name={[name, "is_primary"]}
+                            valuePropName="checked"
+                            style={{
+                              marginBottom: 0,
+                              width: 50,
+                              textAlign: "center",
+                            }}
+                          >
+                            <Switch size="small" />
+                          </Form.Item>
+                        )}
 
                         {/* 默认值 */}
                         <Form.Item
@@ -522,7 +624,7 @@ export function CreateTableModal({
                         </Form.Item>
 
                         {/* 额外属性 */}
-                        {!isSqlite && (
+                        {!isSqlite && !isClickHouse && (
                           <Form.Item
                             {...restField}
                             name={[name, "extra"]}
@@ -537,7 +639,7 @@ export function CreateTableModal({
                         )}
 
                         {/* 注释 */}
-                        {!isSqlite && (
+                        {!isSqlite && !isClickHouse && (
                           <Form.Item
                             {...restField}
                             name={[name, "comment"]}
@@ -570,7 +672,7 @@ export function CreateTableModal({
                     add({
                       name: "",
                       data_type: defaultDataType,
-                      length: isSqlite ? "" : isSqlServer ? "255" : "255",
+                      length: isSqlite || isClickHouse ? "" : "255",
                       scale: "",
                       unsigned: false,
                       nullable: true,

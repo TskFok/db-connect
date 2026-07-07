@@ -66,6 +66,18 @@ const sqlserverConnection = {
   },
 };
 
+const clickhouseConnection = {
+  connId: "ch-1",
+  config: {
+    id: "ch-profile",
+    name: "ClickHouse",
+    host: "localhost",
+    port: 8123,
+    username: "default",
+    database_type: "clickhouse" as const,
+  },
+};
+
 describe("DatabaseTree capabilities", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -134,6 +146,34 @@ describe("DatabaseTree capabilities", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("ClickHouse 元数据阶段会自动加载 database 树", async () => {
+    useDatabaseStore.setState({
+      activeConnId: "ch-1",
+      connectionStates: {
+        "ch-1": {
+          ...emptyConnState(),
+          databases: [],
+          tables: {},
+        },
+      },
+    });
+    useConnectionStore.setState({
+      activeConnections: { "ch-1": clickhouseConnection },
+      activeConnId: "ch-1",
+      activeConnection: clickhouseConnection,
+    });
+    mockApi.listDatabases.mockResolvedValue(["analytics", "system"]);
+
+    render(<DatabaseTree />);
+
+    await waitFor(() => {
+      expect(mockApi.listDatabases).toHaveBeenCalledWith("ch-1");
+    });
+    expect(
+      screen.queryByText("当前数据库类型暂不支持对象浏览")
+    ).not.toBeInTheDocument();
+  });
+
   it("PostgreSQL MVP 阶段显示 schema/table 但隐藏收藏入口", () => {
     useFavoriteStore.setState({
       favorites: [
@@ -185,6 +225,60 @@ describe("DatabaseTree capabilities", () => {
     expect(screen.getByText("users")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /收藏/ })
+    ).not.toBeInTheDocument();
+  });
+
+  it("ClickHouse 显示 database/table 元数据，允许行数为空", () => {
+    useDatabaseStore.setState({
+      activeConnId: "ch-1",
+      connectionStates: {
+        "ch-1": {
+          ...emptyConnState(),
+          databases: ["analytics"],
+          tables: {
+            analytics: [
+              {
+                name: "events",
+                table_type: "TABLE",
+                engine: "MergeTree",
+                rows: null,
+                data_length: 4096,
+                index_length: null,
+                comment: "事件表",
+              },
+            ],
+          },
+          expandedKeys: ["db:analytics"],
+        },
+      },
+      databases: ["analytics"],
+      tables: {
+        analytics: [
+          {
+            name: "events",
+            table_type: "TABLE",
+            engine: "MergeTree",
+            rows: null,
+            data_length: 4096,
+            index_length: null,
+            comment: "事件表",
+          },
+        ],
+      },
+      expandedKeys: ["db:analytics"],
+    });
+    useConnectionStore.setState({
+      activeConnections: { "ch-1": clickhouseConnection },
+      activeConnId: "ch-1",
+      activeConnection: clickhouseConnection,
+    });
+
+    render(<DatabaseTree />);
+
+    expect(screen.getByText("analytics")).toBeInTheDocument();
+    expect(screen.getByText("events")).toBeInTheDocument();
+    expect(
+      screen.queryByText("当前数据库类型暂不支持对象浏览")
     ).not.toBeInTheDocument();
   });
 });

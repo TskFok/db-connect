@@ -38,6 +38,40 @@ function setupSqliteConnection(): void {
   });
 }
 
+function setupClickHouseConnection(): void {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+
+  const connection = {
+    connId: "conn-clickhouse",
+    config: {
+      id: "conn-clickhouse",
+      name: "ClickHouse 测试",
+      host: "localhost",
+      port: 8123,
+      username: "default",
+      database_type: "clickhouse" as const,
+    },
+  };
+
+  useConnectionStore.setState({
+    activeConnections: { "conn-clickhouse": connection },
+    activeConnId: "conn-clickhouse",
+    activeConnection: connection,
+  });
+}
+
 describe("CreateTableModal — SQLite", () => {
   beforeEach(() => {
     setupSqliteConnection();
@@ -81,6 +115,59 @@ describe("CreateTableModal — SQLite", () => {
             expect.objectContaining({
               name: "id",
               column_type: "INTEGER",
+              extra: "",
+              comment: "",
+            }),
+          ],
+        })
+      );
+    });
+  });
+});
+
+describe("CreateTableModal — ClickHouse", () => {
+  beforeEach(() => {
+    setupClickHouseConnection();
+  });
+
+  it("显示 ClickHouse 专属类型、引擎和 ORDER BY，并提交最小 MergeTree 请求", async () => {
+    const onCreateTable = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <CreateTableModal
+        open
+        onCancel={() => {}}
+        onSuccess={() => {}}
+        connId="conn-clickhouse"
+        database="analytics"
+        onCreateTable={onCreateTable}
+      />
+    );
+
+    expect(screen.getByText("ClickHouse 引擎")).toBeInTheDocument();
+    expect(screen.getByText("ORDER BY")).toBeInTheDocument();
+    expect(screen.getByText("UInt64")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText("例如: users"), {
+      target: { value: "events" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /创\s*建/ }));
+
+    await waitFor(() => {
+      expect(onCreateTable).toHaveBeenCalledWith(
+        "conn-clickhouse",
+        "analytics",
+        expect.objectContaining({
+          table_name: "events",
+          engine: "MergeTree",
+          order_by: [],
+          comment: "",
+          primary_keys: [],
+          columns: [
+            expect.objectContaining({
+              name: "id",
+              column_type: "UInt64",
+              nullable: false,
               extra: "",
               comment: "",
             }),

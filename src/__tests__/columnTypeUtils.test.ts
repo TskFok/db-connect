@@ -10,6 +10,10 @@ import {
   SQLSERVER_LENGTH_TYPES,
   SQLSERVER_SCALE_TYPES,
   SQLSERVER_UNSIGNED_TYPES,
+  CLICKHOUSE_DATA_TYPES,
+  CLICKHOUSE_LENGTH_TYPES,
+  CLICKHOUSE_SCALE_TYPES,
+  CLICKHOUSE_UNSIGNED_TYPES,
   buildColumnTypeWithConfig,
 } from "../utils/columnTypeUtils";
 
@@ -400,5 +404,43 @@ describe("SQLSERVER_DATA_TYPES", () => {
         unsignedTypes: SQLSERVER_UNSIGNED_TYPES,
       })
     ).toBe("nvarchar(255)");
+  });
+});
+
+describe("CLICKHOUSE_DATA_TYPES", () => {
+  it("提供计划要求的 ClickHouse 常用类型建议", () => {
+    const labels = CLICKHOUSE_DATA_TYPES.flatMap((group) =>
+      group.options.map((option) => option.label)
+    );
+
+    expect(labels).toEqual(
+      expect.arrayContaining([
+        "UInt64",
+        "Int64",
+        "Float64",
+        "Decimal(18,2)",
+        "String",
+        "LowCardinality(String)",
+        "Date",
+        "DateTime",
+        "DateTime64(3)",
+        "Bool",
+        "UUID",
+        "Array(String)",
+        "Nullable(String)",
+      ])
+    );
+  });
+
+  it("ClickHouse 类型建议不走 MySQL unsigned/长度规则，保留完整类型文本", () => {
+    expect(CLICKHOUSE_LENGTH_TYPES.size).toBe(0);
+    expect(CLICKHOUSE_SCALE_TYPES.size).toBe(0);
+    expect(CLICKHOUSE_UNSIGNED_TYPES.size).toBe(0);
+    expect(
+      buildColumnTypeWithConfig("Decimal(18,2)", "", "", true, {
+        scaleTypes: CLICKHOUSE_SCALE_TYPES,
+        unsignedTypes: CLICKHOUSE_UNSIGNED_TYPES,
+      })
+    ).toBe("Decimal(18,2)");
   });
 });

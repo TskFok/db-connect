@@ -84,6 +84,12 @@ pub async fn alter_column(
             validate_column_type(&request.column_type)?;
             return sqlserver_ddl::alter_column(&handle.pool, &database, &table, &request).await;
         }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(
+                "ClickHouse 暂不支持通过表结构面板修改列定义或列顺序，请使用 SQL 编辑器执行明确的 ALTER TABLE"
+                    .to_string(),
+            );
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -238,6 +244,12 @@ pub async fn add_column(
             validate_column_type(&request.column_type)?;
             return sqlserver_ddl::add_column(&handle.pool, &database, &table, &request).await;
         }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(
+                "ClickHouse 暂不支持通过表结构面板新增列，请使用 SQL 编辑器执行明确的 ALTER TABLE"
+                    .to_string(),
+            );
+        }
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
@@ -295,6 +307,12 @@ pub async fn drop_column(
         }
         DatabasePoolHandle::SqlServer(handle) => {
             return sqlserver_ddl::drop_column(&handle.pool, &database, &table, &column_name).await;
+        }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(
+                "ClickHouse 暂不支持通过表结构面板删除列，请使用 SQL 编辑器执行明确的 ALTER TABLE"
+                    .to_string(),
+            );
         }
     };
 

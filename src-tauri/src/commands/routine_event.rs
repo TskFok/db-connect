@@ -42,6 +42,9 @@ pub async fn list_routines(
                 )
                 .await;
             }
+            DatabasePoolHandle::ClickHouse(_) => {
+                return Err(DatabasePoolHandle::clickhouse_unsupported_error());
+            }
         }
     };
 
@@ -166,6 +169,9 @@ pub async fn get_routine_definition(
                 )
                 .await;
             }
+            DatabasePoolHandle::ClickHouse(_) => {
+                return Err(DatabasePoolHandle::clickhouse_unsupported_error());
+            }
         }
     };
 
@@ -243,6 +249,9 @@ pub async fn drop_routine(
                         .to_string(),
                 );
             }
+            DatabasePoolHandle::ClickHouse(_) => {
+                return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
+            }
         }
     };
 
@@ -297,7 +306,9 @@ pub async fn list_events(
             DatabasePoolHandle::SqlServer(_) => {
                 return Err(sqlserver_objects::sqlserver_events_unsupported().to_string());
             }
-            DatabasePoolHandle::Postgres(_) | DatabasePoolHandle::Sqlite(_) => {
+            DatabasePoolHandle::Postgres(_)
+            | DatabasePoolHandle::Sqlite(_)
+            | DatabasePoolHandle::ClickHouse(_) => {
                 return Err("当前数据库类型不支持 EVENT 管理".to_string());
             }
         }
@@ -359,7 +370,9 @@ pub async fn get_event_definition(
             DatabasePoolHandle::SqlServer(_) => {
                 return Err(sqlserver_objects::sqlserver_events_unsupported().to_string());
             }
-            DatabasePoolHandle::Postgres(_) | DatabasePoolHandle::Sqlite(_) => {
+            DatabasePoolHandle::Postgres(_)
+            | DatabasePoolHandle::Sqlite(_)
+            | DatabasePoolHandle::ClickHouse(_) => {
                 return Err("当前数据库类型不支持 EVENT 管理".to_string());
             }
         }
@@ -411,7 +424,9 @@ pub async fn drop_event(
             DatabasePoolHandle::SqlServer(_) => {
                 return Err(sqlserver_objects::sqlserver_events_unsupported().to_string());
             }
-            DatabasePoolHandle::Postgres(_) | DatabasePoolHandle::Sqlite(_) => {
+            DatabasePoolHandle::Postgres(_)
+            | DatabasePoolHandle::Sqlite(_)
+            | DatabasePoolHandle::ClickHouse(_) => {
                 return Err("当前数据库类型不支持 EVENT 管理".to_string());
             }
         }
@@ -452,7 +467,9 @@ pub async fn set_event_enabled(
             DatabasePoolHandle::SqlServer(_) => {
                 return Err(sqlserver_objects::sqlserver_events_unsupported().to_string());
             }
-            DatabasePoolHandle::Postgres(_) | DatabasePoolHandle::Sqlite(_) => {
+            DatabasePoolHandle::Postgres(_)
+            | DatabasePoolHandle::Sqlite(_)
+            | DatabasePoolHandle::ClickHouse(_) => {
                 return Err("当前数据库类型不支持 EVENT 管理".to_string());
             }
         }

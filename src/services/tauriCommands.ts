@@ -1032,7 +1032,8 @@ export async function exportDatabaseToFile(
   database: string,
   filePath: string,
   includeData: boolean,
-  maxRowsPerTable: number
+  maxRowsPerTable: number,
+  exportId?: string
 ): Promise<ExportSqlFileResult> {
   return invoke<ExportSqlFileResult>("export_database_to_file", {
     connId,
@@ -1040,5 +1041,13 @@ export async function exportDatabaseToFile(
     filePath,
     includeData,
     maxRowsPerTable,
+    exportId,
   });
+}
+
+/**
+ * 协作式取消正在执行的 SQL 文件导出。当前用于 ClickHouse 按表数据导出。
+ */
+export async function cancelSqlExport(exportId: string): Promise<boolean> {
+  return invoke<boolean>("cancel_sql_export", { exportId });
 }

@@ -71,7 +71,8 @@ describe("TableContent 多表切换", () => {
         table_type: "TABLE",
         engine: "InnoDB",
         rows: 0,
-        data_length: 0, index_length: null,
+        data_length: 0,
+        index_length: null,
         comment: "",
       },
       tableContentActiveTab: "data",
@@ -92,7 +93,8 @@ describe("TableContent 多表切换", () => {
           table_type: "TABLE",
           engine: "InnoDB",
           rows: 0,
-          data_length: 0, index_length: null,
+          data_length: 0,
+          index_length: null,
           comment: "",
         },
         tableStructure: [
@@ -192,6 +194,53 @@ describe("TableContent 多表切换", () => {
     expect(screen.getByRole("tab", { name: /数据/ })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /结构/ })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /SQL/ })).toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: /创建表/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: /创建表/ })
+    ).not.toBeInTheDocument();
+  });
+
+  it("ClickHouse 表详情显示数据/结构/SQL/创建表标签并隐藏未开放对象管理标签", () => {
+    useConnectionStore.setState({
+      activeConnection: {
+        connId: "ch-1",
+        config: {
+          id: "ch-1",
+          name: "ClickHouse",
+          host: "localhost",
+          port: 8123,
+          username: "default",
+          database_type: "clickhouse",
+        },
+      },
+      activeConnId: "ch-1",
+    });
+    useDatabaseStore.setState({
+      activeConnId: "ch-1",
+      selectedDatabase: "analytics",
+      selectedTable: "events",
+      selectedTableInfo: {
+        name: "events",
+        table_type: "TABLE",
+        engine: "MergeTree",
+        rows: null,
+        data_length: 4096,
+        index_length: null,
+        comment: "",
+      },
+      tableContentActiveTab: "data",
+    });
+
+    render(<TableContent />);
+
+    expect(screen.getByRole("tab", { name: /数据/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /结构/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /SQL/ })).toBeInTheDocument();
+    expect(screen.getByTestId("mock-table-data")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /创建表/ })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /索引/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: /触发器/ })
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /外键/ })).not.toBeInTheDocument();
   });
 });

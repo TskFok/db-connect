@@ -20,6 +20,8 @@ vi.mock("../services/tauriCommands", () => ({
   executeSql: vi.fn(),
   previewSqlFileImport: mockPreviewSqlFileImport,
   importSqlFile: vi.fn(),
+  exportDatabaseToFile: vi.fn(),
+  cancelSqlExport: vi.fn(),
   alterDatabaseCharset: vi.fn(),
   createDatabase: vi.fn(),
   dropDatabase: vi.fn(),
@@ -52,7 +54,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 const mockApi = vi.mocked(api);
 
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 
 const notReadonlySelect: SqlExecuteResult = {
   result_type: "select",
@@ -119,9 +121,20 @@ describe("DatabaseSqlFileActions", () => {
       failures: [{ statement_index: 2, error: "syntax" }],
       elapsed_ms: 10,
     });
+    mockApi.exportDatabaseToFile.mockResolvedValue({
+      tables_exported: 1,
+      views_exported: 0,
+      triggers_exported: 0,
+      events_exported: 0,
+      insert_rows: 0,
+      file_path: "/tmp/export.sql",
+      elapsed_ms: 10,
+    });
+    mockApi.cancelSqlExport.mockResolvedValue(true);
     mockApi.listTables.mockResolvedValue([]);
     mockApi.listDatabases.mockResolvedValue(["mydb"]);
     vi.mocked(open).mockResolvedValue("/tmp/fake.sql" as unknown as string);
+    vi.mocked(save).mockResolvedValue("/tmp/export.sql" as unknown as string);
   });
 
   afterEach(() => {
@@ -223,5 +236,96 @@ describe("DatabaseSqlFileActions", () => {
     expect(screen.getByText(/GO/)).toBeInTheDocument();
     expect(screen.queryByText(/mysqldump/)).not.toBeInTheDocument();
     expect(screen.queryByText(/事件定义/)).not.toBeInTheDocument();
+  });
+
+  it("ClickHouse 导入预检传入 clickhouse 类型并展示专属导出说明", async () => {
+    const clickhouseConnection: ActiveConnection = {
+      ...mockActiveConnection,
+      config: {
+        ...mockActiveConnection.config,
+        database_type: "clickhouse",
+        name: "ClickHouse 测试",
+        port: 8123,
+      },
+    };
+    useConnectionStore.setState({
+      activeConnections: { "conn-1": clickhouseConnection },
+      activeConnId: "conn-1",
+      activeConnection: clickhouseConnection,
+    });
+
+    render(<DatabaseSqlFileActions connId="conn-1" database="analytics" />);
+
+    const buttons = screen.getAllByRole("button");
+    fireEvent.click(buttons[0]);
+
+    await waitFor(() => {
+      expect(mockPreviewSqlFileImport).toHaveBeenCalledWith(
+        "clickhouse",
+        "/tmp/fake.sql"
+      );
+    });
+
+    fireEvent.click(buttons[1]);
+    expect(screen.getByText(/ClickHouse/)).toBeInTheDocument();
+    expect(screen.getByText(/system\.tables/)).toBeInTheDocument();
+    expect(screen.getAllByText(/FORMAT Values/).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("导出进行中可使用同一个 exportId 取消", async () => {
+    const clickhouseConnection: ActiveConnection = {
+      ...mockActiveConnection,
+      config: {
+        ...mockActiveConnection.config,
+        database_type: "clickhouse",
+        name: "ClickHouse 测试",
+        port: 8123,
+      },
+    };
+    useConnectionStore.setState({
+      activeConnections: { "conn-1": clickhouseConnection },
+      activeConnId: "conn-1",
+      activeConnection: clickhouseConnection,
+    });
+    let finishExport: (() => void) | undefined;
+    mockApi.exportDatabaseToFile.mockReturnValue(
+      new Promise((resolve) => {
+        finishExport = () =>
+          resolve({
+            tables_exported: 1,
+            views_exported: 0,
+            triggers_exported: 0,
+            events_exported: 0,
+            insert_rows: 0,
+            file_path: "/tmp/export.sql",
+            elapsed_ms: 10,
+          });
+      })
+    );
+
+    render(<DatabaseSqlFileActions connId="conn-1" database="mydb" />);
+
+    fireEvent.click(screen.getAllByRole("button")[1]);
+    fireEvent.click(screen.getByRole("button", { name: "选择保存路径" }));
+
+    await waitFor(() => {
+      expect(mockApi.exportDatabaseToFile).toHaveBeenCalledWith(
+        "conn-1",
+        "mydb",
+        "/tmp/export.sql",
+        false,
+        100_000,
+        expect.any(String)
+      );
+    });
+    const exportId = mockApi.exportDatabaseToFile.mock.calls[0]?.[5];
+
+    fireEvent.click(screen.getByRole("button", { name: "取消导出" }));
+
+    await waitFor(() => {
+      expect(mockApi.cancelSqlExport).toHaveBeenCalledWith(exportId);
+    });
+
+    finishExport?.();
   });
 });

@@ -302,6 +302,7 @@ export function TableData() {
   const currentDatabaseType = normalizeDatabaseType(
     activeConnection?.config.database_type
   );
+  const isClickHouse = currentDatabaseType === "clickhouse";
   /**
    * 当前表是否具备「按主键定位的写操作」前置条件：
    * - 已加载结构（避免在结构尚未到位时误判为"无主键"）
@@ -327,6 +328,8 @@ export function TableData() {
   const dataEditingAllowed =
     baseDataEditingAllowed &&
     (!requiresPrimaryKeyForDataEditing || hasRowLocatorForEdits);
+  const insertAllowed =
+    dataEditingAllowed || (isClickHouse && !clientReadOnly);
   const noPrimaryKeyDisabledReason =
     currentDatabaseType === "sqlserver"
       ? "该表没有主键或非过滤唯一索引，无法定位行；请改用 SQL 编辑器或为表添加主键/唯一索引"
@@ -338,13 +341,17 @@ export function TableData() {
       : !hasRowLocatorForEdits
         ? noPrimaryKeyDisabledReason
         : "";
-  const insertDisabledReason = !capabilities.tableDataEditing
-    ? "当前数据库类型不允许编辑表数据"
-    : clientReadOnly
-      ? "当前连接为只读模式，不允许编辑表数据"
-      : requiresPrimaryKeyForDataEditing && !hasRowLocatorForEdits
-        ? noPrimaryKeyDisabledReason
-        : "";
+  const insertDisabledReason = isClickHouse
+    ? clientReadOnly
+      ? "当前连接为只读模式，不允许新增行"
+      : ""
+    : !capabilities.tableDataEditing
+      ? "当前数据库类型不允许编辑表数据"
+      : clientReadOnly
+        ? "当前连接为只读模式，不允许编辑表数据"
+        : requiresPrimaryKeyForDataEditing && !hasRowLocatorForEdits
+          ? noPrimaryKeyDisabledReason
+          : "";
   const rowOperationsAllowed = baseDataEditingAllowed && hasRowLocatorForEdits;
   const rowSelectionScopeKey =
     connId && database && table ? `${connId}|${database}|${table}` : "";
@@ -1324,6 +1331,10 @@ export function TableData() {
 
   // 插入新行
   const handleInsert = async () => {
+    if (!insertAllowed) {
+      messageApi.warning(insertDisabledReason || "当前不允许新增行");
+      return;
+    }
     try {
       const values = await insertForm.validateFields();
       // 过滤空值
@@ -1858,13 +1869,13 @@ export function TableData() {
           >
             显示不可见字符
           </Checkbox>
-          <Tooltip title={dataEditingAllowed ? "新增行" : insertDisabledReason}>
+          <Tooltip title={insertAllowed ? "新增行" : insertDisabledReason}>
             <Button
               icon={<PlusOutlined />}
               size="small"
               type="primary"
               aria-label="新增行"
-              disabled={!dataEditingAllowed}
+              disabled={!insertAllowed}
               onClick={() => {
                 insertForm.resetFields();
                 setInsertModalOpen(true);

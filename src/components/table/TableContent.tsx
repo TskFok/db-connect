@@ -57,8 +57,9 @@ export function TableContent() {
   const databaseType = normalizeDatabaseType(activeConnection?.config.database_type);
 
   const tabItems = useMemo(() => {
-    const base = [
-      {
+    const base: { key: string; label: ReactNode; children: ReactNode }[] = [];
+    if (capabilities.tableBrowsing) {
+      base.push({
         key: "data",
         label: (
           <span>
@@ -67,18 +68,18 @@ export function TableContent() {
           </span>
         ),
         children: <TableData key={`data:${tableScopeKey}`} />,
-      },
-      {
-        key: "structure",
-        label: (
-          <span>
-            <UnorderedListOutlined />
-            结构
-          </span>
-        ),
-        children: <TableStructure key={`structure:${tableScopeKey}`} />,
-      },
-    ];
+      });
+    }
+    base.push({
+      key: "structure",
+      label: (
+        <span>
+          <UnorderedListOutlined />
+          结构
+        </span>
+      ),
+      children: <TableStructure key={`structure:${tableScopeKey}`} />,
+    });
     if (capabilities.indexManagement) {
       base.push(
       {
@@ -149,11 +150,14 @@ export function TableContent() {
   }, [capabilities, databaseType, isView, tableScopeKey]);
 
   const tabKeys = useMemo(() => tabItems.map((t) => t.key), [tabItems]);
+  const activeTabKey = tabKeys.includes(tableContentActiveTab)
+    ? tableContentActiveTab
+    : (tabKeys[0] ?? "structure");
 
   useEffect(() => {
     if (!selectedDatabase || !selectedTable) return;
     if (!tabKeys.includes(tableContentActiveTab)) {
-      setTableContentActiveTab(tabKeys[0] ?? "data");
+      setTableContentActiveTab(tabKeys[0] ?? "structure");
     }
   }, [
     selectedDatabase,
@@ -191,7 +195,7 @@ export function TableContent() {
 
       <Tabs
         key={`${selectedDatabase}|${selectedTable}`}
-        activeKey={tableContentActiveTab}
+        activeKey={activeTabKey}
         onChange={setTableContentActiveTab}
         style={{ flex: 1, minHeight: 0, overflow: "hidden" }}
         className="full-height-tabs"

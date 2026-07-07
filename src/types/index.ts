@@ -13,7 +13,12 @@ export interface SshConfig {
 }
 
 /** 数据库类型 */
-export type DatabaseType = "mysql" | "postgres" | "sqlite" | "sqlserver";
+export type DatabaseType =
+  | "mysql"
+  | "postgres"
+  | "sqlite"
+  | "sqlserver"
+  | "clickhouse";
 
 /** 数据库连接配置 */
 export interface ConnectionConfig {
@@ -389,6 +394,8 @@ export interface CreateTableRequest {
   primary_keys: string[];
   /** 存储引擎 (如 InnoDB) */
   engine: string;
+  /** ClickHouse ORDER BY 列名列表；空数组由后端使用 ORDER BY tuple() */
+  order_by?: string[] | null;
   /** 表注释 */
   comment: string;
 }

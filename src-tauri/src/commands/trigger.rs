@@ -31,6 +31,9 @@ pub async fn list_triggers(
                 return sqlserver_objects::list_triggers(&handle.pool, &database, table.as_deref())
                     .await;
             }
+            DatabasePoolHandle::ClickHouse(_) => {
+                return Err(DatabasePoolHandle::clickhouse_unsupported_error());
+            }
         }
     };
 
@@ -126,6 +129,9 @@ pub async fn get_trigger_definition(
                 )
                 .await;
             }
+            DatabasePoolHandle::ClickHouse(_) => {
+                return Err(DatabasePoolHandle::clickhouse_unsupported_error());
+            }
         }
     };
 
@@ -182,6 +188,9 @@ pub async fn create_trigger(
                 )
                 .await;
             }
+            DatabasePoolHandle::ClickHouse(_) => {
+                return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
+            }
         }
     };
 
@@ -232,6 +241,9 @@ pub async fn drop_trigger(
             DatabasePoolHandle::SqlServer(handle) => {
                 return sqlserver_objects::drop_trigger(&handle.pool, &database, &trigger_name)
                     .await;
+            }
+            DatabasePoolHandle::ClickHouse(_) => {
+                return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
             }
         }
     };

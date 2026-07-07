@@ -2698,6 +2698,7 @@ mod tests {
             ],
             primary_keys: vec!["id".to_string()],
             engine: "InnoDB".to_string(),
+            order_by: None,
             comment: "ignored".to_string(),
         };
         create_table(&pool, "main", &request)

@@ -3,6 +3,7 @@ export const SYSTEM_DATABASE_NAMES = new Set([
   "mysql",
   "information_schema",
   "performance_schema",
+  "system",
   "sys",
 ]);
 
