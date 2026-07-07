@@ -43,10 +43,26 @@ describe("sqlFileIoUi", () => {
     expect(t).toContain(IMPORT_SQL_BACKUP_HINT);
   });
 
+  it("ClickHouse 导入确认文案提示 FORMAT 数据与失败继续策略", () => {
+    const t = buildImportSqlConfirmText("clickhouse");
+    expect(t).toContain("ClickHouse");
+    expect(t).toContain("FORMAT");
+    expect(t).toContain("跳过");
+    expect(t).toContain(IMPORT_SQL_BACKUP_HINT);
+  });
+
   it("SQL Server 只读导入提示不使用 MySQL read_only 文案", () => {
     const t = buildImportReadOnlyWarningText("sqlserver");
     expect(t).toContain("SQL Server");
     expect(t).toContain("READ_ONLY");
+    expect(t).not.toContain("@@global");
+    expect(t).not.toContain("super_read_only");
+  });
+
+  it("ClickHouse 只读导入提示使用 readonly setting 文案", () => {
+    const t = buildImportReadOnlyWarningText("clickhouse");
+    expect(t).toContain("ClickHouse");
+    expect(t).toContain("readonly");
     expect(t).not.toContain("@@global");
     expect(t).not.toContain("super_read_only");
   });
@@ -58,6 +74,15 @@ describe("sqlFileIoUi", () => {
     expect(t).toContain("函数/过程");
     expect(t).not.toContain("事件");
     expect(t).not.toContain("mysqldump");
+  });
+
+  it("ClickHouse 导出说明使用 system.tables 和每表行数上限文案", () => {
+    const t = buildExportSqlDescription("clickhouse");
+    expect(t).toContain("ClickHouse");
+    expect(t).toContain("system.tables");
+    expect(t).toContain("每表最多行数");
+    expect(t).not.toContain("触发器");
+    expect(t).not.toContain("事件");
   });
 
   it("buildImportFailureDetailsText 无失败时为空", () => {
@@ -231,6 +256,36 @@ describe("sqlFileIoUi", () => {
       "dbo",
       expect.stringContaining("DATABASEPROPERTYEX")
     );
+    expect(mockExecuteSql.mock.calls[0]?.[2]).not.toContain("@@global");
+  });
+
+  it("isConnectionGloballyReadOnly 在 ClickHouse 下查询 readonly setting", async () => {
+    mockExecuteSql.mockResolvedValue({
+      result_type: "select",
+      columns: ["ro"],
+      rows: [[1]],
+      affected_rows: null,
+      message: "",
+      execution_time_ms: 0,
+    });
+
+    await expect(
+      (
+        isConnectionGloballyReadOnly as unknown as (
+          connId: string,
+          database: string,
+          databaseType: "clickhouse"
+        ) => Promise<boolean>
+      )("ch-1", "analytics", "clickhouse")
+    ).resolves.toBe(true);
+
+    expect(mockExecuteSql).toHaveBeenCalledTimes(1);
+    expect(mockExecuteSql).toHaveBeenCalledWith(
+      "ch-1",
+      "analytics",
+      expect.stringContaining("system.settings")
+    );
+    expect(mockExecuteSql.mock.calls[0]?.[2]).toContain("readonly");
     expect(mockExecuteSql.mock.calls[0]?.[2]).not.toContain("@@global");
   });
 });

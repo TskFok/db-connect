@@ -27,6 +27,15 @@ export function buildImportSqlConfirmText(
       IMPORT_SQL_BACKUP_HINT,
     ].join("\n");
   }
+  if (normalizedType === "clickhouse") {
+    return [
+      "将按顺序执行 ClickHouse SQL 文件中的语句（含 SELECT/SHOW 时会执行并丢弃结果）。",
+      "INSERT ... FORMAT 后的原始数据会作为同一条语句保留；单条执行失败时将跳过该条并继续后续语句。",
+      "若包含 DROP、TRUNCATE、DELETE 等操作可能破坏数据，请确认文件来源可信。",
+      "",
+      IMPORT_SQL_BACKUP_HINT,
+    ].join("\n");
+  }
   return [
     "将按顺序执行文件中的语句（含 SELECT 时会执行并丢弃结果）。",
     "单条执行失败时将跳过该条并继续后续语句；结束时可查看失败条数与详情（详情条数有上限）。",
@@ -46,6 +55,9 @@ export function buildImportReadOnlyWarningText(
   if (normalizedType === "sqlserver") {
     return "当前 SQL Server database 处于 READ_ONLY 或连接为只读模式，无法执行写入类导入。请切换到可写 database 或调整连接只读设置。";
   }
+  if (normalizedType === "clickhouse") {
+    return "当前 ClickHouse 连接为只读模式，或 readonly setting 不允许写入，无法执行写入类导入。请切换到可写连接或调整 ClickHouse readonly 设置。";
+  }
   return "实例处于只读（read_only / super_read_only），无法执行写入类导入。请在可写副本或主库上操作。";
 }
 
@@ -61,6 +73,9 @@ export function buildExportSqlDescription(
   }
   if (normalizedType === "sqlite") {
     return "将生成当前 SQLite database 的表、视图、索引、触发器定义，及可选 INSERT；导入时请选中目标 SQLite 连接后执行。";
+  }
+  if (normalizedType === "clickhouse") {
+    return "将通过 ClickHouse system.tables 生成 CREATE DATABASE、表和视图定义；可选数据导出按表执行 SELECT ... FORMAT Values，并受每表最多行数上限保护。";
   }
   return "将生成表/视图的 CREATE、触发器与事件定义，及可选的 INSERT；语句使用当前默认库（无 USE 源库名、INSERT 不带库前缀），导入时在左侧选中目标库即可迁入其它库名。非 mysqldump。";
 }
@@ -155,6 +170,14 @@ export async function isConnectionGloballyReadOnly(
       connId,
       database,
       "SELECT CAST(CASE WHEN DATABASEPROPERTYEX(DB_NAME(), 'Updateability') = 'READ_ONLY' THEN 1 ELSE 0 END AS int) AS ro"
+    );
+    return isServerReadOnlyFromSqlResult(roCheck);
+  }
+  if (normalizedType === "clickhouse") {
+    const roCheck = await api.executeSql(
+      connId,
+      database,
+      "SELECT toUInt8(value != '0') AS ro FROM system.settings WHERE name = 'readonly'"
     );
     return isServerReadOnlyFromSqlResult(roCheck);
   }

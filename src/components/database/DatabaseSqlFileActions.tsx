@@ -31,6 +31,13 @@ import {
 
 const { Text } = Typography;
 
+function createSqlExportId(): string {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+  return `export-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 function confirmDangerousSqlFileImport(
   preview: PreviewSqlFileImportResult
 ): Promise<boolean> {
@@ -102,8 +109,11 @@ export function DatabaseSqlFileActions({
   const [exportMaxRows, setExportMaxRows] = useState(100_000);
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportCanceling, setExportCanceling] = useState(false);
+  const exportIdRef = useRef<string | null>(null);
   const activeConnection = useConnectionStore((s) => s.activeConnection);
   const databaseType = activeConnection?.config.database_type;
+  const isClickHouse = databaseType === "clickhouse";
   const [importProgress, setImportProgress] =
     useState<SqlIoProgressPayload | null>(null);
   const [exportProgress, setExportProgress] =
@@ -277,6 +287,8 @@ export function DatabaseSqlFileActions({
     setExportModalOpen(false);
     cleanupExportListener();
     setExportProgress(null);
+    const exportId = isClickHouse ? createSqlExportId() : undefined;
+    exportIdRef.current = exportId ?? null;
     try {
       exportUnlistenRef.current = await listen<SqlIoProgressPayload>(
         "sql-export-progress",
@@ -298,18 +310,28 @@ export function DatabaseSqlFileActions({
         database,
         outPath,
         exportIncludeData,
-        exportMaxRows
+        exportMaxRows,
+        exportId
       );
       Modal.success({
         content: `已导出：表 ${r.tables_exported}、视图 ${r.views_exported}、触发器 ${r.triggers_exported}、事件 ${r.events_exported}，INSERT 行数约 ${r.insert_rows}，耗时 ${r.elapsed_ms}ms`,
       });
     } catch (e) {
+      if (String(e).includes("导出已取消")) {
+        Modal.warning({
+          title: "导出已取消",
+          content: "已停止后续导出；如目标文件已创建，可删除后重新导出。",
+        });
+        return;
+      }
       Modal.error({
         title: "导出失败",
         content: String(e),
       });
     } finally {
       setExporting(false);
+      setExportCanceling(false);
+      exportIdRef.current = null;
       setExportProgress(null);
       cleanupExportListener();
     }
@@ -319,8 +341,24 @@ export function DatabaseSqlFileActions({
     disabled,
     exportIncludeData,
     exportMaxRows,
+    isClickHouse,
     cleanupExportListener,
   ]);
+
+  const handleCancelExport = useCallback(async () => {
+    const exportId = exportIdRef.current;
+    if (!exportId) return;
+    setExportCanceling(true);
+    try {
+      await api.cancelSqlExport(exportId);
+    } catch (e) {
+      setExportCanceling(false);
+      Modal.error({
+        title: "取消导出失败",
+        content: String(e),
+      });
+    }
+  }, []);
 
   const importBlocked = disabled || !connId;
   const importPct = sqlIoProgressPercent(importProgress);
@@ -404,7 +442,20 @@ export function DatabaseSqlFileActions({
       <Modal
         title="正在导出 SQL"
         open={exporting}
-        footer={null}
+        footer={
+          exportIdRef.current
+            ? [
+                <Button
+                  key="cancel-export"
+                  danger
+                  loading={exportCanceling}
+                  onClick={() => void handleCancelExport()}
+                >
+                  取消导出
+                </Button>,
+              ]
+            : null
+        }
         closable={false}
         maskClosable={false}
         destroyOnHidden
@@ -448,7 +499,9 @@ export function DatabaseSqlFileActions({
             checked={exportIncludeData}
             onChange={(e) => setExportIncludeData(e.target.checked)}
           >
-            同时导出表数据（INSERT）
+            {isClickHouse
+              ? "同时导出表数据（INSERT ... FORMAT Values）"
+              : "同时导出表数据（INSERT）"}
           </Checkbox>
           <div>
             <Text style={{ marginRight: 8 }}>每表最多行数</Text>

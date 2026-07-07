@@ -9,7 +9,7 @@ describe("ProjectIntroModal", () => {
     expect(screen.getByText("功能介绍")).toBeInTheDocument();
     expect(
       screen.getByText(
-        /DB Connect 是基于 Tauri 与 React 的跨平台数据库桌面客户端，支持 MySQL 与 PostgreSQL/
+        /DB Connect 是基于 Tauri 与 React 的跨平台数据库桌面客户端，支持 MySQL、PostgreSQL、SQLite、SQL Server 与 ClickHouse/
       )
     ).toBeInTheDocument();
     expect(screen.getByText("连接管理")).toBeInTheDocument();

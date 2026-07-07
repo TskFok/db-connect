@@ -95,7 +95,7 @@ describe("getDatabaseCapabilities", () => {
     expect(caps.databaseObjectNoun).toBe("schema");
   });
 
-  it("ClickHouse 开放 SQL、浏览、基础 DDL、收藏和保存 SQL，仍禁用行级表格编辑", () => {
+  it("ClickHouse 开放 SQL、浏览、基础 DDL、导入导出、收藏和保存 SQL，仍禁用行级表格编辑", () => {
     const caps = getDatabaseCapabilities("clickhouse");
 
     expect(caps.sqlEditor).toBe(true);
@@ -110,7 +110,7 @@ describe("getDatabaseCapabilities", () => {
     expect(caps.triggerManagement).toBe(false);
     expect(caps.indexManagement).toBe(false);
     expect(caps.foreignKeyManagement).toBe(false);
-    expect(caps.sqlFileImportExport).toBe(false);
+    expect(caps.sqlFileImportExport).toBe(true);
     expect(caps.charsetAndCollation).toBe(false);
     expect(caps.storageEngine).toBe(false);
     expect(caps.columnReordering).toBe(false);

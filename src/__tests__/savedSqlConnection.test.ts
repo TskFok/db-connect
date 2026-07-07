@@ -5,6 +5,7 @@ import {
   savedSqlConnectionLabel,
   filterSavedSqlByConnectionKey,
 } from "../utils/savedSqlConnection";
+import { favoriteConnectionKey } from "../utils/favoriteConnection";
 
 function baseConfig(overrides: Partial<ConnectionConfig> = {}): ConnectionConfig {
   return {
@@ -41,9 +42,28 @@ describe("savedSqlConnection", () => {
     const sqlserver = savedSqlConnectionKey(
       baseConfig({ database_type: "sqlserver", port: 1433, username: "sa" })
     );
+    const clickhouse = savedSqlConnectionKey(
+      baseConfig({ database_type: "clickhouse", port: 8123, username: "default" })
+    );
     expect(mysql).not.toBe(postgres);
+    expect(clickhouse).not.toBe(mysql);
+    expect(clickhouse).not.toBe(postgres);
     expect(sqlserver).toMatch(/^session:sqlserver\|127\.0\.0\.1\|1433\|sa\|/);
+    expect(clickhouse).toMatch(
+      /^session:clickhouse\|127\.0\.0\.1\|8123\|default\|/
+    );
     expect(sqlserver).not.toBe(mysql);
+  });
+
+  it("收藏表连接 key 包含 ClickHouse 类型，避免与同地址 MySQL 串数据", () => {
+    const mysql = favoriteConnectionKey(baseConfig({ database_type: "mysql" }));
+    const clickhouse = favoriteConnectionKey(
+      baseConfig({ database_type: "clickhouse", port: 8123, username: "default" })
+    );
+
+    expect(mysql).toMatch(/^session:mysql\|/);
+    expect(clickhouse).toMatch(/^session:clickhouse\|/);
+    expect(clickhouse).not.toBe(mysql);
   });
 
   it("savedSqlConnectionLabel 优先使用连接名称", () => {

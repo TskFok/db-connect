@@ -890,5 +890,32 @@ describe("connectionStore", () => {
       expect(mockApi.connect).toHaveBeenCalledTimes(1);
       expect(useConnectionStore.getState().activeConnId).toBe("conn-b");
     });
+
+    it("同一主机端口但 MySQL 与 ClickHouse 不应复用连接", async () => {
+      const base = {
+        name: "T",
+        host: "localhost",
+        port: 8123,
+        username: "default",
+        password: "p",
+      };
+      const existing = {
+        connId: "conn-a",
+        config: { ...base, database_type: "mysql" as const },
+      };
+      useConnectionStore.setState({
+        activeConnections: { "conn-a": existing },
+        activeConnId: "conn-a",
+        activeConnection: existing,
+      });
+      mockApi.connect.mockResolvedValue("conn-b");
+
+      await useConnectionStore
+        .getState()
+        .connect({ ...base, database_type: "clickhouse" });
+
+      expect(mockApi.connect).toHaveBeenCalledTimes(1);
+      expect(useConnectionStore.getState().activeConnId).toBe("conn-b");
+    });
   });
 });

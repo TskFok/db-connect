@@ -137,7 +137,7 @@ const CLICKHOUSE_CAPABILITIES: DatabaseCapabilities = {
   triggerManagement: false,
   indexManagement: false,
   foreignKeyManagement: false,
-  sqlFileImportExport: false,
+  sqlFileImportExport: true,
   savedSql: true,
   favoriteTables: true,
   charsetAndCollation: false,
