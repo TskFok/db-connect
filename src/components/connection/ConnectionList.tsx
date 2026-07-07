@@ -26,7 +26,6 @@ import {
   SwapOutlined,
   CloudServerOutlined,
   DatabaseOutlined,
-  LaptopOutlined,
   HolderOutlined,
   FolderAddOutlined,
   FolderOpenOutlined,
@@ -35,6 +34,10 @@ import {
   RightOutlined,
   DownloadOutlined,
   UploadOutlined,
+  ClusterOutlined,
+  FileTextOutlined,
+  WindowsOutlined,
+  ThunderboltOutlined,
 } from "@ant-design/icons";
 import {
   DndContext,
@@ -52,7 +55,8 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useConnectionStore } from "../../stores/connectionStore";
-import type { ConnectionConfig } from "../../types";
+import type { ConnectionConfig, DatabaseType } from "../../types";
+import { normalizeDatabaseType } from "../../utils/connectionConfig";
 import {
   canDragConnectionGroup,
   connectionDropId,
@@ -68,6 +72,66 @@ import {
 } from "../../utils/connectionGroups";
 
 const { Text, Title } = Typography;
+
+const DATABASE_TYPE_ICON_META: Record<
+  DatabaseType,
+  { label: string; color: string; icon: ReactNode }
+> = {
+  mysql: {
+    label: "MySQL",
+    color: "#1677ff",
+    icon: <DatabaseOutlined aria-hidden />,
+  },
+  postgres: {
+    label: "PostgreSQL",
+    color: "#0958d9",
+    icon: <ClusterOutlined aria-hidden />,
+  },
+  sqlite: {
+    label: "SQLite",
+    color: "#8c8c8c",
+    icon: <FileTextOutlined aria-hidden />,
+  },
+  sqlserver: {
+    label: "SQL Server",
+    color: "#2f54eb",
+    icon: <WindowsOutlined aria-hidden />,
+  },
+  clickhouse: {
+    label: "ClickHouse",
+    color: "#fa8c16",
+    icon: <ThunderboltOutlined aria-hidden />,
+  },
+};
+
+function DatabaseTypeIcon({
+  databaseType,
+}: {
+  databaseType: ConnectionConfig["database_type"];
+}) {
+  const normalizedType = normalizeDatabaseType(databaseType);
+  const meta = DATABASE_TYPE_ICON_META[normalizedType];
+
+  return (
+    <Tooltip title={meta.label}>
+      <span
+        role="img"
+        aria-label={`数据库类型：${meta.label}`}
+        title={meta.label}
+        style={{
+          color: meta.color,
+          display: "inline-flex",
+          alignItems: "center",
+          flexShrink: 0,
+          fontSize: 14,
+          lineHeight: 1,
+        }}
+      >
+        {meta.icon}
+      </span>
+    </Tooltip>
+  );
+}
 
 interface SortableConnectionItemProps {
   item: ConnectionConfig;
@@ -154,16 +218,22 @@ function SortableConnectionItem({
                 marginBottom: 4,
               }}
             >
-              {item.ssh ? (
-                <CloudServerOutlined
-                  style={{ color: "#1677ff", fontSize: 14 }}
-                />
-              ) : (
-                <LaptopOutlined style={{ color: "#52c41a", fontSize: 14 }} />
-              )}
+              <DatabaseTypeIcon databaseType={item.database_type} />
               <Text strong style={{ color: "var(--text-primary)" }} ellipsis>
                 {item.name}
               </Text>
+              {item.ssh && (
+                <Tooltip title="SSH 隧道">
+                  <CloudServerOutlined
+                    aria-label={`SSH 隧道：${item.name}`}
+                    style={{
+                      color: "#1677ff",
+                      flexShrink: 0,
+                      fontSize: 12,
+                    }}
+                  />
+                </Tooltip>
+              )}
               {isConnected && (
                 <Tag color="green" style={{ marginLeft: 4 }}>
                   {isActive ? "当前" : "已连接"}

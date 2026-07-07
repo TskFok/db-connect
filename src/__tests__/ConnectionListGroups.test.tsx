@@ -13,6 +13,7 @@ import { useConnectionStore } from "../stores/connectionStore";
 import * as api from "../services/tauriCommands";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { getSortableGroupSectionStyle } from "../utils/connectionGroups";
+import type { ConnectionConfig } from "../types";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -134,6 +135,68 @@ describe("ConnectionList groups", () => {
     expect(screen.getByTestId("export-connections")).toHaveTextContent("");
     expect(screen.getByTestId("create-connection-group")).toHaveTextContent("");
     expect(screen.getByTestId("create-connection")).toHaveTextContent("");
+  });
+
+  it("为当前支持的连接类型渲染数据库类型主图标并保留 SSH 辅助图标", () => {
+    const typedConnections: ConnectionConfig[] = [
+      {
+        id: "mysql",
+        name: "MySQL Dev",
+        database_type: "mysql",
+        host: "mysql.local",
+        port: 3306,
+        username: "root",
+      },
+      {
+        id: "postgres",
+        name: "PostgreSQL SSH",
+        database_type: "postgres",
+        host: "pg.local",
+        port: 5432,
+        username: "postgres",
+        ssh: {
+          host: "jump.local",
+          port: 22,
+          username: "deploy",
+        },
+      },
+      {
+        id: "sqlite",
+        name: "SQLite Local",
+        database_type: "sqlite",
+        host: "",
+        port: 0,
+        username: "",
+        sqlite_path: "/tmp/app.db",
+      },
+      {
+        id: "sqlserver",
+        name: "SQL Server Dev",
+        database_type: "sqlserver",
+        host: "mssql.local",
+        port: 1433,
+        username: "sa",
+      },
+      {
+        id: "clickhouse",
+        name: "ClickHouse Dev",
+        database_type: "clickhouse",
+        host: "click.local",
+        port: 8123,
+        username: "default",
+      },
+    ];
+    vi.mocked(api.listSavedConnections).mockResolvedValue(typedConnections);
+    useConnectionStore.setState({ savedConnections: typedConnections });
+
+    render(<ConnectionList />);
+
+    expect(screen.getByLabelText("数据库类型：MySQL")).toBeInTheDocument();
+    expect(screen.getByLabelText("数据库类型：PostgreSQL")).toBeInTheDocument();
+    expect(screen.getByLabelText("数据库类型：SQLite")).toBeInTheDocument();
+    expect(screen.getByLabelText("数据库类型：SQL Server")).toBeInTheDocument();
+    expect(screen.getByLabelText("数据库类型：ClickHouse")).toBeInTheDocument();
+    expect(screen.getByLabelText("SSH 隧道：PostgreSQL SSH")).toBeInTheDocument();
   });
 
   it("删除分组需要二次确认后才调用 store action", async () => {
