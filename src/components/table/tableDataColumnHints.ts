@@ -1,3 +1,19 @@
+export function buildColumnHeaderTooltipLines(
+  columnType: string | undefined | null,
+  comment: string | undefined | null
+): string[] {
+  const lines: string[] = [];
+  const normalizedType = (columnType ?? "").trim();
+  const normalizedComment = (comment ?? "").trim();
+  if (normalizedType) {
+    lines.push(`类型：${normalizedType}`);
+  }
+  if (normalizedComment) {
+    lines.push(`注释：${normalizedComment}`);
+  }
+  return lines;
+}
+
 /**
  * 根据列的 `extra` 字段判断是否为「自动生成」列，并返回中文短标签用于 UI 提示。
  *
