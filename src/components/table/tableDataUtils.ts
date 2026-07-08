@@ -10,7 +10,8 @@ export function normalizeValue(
   if (inputValue === "") return "";
   // 原值是字符串时保持字符串语义，避免 "0200..." 失焦后被转数字吞掉前导 0
   // varchar/text 等列即使从 JSON 以 number 形式展示，编辑后也必须保持字符串，避免大整数经 Number/JSON 变成 98860078801500000000
-  if (typeof originalValue === "string" || options?.forceString) return inputValue;
+  if (typeof originalValue === "string" || options?.forceString)
+    return inputValue;
 
   const trimmed = inputValue.trim();
   // 纯整数字符串：用 BigInt 判断是否超出安全范围，避免 Number 精度丢失
@@ -31,6 +32,7 @@ export function normalizeValue(
 
 /** 超过此字符数（按展示值计）时用弹窗 TextArea 编辑，避免表格内极长文本撑乱布局 */
 export const LONG_TEXT_MODAL_MIN_LEN = 120;
+export const LONG_TEXT_CELL_PREVIEW_LEN = LONG_TEXT_MODAL_MIN_LEN;
 
 /** 是否应使用弹窗编辑（null 用行内空编辑） */
 export function isLongFieldValue(displayValue: unknown): boolean {
@@ -43,6 +45,12 @@ export function displayVal(v: unknown): string {
   if (v === null) return "NULL";
   if (v === "") return "(空字符串)";
   return String(v);
+}
+
+/** 单元格非编辑态只渲染短预览，避免极长文本进入 DOM 后拖慢布局和双击编辑反馈。 */
+export function getCellDisplayPreview(text: string): string {
+  if (text.length <= LONG_TEXT_CELL_PREVIEW_LEN) return text;
+  return `${text.slice(0, LONG_TEXT_CELL_PREVIEW_LEN)}...`;
 }
 
 /** 将不可见字符转为可见符号，便于排查脏数据（仅用于显示层） */
@@ -126,7 +134,10 @@ export function saveUserTableHeight(value: number | null): void {
 
 /** 把用户拖拽的高度 clamp 到 [TABLE_HEIGHT_MIN, TABLE_HEIGHT_MAX]。 */
 export function clampUserTableHeight(value: number): number {
-  return Math.max(TABLE_HEIGHT_MIN, Math.min(TABLE_HEIGHT_MAX, Math.round(value)));
+  return Math.max(
+    TABLE_HEIGHT_MIN,
+    Math.min(TABLE_HEIGHT_MAX, Math.round(value))
+  );
 }
 
 /**
@@ -154,7 +165,9 @@ export function stabilizeTableSlotHeight(
 /**
  * 由 slot 像素高度推导用户可拖拽表格的最大高度；slot 未布局完成（过小）时返回 null，调用方不得写入 ref/state。
  */
-export function tableSlotMaxUserHeightOrNull(tableSlotHeight: number): number | null {
+export function tableSlotMaxUserHeightOrNull(
+  tableSlotHeight: number
+): number | null {
   if (!isTrustedTableSlotMeasure(tableSlotHeight)) return null;
   return Math.max(
     TABLE_HEIGHT_MIN,

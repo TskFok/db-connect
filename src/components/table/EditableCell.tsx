@@ -2,7 +2,11 @@ import { memo, useEffect, useRef, useState } from "react";
 import type { InputRef } from "antd";
 import { Modal } from "antd";
 import { SafeInput, SafeTextArea } from "../common/SafeInput";
-import { isLongFieldValue, normalizeValue } from "./tableDataUtils";
+import {
+  getCellDisplayPreview,
+  isLongFieldValue,
+  normalizeValue,
+} from "./tableDataUtils";
 import { TAB_NAVIGATE_EDIT } from "./tableDataEditEvents";
 
 export interface EditableCellProps {
@@ -52,16 +56,23 @@ export function EditableCell({
   const latestForceStringSemanticsRef = useRef(forceStringSemantics);
 
   const displayValue = hasPending ? pendingValue : value;
-  const renderedText = displayText ?? String(displayValue);
+  const renderedText = getCellDisplayPreview(
+    displayText ?? String(displayValue)
+  );
   latestValueRef.current = value;
   latestForceStringSemanticsRef.current = forceStringSemantics;
 
   const commitInputValue = (text: string) => {
     const session = activeEditSessionRef.current;
-    const newVal = normalizeValue(text, session?.value ?? latestValueRef.current, {
-      forceString:
-        session?.forceStringSemantics ?? latestForceStringSemanticsRef.current,
-    });
+    const newVal = normalizeValue(
+      text,
+      session?.value ?? latestValueRef.current,
+      {
+        forceString:
+          session?.forceStringSemantics ??
+          latestForceStringSemanticsRef.current,
+      }
+    );
     (session?.onEdit ?? onEdit)(newVal);
   };
 
@@ -245,14 +256,16 @@ export function EditableCell({
   );
 }
 
-export const MemoEditableCell = memo(EditableCell, (prev, next) =>
-  prev.value === next.value &&
-  prev.pendingValue === next.pendingValue &&
-  prev.hasPending === next.hasPending &&
-  prev.displayText === next.displayText &&
-  prev.cellKey === next.cellKey &&
-  prev.onTabNavigate === next.onTabNavigate &&
-  prev.fieldLabel === next.fieldLabel &&
-  prev.readOnly === next.readOnly &&
-  prev.forceStringSemantics === next.forceStringSemantics
+export const MemoEditableCell = memo(
+  EditableCell,
+  (prev, next) =>
+    prev.value === next.value &&
+    prev.pendingValue === next.pendingValue &&
+    prev.hasPending === next.hasPending &&
+    prev.displayText === next.displayText &&
+    prev.cellKey === next.cellKey &&
+    prev.onTabNavigate === next.onTabNavigate &&
+    prev.fieldLabel === next.fieldLabel &&
+    prev.readOnly === next.readOnly &&
+    prev.forceStringSemantics === next.forceStringSemantics
 );

@@ -25,7 +25,9 @@ describe("normalizeValue", () => {
   });
 
   it("原值为字符串且有前导 0 时保持原文本", () => {
-    expect(normalizeValue("0200046921690429", "0200046921690429")).toBe("0200046921690429");
+    expect(normalizeValue("0200046921690429", "0200046921690429")).toBe(
+      "0200046921690429"
+    );
   });
 
   it("浮点数字符串 → 返回数字", () => {
@@ -57,7 +59,9 @@ describe("normalizeValue", () => {
   });
 
   it("超出 Number 安全范围的大整数 → 保留为字符串，避免精度丢失", () => {
-    expect(normalizeValue("3258946454736595494", 0)).toBe("3258946454736595494");
+    expect(normalizeValue("3258946454736595494", 0)).toBe(
+      "3258946454736595494"
+    );
     expect(normalizeValue("9007199254740992", 0)).toBe("9007199254740992");
   });
 
@@ -213,7 +217,9 @@ describe("isLongFieldValue", () => {
   });
 
   it("长度超过阈值则为长字段", () => {
-    expect(isLongFieldValue("a".repeat(LONG_TEXT_MODAL_MIN_LEN + 1))).toBe(true);
+    expect(isLongFieldValue("a".repeat(LONG_TEXT_MODAL_MIN_LEN + 1))).toBe(
+      true
+    );
   });
 });
 
@@ -331,6 +337,27 @@ describe("EditableCell", () => {
     expect(onEdit).toHaveBeenCalledTimes(1);
     expect(onEdit).toHaveBeenCalledWith(`${longVal}Z`);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("极长文本非编辑态只渲染预览，弹窗编辑仍保留完整值", () => {
+    const onEdit = vi.fn();
+    const longVal = "x".repeat(5000);
+    render(
+      React.createElement(EditableCell, {
+        value: longVal,
+        pendingValue: undefined,
+        hasPending: false,
+        onEdit,
+        fieldLabel: "body",
+      })
+    );
+
+    const cell = screen.getByTitle("双击编辑");
+    expect(cell.textContent).not.toBe(longVal);
+    expect((cell.textContent ?? "").length).toBeLessThan(longVal.length);
+
+    fireEvent.doubleClick(cell);
+    expect(screen.getByDisplayValue(longVal)).toBeInTheDocument();
   });
 
   it("极长文本弹窗点击取消不调用 onEdit", () => {
