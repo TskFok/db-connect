@@ -88,6 +88,7 @@ import { getDatabaseCapabilities } from "../../utils/databaseCapabilities";
 import { normalizeDatabaseType } from "../../utils/connectionConfig";
 
 const { Text } = Typography;
+const EMPTY_UNSIGNED_TYPES = new Set<string>();
 
 function toErrorMessage(e: unknown): string {
   if (e instanceof Error) return e.message;
@@ -293,7 +294,7 @@ export function TableStructure() {
     ? SQLSERVER_UNSIGNED_TYPES
     : showEngine
       ? UNSIGNED_TYPES
-      : new Set<string>();
+      : EMPTY_UNSIGNED_TYPES;
   const extraOptions = showEngine
     ? MYSQL_EXTRA_OPTIONS
     : isSqlServer

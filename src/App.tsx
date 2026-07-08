@@ -30,6 +30,40 @@ import {
 
 const { Content, Footer } = Layout;
 
+function ConnectedEmptyState({
+  connectionName,
+  host,
+  port,
+}: {
+  connectionName: string;
+  host: string;
+  port: number;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        flex: 1,
+        minHeight: 0,
+        color: "var(--text-secondary)",
+      }}
+    >
+      <h2 style={{ color: "var(--text-primary)", marginBottom: 8 }}>
+        已连接到 {connectionName}
+      </h2>
+      <p>
+        {host}:{port}
+      </p>
+      <p style={{ fontSize: 13, marginTop: 16 }}>
+        点击左侧数据库查看表列表，或选择一张表开始浏览
+      </p>
+    </div>
+  );
+}
+
 function AppInner() {
   const {
     activeConnection,
@@ -100,7 +134,8 @@ function AppInner() {
     if (!error) return;
     messageApi.error(error);
     if (isConnectionLostError(error)) {
-      const { activeConnId, forceCleanupConnection } = useConnectionStore.getState();
+      const { activeConnId, forceCleanupConnection } =
+        useConnectionStore.getState();
       if (activeConnId) {
         void forceCleanupConnection(activeConnId);
       }
@@ -121,7 +156,11 @@ function AppInner() {
 
     const activeTab = openTabs[activeTabIndex];
     if (activeTab?.type === "sql") {
-      if (showDatabaseOverviewWhenSqlActive && selectedDatabase && !selectedTable) {
+      if (
+        showDatabaseOverviewWhenSqlActive &&
+        selectedDatabase &&
+        !selectedTable
+      ) {
         setActiveViewBreadcrumb("database-overview", {
           connection: activeConnection.config.name,
           database: selectedDatabase,
@@ -223,7 +262,14 @@ function AppInner() {
       </div>
 
       {/* 主内容区：Content 不再整体滚动，避免与 Tabs/表格内部滚动叠加导致高度与滚动条反复震荡 */}
-      <Layout style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+      <Layout
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
         <Content
           style={{
             padding: "24px",
@@ -241,85 +287,98 @@ function AppInner() {
             </div>
           ) : activeConnection ? (
             openTabs.length > 0 ? (
-              <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+              <div
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+              >
                 <TableTabsBar />
                 {(() => {
                   const activeTab = openTabs[activeTabIndex];
                   if (activeTab?.type === "sql") {
                     // 在 SQL 标签页点击数据库时展示表列表，点击 SQL 标签时恢复 SQL 编辑器
-                    if (showDatabaseOverviewWhenSqlActive && selectedDatabase && !selectedTable) {
+                    if (
+                      showDatabaseOverviewWhenSqlActive &&
+                      selectedDatabase &&
+                      !selectedTable
+                    ) {
                       return (
-                        <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                        <div
+                          style={{
+                            flex: 1,
+                            minHeight: 0,
+                            display: "flex",
+                            flexDirection: "column",
+                          }}
+                        >
                           <DatabaseOverview />
                         </div>
                       );
                     }
                     return (
-                      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                      <div
+                        style={{
+                          flex: 1,
+                          minHeight: 0,
+                          display: "flex",
+                          flexDirection: "column",
+                        }}
+                      >
                         <SqlEditor key={activeTab.id} tabId={activeTab.id} />
                       </div>
                     );
                   }
-                  if (activeTab?.type === "table" && selectedDatabase && selectedTable) {
+                  if (
+                    activeTab?.type === "table" &&
+                    selectedDatabase &&
+                    selectedTable
+                  ) {
                     return (
-                      <TableContent key={`${selectedDatabase}|${selectedTable}`} />
+                      <TableContent
+                        key={`${selectedDatabase}|${selectedTable}`}
+                      />
                     );
                   }
                   return selectedDatabase ? (
-                    <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                    <div
+                      style={{
+                        flex: 1,
+                        minHeight: 0,
+                        display: "flex",
+                        flexDirection: "column",
+                      }}
+                    >
                       <DatabaseOverview />
                     </div>
                   ) : (
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        flex: 1,
-                        minHeight: 0,
-                        color: "var(--text-secondary)",
-                      }}
-                    >
-                      <h2 style={{ color: "var(--text-primary)", marginBottom: 8 }}>
-                        已连接到 {activeConnection.config.name}
-                      </h2>
-                      <p>
-                        {activeConnection.config.host}:{activeConnection.config.port}
-                      </p>
-                      <p style={{ fontSize: 13, marginTop: 16 }}>
-                        点击左侧数据库查看表列表，或选择一张表开始浏览
-                      </p>
-                    </div>
+                    <ConnectedEmptyState
+                      connectionName={activeConnection.config.name}
+                      host={activeConnection.config.host}
+                      port={activeConnection.config.port}
+                    />
                   );
                 })()}
               </div>
             ) : selectedDatabase ? (
-              <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+              <div
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+              >
                 <DatabaseOverview />
               </div>
             ) : (
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  flex: 1,
-                  minHeight: 0,
-                  color: "var(--text-secondary)",
-                }}
-              >
-                <h2 style={{ color: "var(--text-primary)", marginBottom: 8 }}>
-                  已连接到 {activeConnection.config.name}
-                </h2>
-                <p>
-                  {activeConnection.config.host}:{activeConnection.config.port}
-                </p>
-                <p style={{ fontSize: 13, marginTop: 16 }}>
-                  点击左侧数据库查看表列表，或选择一张表开始浏览
-                </p>
-              </div>
+              <ConnectedEmptyState
+                connectionName={activeConnection.config.name}
+                host={activeConnection.config.host}
+                port={activeConnection.config.port}
+              />
             )
           ) : (
             <div
@@ -357,9 +416,7 @@ function AppInner() {
                 <span className="shortcut-key">
                   {navigator.platform.includes("Mac") ? "Cmd" : "Ctrl"}
                 </span>{" "}
-                +{" "}
-                <span className="shortcut-key">/</span>{" "}
-                查看所有快捷键
+                + <span className="shortcut-key">/</span> 查看所有快捷键
               </p>
             </div>
           )}
@@ -381,8 +438,8 @@ function AppInner() {
           <div>
             {activeConnection ? (
               <span>
-                <span style={{ color: "var(--status-connected)" }}>●</span>
-                {" "}已连接{" "}
+                <span style={{ color: "var(--status-connected)" }}>●</span>{" "}
+                已连接{" "}
                 <strong style={{ color: "var(--status-connected)" }}>
                   {activeConnection.config.host}:{activeConnection.config.port}
                 </strong>

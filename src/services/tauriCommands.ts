@@ -244,9 +244,7 @@ export async function getTableColumnSettings(): Promise<string | null> {
 /**
  * 保存表列设置
  */
-export async function saveTableColumnSettings(
-  value: string
-): Promise<void> {
+export async function saveTableColumnSettings(value: string): Promise<void> {
   return invoke<void>("save_table_column_settings", { value });
 }
 
@@ -360,7 +358,12 @@ export async function alterTableEngine(
   table: string,
   engine: string
 ): Promise<void> {
-  return invoke<void>("alter_table_engine", { connId, database, table, engine });
+  return invoke<void>("alter_table_engine", {
+    connId,
+    database,
+    table,
+    engine,
+  });
 }
 
 /**
@@ -398,9 +401,6 @@ export async function addColumn(
   return invoke<void>("add_column", { connId, database, table, request });
 }
 
-/**
- * 删除列
- */
 /**
  * 新建表
  */
@@ -464,7 +464,11 @@ export async function getTableStructure(
   database: string,
   table: string
 ): Promise<ColumnInfo[]> {
-  return invoke<ColumnInfo[]>("get_table_structure", { connId, database, table });
+  return invoke<ColumnInfo[]>("get_table_structure", {
+    connId,
+    database,
+    table,
+  });
 }
 
 /**
@@ -773,8 +777,7 @@ export async function queryTableData(
     table,
     page,
     pageSize,
-    sortFields:
-      sortFields && sortFields.length > 0 ? sortFields : null,
+    sortFields: sortFields && sortFields.length > 0 ? sortFields : null,
     whereClause: whereClause ?? null,
     selectColumns: selectColumns ?? null,
     skipCount: skipCount ?? null,

@@ -16,10 +16,7 @@ import {
   type OpenTabEntry,
   type OpenTableEntry,
 } from "./databaseStoreState";
-import {
-  applyOpenTabDerivedState,
-  syncCurrentView,
-} from "./databaseStoreView";
+import { applyOpenTabDerivedState, syncCurrentView } from "./databaseStoreView";
 
 // 状态形状与纯派生逻辑拆分到 ./databaseStoreState，便于维护并复用；此处重新导出以保持既有导入路径不变
 export { emptyConnState };
@@ -66,7 +63,14 @@ interface DatabaseState {
   activeTabIndex: number;
   /** SQL 标签页内容 */
   sqlTabContents: Record<string, string>;
-  sqlTabResults: Record<string, { result: SqlExecuteResult | null; error: string | null; executedSqlList: string[] }>;
+  sqlTabResults: Record<
+    string,
+    {
+      result: SqlExecuteResult | null;
+      error: string | null;
+      executedSqlList: string[];
+    }
+  >;
   sqlTabExecuteNonce: Record<string, number>;
   showDatabaseOverviewWhenSqlActive: boolean;
   /** 按 database|table 缓存的表信息（用于 Tab 图标等） */
@@ -77,12 +81,23 @@ interface DatabaseState {
   databaseInfoLoading: boolean;
 
   // Actions
-  loadDatabases: (connId: string, defaultDatabase?: string | null) => Promise<void>;
+  loadDatabases: (
+    connId: string,
+    defaultDatabase?: string | null
+  ) => Promise<void>;
   loadTables: (connId: string, database: string) => Promise<void>;
   selectDatabase: (connId: string, database: string) => Promise<void>;
-  selectTable: (connId: string, database: string, table: string) => Promise<void>;
+  selectTable: (
+    connId: string,
+    database: string,
+    table: string
+  ) => Promise<void>;
   /** 打开表或切换到已打开的表（不关闭之前的表） */
-  openOrSwitchToTable: (connId: string, database: string, table: string) => Promise<void>;
+  openOrSwitchToTable: (
+    connId: string,
+    database: string,
+    table: string
+  ) => Promise<void>;
   /** 切换到指定索引的表 tab */
   switchTableTab: (connId: string, index: number) => void;
   /** 关闭指定索引的表 tab */
@@ -96,7 +111,13 @@ interface DatabaseState {
   /** 更新 SQL 标签页内容 */
   setSqlTabContent: (connId: string, tabId: string, content: string) => void;
   /** 更新 SQL 标签页执行结果 */
-  setSqlTabResult: (connId: string, tabId: string, result: SqlExecuteResult | null, error: string | null, executedSqlList: string[]) => void;
+  setSqlTabResult: (
+    connId: string,
+    tabId: string,
+    result: SqlExecuteResult | null,
+    error: string | null,
+    executedSqlList: string[]
+  ) => void;
   /** 请求指定 SQL 标签页在当前连接下一次执行编辑器内容（编辑器内防抖监听） */
   requestSqlTabExecute: (connId: string, tabId: string) => void;
   loadDatabaseInfo: (connId: string, database: string) => Promise<void>;
@@ -156,11 +177,7 @@ interface DatabaseState {
     database: string,
     request: CreateTableRequest
   ) => Promise<void>;
-  dropTable: (
-    connId: string,
-    database: string,
-    table: string
-  ) => Promise<void>;
+  dropTable: (connId: string, database: string, table: string) => Promise<void>;
   truncateTable: (
     connId: string,
     database: string,
@@ -311,7 +328,11 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     await get().openOrSwitchToTable(connId, database, table);
   },
 
-  openOrSwitchToTable: async (connId: string, database: string, table: string) => {
+  openOrSwitchToTable: async (
+    connId: string,
+    database: string,
+    table: string
+  ) => {
     try {
       const { connectionStates, activeConnId } = get();
       const state = connectionStates[connId] ?? emptyConnState();
@@ -319,7 +340,8 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       const openTabs = state.openTabs ?? [];
 
       const existingIdx = openTabs.findIndex(
-        (e) => e.type === "table" && e.database === database && e.table === table
+        (e) =>
+          e.type === "table" && e.database === database && e.table === table
       );
 
       if (existingIdx >= 0) {
@@ -349,15 +371,35 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
 
       set({ structureLoading: true, structureError: null });
 
-      const tableInfo = state.tables[database]?.find((t) => t.name === table) ?? null;
+      const tableInfo =
+        state.tables[database]?.find((t) => t.name === table) ?? null;
       const structure = await api.getTableStructure(connId, database, table);
 
       const newEntry: OpenTabEntry = { type: "table", database, table };
       const newOpenTabs = [...(state.openTabs ?? []), newEntry];
       const newIdx = newOpenTabs.length - 1;
-      const newTableStructures = { ...(state.tableStructures ?? {}), [key]: structure };
-      const newTableInfos = { ...(state.tableInfos ?? {}), [key]: tableInfo ?? { name: table, table_type: "TABLE", engine: null, rows: null, data_length: null, index_length: null, comment: "" } };
-      const derivedOpenTables = newOpenTabs.filter((t): t is { type: "table"; database: string; table: string } => t.type === "table").map((t) => ({ database: t.database, table: t.table }));
+      const newTableStructures = {
+        ...(state.tableStructures ?? {}),
+        [key]: structure,
+      };
+      const newTableInfos = {
+        ...(state.tableInfos ?? {}),
+        [key]: tableInfo ?? {
+          name: table,
+          table_type: "TABLE",
+          engine: null,
+          rows: null,
+          data_length: null,
+          index_length: null,
+          comment: "",
+        },
+      };
+      const derivedOpenTables = newOpenTabs
+        .filter(
+          (t): t is { type: "table"; database: string; table: string } =>
+            t.type === "table"
+        )
+        .map((t) => ({ database: t.database, table: t.table }));
 
       const updated: ConnectionDatabaseState = {
         ...state,
@@ -392,13 +434,30 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       console.error("加载表结构失败:", msg);
       const { connectionStates, activeConnId } = get();
       const state = connectionStates[connId] ?? emptyConnState();
-      const tableInfo = state.tables[database]?.find((t) => t.name === table) ?? null;
+      const tableInfo =
+        state.tables[database]?.find((t) => t.name === table) ?? null;
       const key = `${database}|${table}`;
       const newEntry: OpenTabEntry = { type: "table", database, table };
       const newOpenTabs = [...(state.openTabs ?? []), newEntry];
       const newIdx = newOpenTabs.length - 1;
-      const newTableInfos = { ...state.tableInfos, [key]: tableInfo ?? { name: table, table_type: "TABLE", engine: null, rows: null, data_length: null, index_length: null, comment: "" } };
-      const derivedOpenTables = newOpenTabs.filter((t): t is { type: "table"; database: string; table: string } => t.type === "table").map((t) => ({ database: t.database, table: t.table }));
+      const newTableInfos = {
+        ...state.tableInfos,
+        [key]: tableInfo ?? {
+          name: table,
+          table_type: "TABLE",
+          engine: null,
+          rows: null,
+          data_length: null,
+          index_length: null,
+          comment: "",
+        },
+      };
+      const derivedOpenTables = newOpenTabs
+        .filter(
+          (t): t is { type: "table"; database: string; table: string } =>
+            t.type === "table"
+        )
+        .map((t) => ({ database: t.database, table: t.table }));
       const updated: ConnectionDatabaseState = {
         ...state,
         openTabs: newOpenTabs,
@@ -433,7 +492,10 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     const newEntry: OpenTabEntry = { type: "sql", id: tabId };
     const newOpenTabs = [...(state.openTabs ?? []), newEntry];
     const newIdx = newOpenTabs.length - 1;
-    const newSqlTabContents = { ...(state.sqlTabContents ?? {}), [tabId]: initialContent ?? "" };
+    const newSqlTabContents = {
+      ...(state.sqlTabContents ?? {}),
+      [tabId]: initialContent ?? "",
+    };
     const updated: ConnectionDatabaseState = {
       ...state,
       openTabs: newOpenTabs,
@@ -458,23 +520,47 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   setSqlTabContent: (connId: string, tabId: string, content: string) => {
     const { connectionStates, activeConnId } = get();
     const state = connectionStates[connId] ?? emptyConnState();
-    const newSqlTabContents = { ...(state.sqlTabContents ?? {}), [tabId]: content };
-    const updated: ConnectionDatabaseState = { ...state, sqlTabContents: newSqlTabContents };
+    const newSqlTabContents = {
+      ...(state.sqlTabContents ?? {}),
+      [tabId]: content,
+    };
+    const updated: ConnectionDatabaseState = {
+      ...state,
+      sqlTabContents: newSqlTabContents,
+    };
     const newStates = { ...connectionStates, [connId]: updated };
-    const res: Partial<DatabaseState> = { connectionStates: newStates, sqlTabContents: newSqlTabContents };
+    const res: Partial<DatabaseState> = {
+      connectionStates: newStates,
+      sqlTabContents: newSqlTabContents,
+    };
     if (activeConnId === connId) {
       Object.assign(res, syncCurrentView(updated));
     }
     set(res);
   },
 
-  setSqlTabResult: (connId: string, tabId: string, result: SqlExecuteResult | null, error: string | null, executedSqlList: string[]) => {
+  setSqlTabResult: (
+    connId: string,
+    tabId: string,
+    result: SqlExecuteResult | null,
+    error: string | null,
+    executedSqlList: string[]
+  ) => {
     const { connectionStates, activeConnId } = get();
     const state = connectionStates[connId] ?? emptyConnState();
-    const newSqlTabResults = { ...(state.sqlTabResults ?? {}), [tabId]: { result, error, executedSqlList } };
-    const updated: ConnectionDatabaseState = { ...state, sqlTabResults: newSqlTabResults };
+    const newSqlTabResults = {
+      ...(state.sqlTabResults ?? {}),
+      [tabId]: { result, error, executedSqlList },
+    };
+    const updated: ConnectionDatabaseState = {
+      ...state,
+      sqlTabResults: newSqlTabResults,
+    };
     const newStates = { ...connectionStates, [connId]: updated };
-    const res: Partial<DatabaseState> = { connectionStates: newStates, sqlTabResults: newSqlTabResults };
+    const res: Partial<DatabaseState> = {
+      connectionStates: newStates,
+      sqlTabResults: newSqlTabResults,
+    };
     if (activeConnId === connId) {
       Object.assign(res, syncCurrentView(updated));
     }
@@ -485,12 +571,19 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     const { connectionStates, activeConnId } = get();
     const state = connectionStates[connId];
     const openTabs = state?.openTabs ?? [];
-    if (!state || !tabId || !openTabs.some((t) => t.type === "sql" && t.id === tabId)) {
+    if (
+      !state ||
+      !tabId ||
+      !openTabs.some((t) => t.type === "sql" && t.id === tabId)
+    ) {
       return;
     }
     const prev = state.sqlTabExecuteNonce ?? {};
     const newSqlTabExecuteNonce = { ...prev, [tabId]: (prev[tabId] ?? 0) + 1 };
-    const updated: ConnectionDatabaseState = { ...state, sqlTabExecuteNonce: newSqlTabExecuteNonce };
+    const updated: ConnectionDatabaseState = {
+      ...state,
+      sqlTabExecuteNonce: newSqlTabExecuteNonce,
+    };
     const newStates = { ...connectionStates, [connId]: updated };
     const res: Partial<DatabaseState> = {
       connectionStates: newStates,
@@ -517,7 +610,10 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       ...state,
       activeTabIndex: index,
       // 切换到 SQL 标签时清除「展示表列表」标记，恢复显示 SQL 编辑器
-      showDatabaseOverviewWhenSqlActive: newTab?.type === "sql" ? false : state.showDatabaseOverviewWhenSqlActive,
+      showDatabaseOverviewWhenSqlActive:
+        newTab?.type === "sql"
+          ? false
+          : state.showDatabaseOverviewWhenSqlActive,
     };
     const derived = applyOpenTabDerivedState(updated);
     const newStates = { ...connectionStates, [connId]: updated };
@@ -525,7 +621,8 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       connectionStates: newStates,
       activeTabIndex: index,
       openTables: derived.openTables ?? state.openTables,
-      activeTableTabIndex: derived.activeTableTabIndex ?? state.activeTableTabIndex,
+      activeTableTabIndex:
+        derived.activeTableTabIndex ?? state.activeTableTabIndex,
       selectedDatabase: updated.selectedDatabase,
       selectedTable: updated.selectedTable,
       tableStructure: updated.tableStructure,
@@ -557,7 +654,11 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       const newTableInfos = { ...(state.tableInfos ?? {}) };
       delete newTableStructures[closedKey];
       delete newTableInfos[closedKey];
-      updated = { ...updated, tableStructures: newTableStructures, tableInfos: newTableInfos };
+      updated = {
+        ...updated,
+        tableStructures: newTableStructures,
+        tableInfos: newTableInfos,
+      };
     } else {
       const newSqlTabContents = { ...(state.sqlTabContents ?? {}) };
       const newSqlTabResults = { ...(state.sqlTabResults ?? {}) };
@@ -604,7 +705,11 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       connectionStates: newStates,
       openTabs: newOpenTabs,
       activeTabIndex: newIdx,
-      openTables: derived.openTables ?? newOpenTabs.filter((t) => t.type === "table").map((t) => ({ database: t.database, table: t.table })),
+      openTables:
+        derived.openTables ??
+        newOpenTabs
+          .filter((t) => t.type === "table")
+          .map((t) => ({ database: t.database, table: t.table })),
       activeTableTabIndex: derived.activeTableTabIndex ?? 0,
       selectedDatabase: updated.selectedDatabase,
       selectedTable: updated.selectedTable,
@@ -645,7 +750,15 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       delete newTableInfos[oldKey];
     }
     newTableStructures[newKey] = structure;
-    newTableInfos[newKey] = tableInfo ?? { name: newName, table_type: "TABLE", engine: null, rows: null, data_length: null, index_length: null, comment: "" };
+    newTableInfos[newKey] = tableInfo ?? {
+      name: newName,
+      table_type: "TABLE",
+      engine: null,
+      rows: null,
+      data_length: null,
+      index_length: null,
+      comment: "",
+    };
 
     const openTabs = state.openTabs ?? [];
     const newOpenTabs = openTabs.map((e) =>
@@ -653,7 +766,12 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         ? { type: "table" as const, database, table: newName }
         : e
     );
-    const newOpenTables = newOpenTabs.filter((t): t is { type: "table"; database: string; table: string } => t.type === "table").map((t) => ({ database: t.database, table: t.table }));
+    const newOpenTables = newOpenTabs
+      .filter(
+        (t): t is { type: "table"; database: string; table: string } =>
+          t.type === "table"
+      )
+      .map((t) => ({ database: t.database, table: t.table }));
 
     const updated: ConnectionDatabaseState = {
       ...state,
@@ -662,9 +780,12 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       openTables: newOpenTables,
       tableStructures: newTableStructures,
       tableInfos: newTableInfos,
-      selectedTable: state.selectedTable === oldName ? newName : state.selectedTable,
-      tableStructure: state.selectedTable === oldName ? structure : state.tableStructure,
-      selectedTableInfo: state.selectedTable === oldName ? tableInfo : state.selectedTableInfo,
+      selectedTable:
+        state.selectedTable === oldName ? newName : state.selectedTable,
+      tableStructure:
+        state.selectedTable === oldName ? structure : state.tableStructure,
+      selectedTableInfo:
+        state.selectedTable === oldName ? tableInfo : state.selectedTableInfo,
     };
     applyOpenTabDerivedState(updated);
     const newStates = { ...connectionStates, [connId]: updated };
@@ -712,7 +833,10 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     const { connectionStates, activeConnId } = get();
     const state = connectionStates[connId] ?? emptyConnState();
     const key = `${database}|${table}`;
-    const newTableStructures = { ...(state.tableStructures ?? {}), [key]: structure };
+    const newTableStructures = {
+      ...(state.tableStructures ?? {}),
+      [key]: structure,
+    };
     const updated: ConnectionDatabaseState = {
       ...state,
       tableStructures: newTableStructures,
@@ -738,7 +862,10 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     const { connectionStates, activeConnId } = get();
     const state = connectionStates[connId] ?? emptyConnState();
     const key = `${database}|${table}`;
-    const newTableStructures = { ...(state.tableStructures ?? {}), [key]: structure };
+    const newTableStructures = {
+      ...(state.tableStructures ?? {}),
+      [key]: structure,
+    };
     const updated: ConnectionDatabaseState = {
       ...state,
       tableStructures: newTableStructures,
@@ -764,7 +891,10 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     const { connectionStates, activeConnId } = get();
     const state = connectionStates[connId] ?? emptyConnState();
     const key = `${database}|${table}`;
-    const newTableStructures = { ...(state.tableStructures ?? {}), [key]: structure };
+    const newTableStructures = {
+      ...(state.tableStructures ?? {}),
+      [key]: structure,
+    };
     const updated: ConnectionDatabaseState = {
       ...state,
       tableStructures: newTableStructures,
@@ -809,10 +939,17 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     const openTabs = state.openTabs ?? [];
 
     const newOpenTabs = openTabs.filter(
-      (e) => !(e.type === "table" && e.database === database && e.table === table)
+      (e) =>
+        !(e.type === "table" && e.database === database && e.table === table)
     );
-    const newOpenTables = newOpenTabs.filter((t): t is { type: "table"; database: string; table: string } => t.type === "table").map((t) => ({ database: t.database, table: t.table }));
-    const wasActive = state.selectedDatabase === database && state.selectedTable === table;
+    const newOpenTables = newOpenTabs
+      .filter(
+        (t): t is { type: "table"; database: string; table: string } =>
+          t.type === "table"
+      )
+      .map((t) => ({ database: t.database, table: t.table }));
+    const wasActive =
+      state.selectedDatabase === database && state.selectedTable === table;
     const currentIdx = state.activeTabIndex ?? 0;
     let newIdx = currentIdx;
     const droppedIdx = openTabs.findIndex(
@@ -822,7 +959,10 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       if (droppedIdx < currentIdx) {
         newIdx = currentIdx - 1;
       } else if (droppedIdx === currentIdx) {
-        newIdx = newOpenTabs.length > 0 ? Math.min(currentIdx, newOpenTabs.length - 1) : 0;
+        newIdx =
+          newOpenTabs.length > 0
+            ? Math.min(currentIdx, newOpenTabs.length - 1)
+            : 0;
       }
     }
 
@@ -839,13 +979,36 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       openTabs: newOpenTabs,
       openTables: newOpenTables,
       activeTabIndex: newIdx,
-      activeTableTabIndex: newOpenTabs.slice(0, newIdx).filter((t) => t.type === "table").length,
+      activeTableTabIndex: newOpenTabs
+        .slice(0, newIdx)
+        .filter((t) => t.type === "table").length,
       tableStructures: newTableStructures,
       tableInfos: newTableInfos,
-      selectedDatabase: nextEntry?.type === "table" ? nextEntry.database : (wasActive ? null : state.selectedDatabase),
-      selectedTable: nextEntry?.type === "table" ? nextEntry.table : (wasActive ? null : state.selectedTable),
-      tableStructure: nextEntry?.type === "table" ? (newTableStructures[`${nextEntry.database}|${nextEntry.table}`] ?? null) : (wasActive ? null : state.tableStructure),
-      selectedTableInfo: nextEntry?.type === "table" ? (newTableInfos[`${nextEntry.database}|${nextEntry.table}`] ?? null) : (wasActive ? null : state.selectedTableInfo),
+      selectedDatabase:
+        nextEntry?.type === "table"
+          ? nextEntry.database
+          : wasActive
+            ? null
+            : state.selectedDatabase,
+      selectedTable:
+        nextEntry?.type === "table"
+          ? nextEntry.table
+          : wasActive
+            ? null
+            : state.selectedTable,
+      tableStructure:
+        nextEntry?.type === "table"
+          ? (newTableStructures[`${nextEntry.database}|${nextEntry.table}`] ??
+            null)
+          : wasActive
+            ? null
+            : state.tableStructure,
+      selectedTableInfo:
+        nextEntry?.type === "table"
+          ? (newTableInfos[`${nextEntry.database}|${nextEntry.table}`] ?? null)
+          : wasActive
+            ? null
+            : state.selectedTableInfo,
     };
 
     const newStates = { ...connectionStates, [connId]: updated };
@@ -895,7 +1058,10 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     const state = connectionStates[connId] ?? emptyConnState();
     const { selectedDatabase, selectedTable } = state;
     const openTabs = state.openTabs ?? [];
-    const tableEntries = openTabs.filter((t): t is { type: "table"; database: string; table: string } => t.type === "table");
+    const tableEntries = openTabs.filter(
+      (t): t is { type: "table"; database: string; table: string } =>
+        t.type === "table"
+    );
 
     set({ treeLoading: true });
     try {
@@ -906,14 +1072,28 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       let tableStructures = { ...(state.tableStructures ?? {}) };
       let tableInfos = { ...(state.tableInfos ?? {}) };
 
+      const databasesToRefresh = new Set<string>();
       for (const { database } of tableEntries) {
-        if (tables[database] === undefined) continue;
-        const tableList = await api.listTables(connId, database);
-        tables = { ...tables, [database]: tableList };
+        if (tables[database] !== undefined) {
+          databasesToRefresh.add(database);
+        }
+      }
+      if (selectedDatabase) {
+        databasesToRefresh.add(selectedDatabase);
+      }
+
+      const refreshedTableEntries = await Promise.all(
+        Array.from(databasesToRefresh).map(async (database) => {
+          const tableList = await api.listTables(connId, database);
+          return [database, tableList] as const;
+        })
+      );
+      if (refreshedTableEntries.length > 0) {
+        tables = { ...tables, ...Object.fromEntries(refreshedTableEntries) };
       }
 
       if (selectedDatabase) {
-        const tableList = tables[selectedDatabase] ?? await api.listTables(connId, selectedDatabase);
+        const tableList = tables[selectedDatabase] ?? [];
         tables = { ...tables, [selectedDatabase]: tableList };
         if (selectedTable) {
           set({ structureLoading: true, structureError: null });
@@ -926,7 +1106,10 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
             tableList.find((t) => t.name === selectedTable) ?? null;
           const key = `${selectedDatabase}|${selectedTable}`;
           tableStructures = { ...tableStructures, [key]: tableStructure };
-          tableInfos = { ...tableInfos, [key]: selectedTableInfo ?? tableInfos[key]! };
+          tableInfos = {
+            ...tableInfos,
+            [key]: selectedTableInfo ?? tableInfos[key]!,
+          };
         }
       }
 
@@ -1016,7 +1199,10 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       (e) => !(e.type === "table" && e.database === database)
     );
     const newOpenTables = newOpenTabs
-      .filter((t): t is { type: "table"; database: string; table: string } => t.type === "table")
+      .filter(
+        (t): t is { type: "table"; database: string; table: string } =>
+          t.type === "table"
+      )
       .map((t) => ({ database: t.database, table: t.table }));
 
     const oldIdx = state.activeTabIndex ?? 0;
@@ -1053,7 +1239,9 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     const newTables = { ...state.tables };
     delete newTables[database];
 
-    const newExpandedKeys = state.expandedKeys.filter((k) => k !== `db:${database}`);
+    const newExpandedKeys = state.expandedKeys.filter(
+      (k) => k !== `db:${database}`
+    );
 
     const nextEntry = newOpenTabs[newIdx];
     const hadSelectionInDroppedDb = state.selectedDatabase === database;
@@ -1083,12 +1271,13 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         : state.selectedTable,
       tableStructure: hadSelectionInDroppedDb
         ? nextEntry?.type === "table"
-          ? newTableStructures[`${nextEntry.database}|${nextEntry.table}`] ?? null
+          ? (newTableStructures[`${nextEntry.database}|${nextEntry.table}`] ??
+            null)
           : null
         : state.tableStructure,
       selectedTableInfo: hadSelectionInDroppedDb
         ? nextEntry?.type === "table"
-          ? newTableInfos[`${nextEntry.database}|${nextEntry.table}`] ?? null
+          ? (newTableInfos[`${nextEntry.database}|${nextEntry.table}`] ?? null)
           : null
         : state.selectedTableInfo,
       databaseInfo: hadSelectionInDroppedDb ? null : state.databaseInfo,
@@ -1113,12 +1302,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     characterSet: string,
     collation: string
   ) => {
-    await api.alterDatabaseCharset(
-      connId,
-      database,
-      characterSet,
-      collation
-    );
+    await api.alterDatabaseCharset(connId, database, characterSet, collation);
   },
 
   renameDatabase: async (
@@ -1128,13 +1312,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     characterSet: string,
     collation: string
   ) => {
-    await api.renameDatabase(
-      connId,
-      oldName,
-      newName,
-      characterSet,
-      collation
-    );
+    await api.renameDatabase(connId, oldName, newName, characterSet, collation);
     const databases = await api.listDatabases(connId);
 
     const { connectionStates, activeConnId } = get();
@@ -1152,7 +1330,8 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       databases,
       tables: newTables,
       expandedKeys: newExpandedKeys,
-      selectedDatabase: state.selectedDatabase === oldName ? newName : state.selectedDatabase,
+      selectedDatabase:
+        state.selectedDatabase === oldName ? newName : state.selectedDatabase,
     };
     const newStates = { ...connectionStates, [connId]: updated };
     const res: Partial<DatabaseState> = { connectionStates: newStates };
@@ -1207,25 +1386,27 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     const state = connectionStates[connId];
     set({
       activeConnId: connId,
-      ...(state ? syncCurrentView(state) : {
-        databases: [],
-        tables: {},
-        selectedDatabase: null,
-        selectedTable: null,
-        tableStructure: null,
-        selectedTableInfo: null,
-        openTables: [],
-        activeTableTabIndex: 0,
-        openTabs: [],
-        activeTabIndex: 0,
-        sqlTabContents: {},
-        sqlTabResults: {},
-        sqlTabExecuteNonce: {},
-        showDatabaseOverviewWhenSqlActive: false,
-        tableInfos: {},
-        expandedKeys: [],
-        databaseInfo: null,
-      }),
+      ...(state
+        ? syncCurrentView(state)
+        : {
+            databases: [],
+            tables: {},
+            selectedDatabase: null,
+            selectedTable: null,
+            tableStructure: null,
+            selectedTableInfo: null,
+            openTables: [],
+            activeTableTabIndex: 0,
+            openTabs: [],
+            activeTabIndex: 0,
+            sqlTabContents: {},
+            sqlTabResults: {},
+            sqlTabExecuteNonce: {},
+            showDatabaseOverviewWhenSqlActive: false,
+            tableInfos: {},
+            expandedKeys: [],
+            databaseInfo: null,
+          }),
     });
   },
 

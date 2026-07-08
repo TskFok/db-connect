@@ -133,7 +133,8 @@ describe("databaseStore", () => {
     it("可传入初始 SQL 内容", () => {
       useDatabaseStore.getState().openSqlTab("conn-1", "SELECT * FROM users");
       const state = useDatabaseStore.getState();
-      const tabId = state.openTabs[0].type === "sql" ? state.openTabs[0].id : "";
+      const tabId =
+        state.openTabs[0].type === "sql" ? state.openTabs[0].id : "";
       expect(state.sqlTabContents[tabId]).toBe("SELECT * FROM users");
     });
 
@@ -153,7 +154,9 @@ describe("databaseStore", () => {
 
     it("requestSqlTabExecute 对不存在的标签 id 不生效", () => {
       useDatabaseStore.getState().openSqlTab("conn-1", "SELECT 1");
-      useDatabaseStore.getState().requestSqlTabExecute("conn-1", "unknown-tab-id");
+      useDatabaseStore
+        .getState()
+        .requestSqlTabExecute("conn-1", "unknown-tab-id");
       const state = useDatabaseStore.getState();
       expect(Object.keys(state.sqlTabExecuteNonce ?? {})).toHaveLength(0);
     });
@@ -234,7 +237,8 @@ describe("databaseStore", () => {
           table_type: "TABLE",
           engine: "InnoDB",
           rows: 100,
-          data_length: 16384, index_length: null,
+          data_length: 16384,
+          index_length: null,
           comment: "",
         },
       ];
@@ -271,7 +275,8 @@ describe("databaseStore", () => {
           table_type: "TABLE",
           engine: "InnoDB",
           rows: 100,
-          data_length: 16384, index_length: null,
+          data_length: 16384,
+          index_length: null,
           comment: "",
         },
         {
@@ -279,7 +284,8 @@ describe("databaseStore", () => {
           table_type: "VIEW",
           engine: null,
           rows: null,
-          data_length: null, index_length: null,
+          data_length: null,
+          index_length: null,
           comment: "",
         },
       ];
@@ -299,7 +305,8 @@ describe("databaseStore", () => {
       useDatabaseStore.setState({
         activeConnId: "conn-1",
         connectionStates: {
-          "conn-1": { ...emptyConnState(),
+          "conn-1": {
+            ...emptyConnState(),
             databases: ["db1", "db2"],
             tables: {
               db1: [
@@ -308,7 +315,8 @@ describe("databaseStore", () => {
                   table_type: "TABLE",
                   engine: "InnoDB",
                   rows: 10,
-                  data_length: 0, index_length: null,
+                  data_length: 0,
+                  index_length: null,
                   comment: "",
                 },
               ],
@@ -335,7 +343,8 @@ describe("databaseStore", () => {
               table_type: "TABLE",
               engine: "InnoDB",
               rows: 10,
-              data_length: 0, index_length: null,
+              data_length: 0,
+              index_length: null,
               comment: "",
             },
           ],
@@ -348,7 +357,8 @@ describe("databaseStore", () => {
           table_type: "TABLE",
           engine: "InnoDB",
           rows: 20,
-          data_length: 0, index_length: null,
+          data_length: 0,
+          index_length: null,
           comment: "",
         },
       ]);
@@ -367,7 +377,8 @@ describe("databaseStore", () => {
       useDatabaseStore.getState().switchToConnection("conn-1");
       useDatabaseStore.setState({
         connectionStates: {
-          "conn-1": { ...emptyConnState(),
+          "conn-1": {
+            ...emptyConnState(),
             databases: ["myapp"],
             tables: {
               myapp: [
@@ -376,7 +387,8 @@ describe("databaseStore", () => {
                   table_type: "TABLE",
                   engine: "InnoDB",
                   rows: 100,
-                  data_length: 16384, index_length: null,
+                  data_length: 16384,
+                  index_length: null,
                   comment: "用户表",
                 },
               ],
@@ -402,7 +414,8 @@ describe("databaseStore", () => {
               table_type: "TABLE",
               engine: "InnoDB",
               rows: 100,
-              data_length: 16384, index_length: null,
+              data_length: 16384,
+              index_length: null,
               comment: "用户表",
             },
           ],
@@ -431,9 +444,7 @@ describe("databaseStore", () => {
       ];
       mockApi.getTableStructure.mockResolvedValue(mockColumns);
 
-      await useDatabaseStore
-        .getState()
-        .selectTable("conn-1", "myapp", "users");
+      await useDatabaseStore.getState().selectTable("conn-1", "myapp", "users");
 
       const state = useDatabaseStore.getState();
       expect(state.selectedDatabase).toBe("myapp");
@@ -453,7 +464,8 @@ describe("databaseStore", () => {
       useDatabaseStore.getState().switchToConnection("conn-1");
       useDatabaseStore.setState({
         connectionStates: {
-          "conn-1": { ...emptyConnState(),
+          "conn-1": {
+            ...emptyConnState(),
             databases: ["myapp"],
             tables: {
               myapp: [
@@ -462,7 +474,8 @@ describe("databaseStore", () => {
                   table_type: "TABLE",
                   engine: "InnoDB",
                   rows: 100,
-                  data_length: 16384, index_length: null,
+                  data_length: 16384,
+                  index_length: null,
                   comment: "",
                 },
               ],
@@ -481,13 +494,23 @@ describe("databaseStore", () => {
             databaseInfo: null,
           },
         },
-        tables: { myapp: [{ name: "users", table_type: "TABLE", engine: "InnoDB", rows: 100, data_length: 16384, index_length: null, comment: "" }] },
+        tables: {
+          myapp: [
+            {
+              name: "users",
+              table_type: "TABLE",
+              engine: "InnoDB",
+              rows: 100,
+              data_length: 16384,
+              index_length: null,
+              comment: "",
+            },
+          ],
+        },
       });
       mockApi.getTableStructure.mockRejectedValue("查询失败");
 
-      await useDatabaseStore
-        .getState()
-        .selectTable("conn-1", "myapp", "users");
+      await useDatabaseStore.getState().selectTable("conn-1", "myapp", "users");
 
       const state = useDatabaseStore.getState();
       expect(state.selectedDatabase).toBe("myapp");
@@ -540,12 +563,29 @@ describe("databaseStore", () => {
       useDatabaseStore.getState().switchToConnection("conn-1");
       useDatabaseStore.setState({
         connectionStates: {
-          "conn-1": { ...emptyConnState(),
+          "conn-1": {
+            ...emptyConnState(),
             databases: ["myapp"],
             tables: {
               myapp: [
-                { name: "users", table_type: "TABLE", engine: "InnoDB", rows: 10, data_length: 1024, index_length: null, comment: "" },
-                { name: "posts", table_type: "TABLE", engine: "InnoDB", rows: 5, data_length: 512, index_length: null, comment: "" },
+                {
+                  name: "users",
+                  table_type: "TABLE",
+                  engine: "InnoDB",
+                  rows: 10,
+                  data_length: 1024,
+                  index_length: null,
+                  comment: "",
+                },
+                {
+                  name: "posts",
+                  table_type: "TABLE",
+                  engine: "InnoDB",
+                  rows: 5,
+                  data_length: 512,
+                  index_length: null,
+                  comment: "",
+                },
               ],
             },
             selectedDatabase: null,
@@ -563,19 +603,42 @@ describe("databaseStore", () => {
           },
         },
       });
-      mockApi.getTableStructure.mockResolvedValue([{ name: "id", column_type: "int", nullable: false, key: "PRI", default_value: null, extra: "", comment: "" }]);
+      mockApi.getTableStructure.mockResolvedValue([
+        {
+          name: "id",
+          column_type: "int",
+          nullable: false,
+          key: "PRI",
+          default_value: null,
+          extra: "",
+          comment: "",
+        },
+      ]);
 
-      await useDatabaseStore.getState().openOrSwitchToTable("conn-1", "myapp", "users");
+      await useDatabaseStore
+        .getState()
+        .openOrSwitchToTable("conn-1", "myapp", "users");
       let state = useDatabaseStore.getState();
       expect(state.openTables).toHaveLength(1);
-      expect(state.openTables[0]).toEqual({ database: "myapp", table: "users" });
+      expect(state.openTables[0]).toEqual({
+        database: "myapp",
+        table: "users",
+      });
       expect(state.selectedTable).toBe("users");
 
-      await useDatabaseStore.getState().openOrSwitchToTable("conn-1", "myapp", "posts");
+      await useDatabaseStore
+        .getState()
+        .openOrSwitchToTable("conn-1", "myapp", "posts");
       state = useDatabaseStore.getState();
       expect(state.openTables).toHaveLength(2);
-      expect(state.openTables[0]).toEqual({ database: "myapp", table: "users" });
-      expect(state.openTables[1]).toEqual({ database: "myapp", table: "posts" });
+      expect(state.openTables[0]).toEqual({
+        database: "myapp",
+        table: "users",
+      });
+      expect(state.openTables[1]).toEqual({
+        database: "myapp",
+        table: "posts",
+      });
       expect(state.selectedTable).toBe("posts");
     });
 
@@ -583,15 +646,35 @@ describe("databaseStore", () => {
       useDatabaseStore.getState().switchToConnection("conn-1");
       useDatabaseStore.setState({
         connectionStates: {
-          "conn-1": { ...emptyConnState(),
+          "conn-1": {
+            ...emptyConnState(),
             databases: ["myapp"],
             tables: {
               myapp: [
-                { name: "users", table_type: "TABLE", engine: "InnoDB", rows: 10, data_length: 1024, index_length: null, comment: "" },
-                { name: "posts", table_type: "TABLE", engine: "InnoDB", rows: 5, data_length: 512, index_length: null, comment: "" },
+                {
+                  name: "users",
+                  table_type: "TABLE",
+                  engine: "InnoDB",
+                  rows: 10,
+                  data_length: 1024,
+                  index_length: null,
+                  comment: "",
+                },
+                {
+                  name: "posts",
+                  table_type: "TABLE",
+                  engine: "InnoDB",
+                  rows: 5,
+                  data_length: 512,
+                  index_length: null,
+                  comment: "",
+                },
               ],
             },
-            openTables: [{ database: "myapp", table: "users" }, { database: "myapp", table: "posts" }],
+            openTables: [
+              { database: "myapp", table: "users" },
+              { database: "myapp", table: "posts" },
+            ],
             openTabs: [
               { type: "table", database: "myapp", table: "users" },
               { type: "table", database: "myapp", table: "posts" },
@@ -617,9 +700,21 @@ describe("databaseStore", () => {
         ],
         activeTabIndex: 1,
       });
-      mockApi.getTableStructure.mockResolvedValue([{ name: "id", column_type: "int", nullable: false, key: "PRI", default_value: null, extra: "", comment: "" }]);
+      mockApi.getTableStructure.mockResolvedValue([
+        {
+          name: "id",
+          column_type: "int",
+          nullable: false,
+          key: "PRI",
+          default_value: null,
+          extra: "",
+          comment: "",
+        },
+      ]);
 
-      await useDatabaseStore.getState().openOrSwitchToTable("conn-1", "myapp", "users");
+      await useDatabaseStore
+        .getState()
+        .openOrSwitchToTable("conn-1", "myapp", "users");
       const state = useDatabaseStore.getState();
       expect(state.openTables).toHaveLength(2);
       expect(state.activeTableTabIndex).toBe(0);
@@ -631,10 +726,14 @@ describe("databaseStore", () => {
       useDatabaseStore.getState().switchToConnection("conn-1");
       useDatabaseStore.setState({
         connectionStates: {
-          "conn-1": { ...emptyConnState(),
+          "conn-1": {
+            ...emptyConnState(),
             databases: ["myapp"],
             tables: { myapp: [] },
-            openTables: [{ database: "myapp", table: "users" }, { database: "myapp", table: "posts" }],
+            openTables: [
+              { database: "myapp", table: "users" },
+              { database: "myapp", table: "posts" },
+            ],
             openTabs: [
               { type: "table", database: "myapp", table: "users" },
               { type: "table", database: "myapp", table: "posts" },
@@ -643,12 +742,48 @@ describe("databaseStore", () => {
             activeTableTabIndex: 0,
             sqlTabContents: {},
             tableStructures: {
-              "myapp|users": [{ name: "id", column_type: "int", nullable: false, key: "PRI", default_value: null, extra: "", comment: "" }],
-              "myapp|posts": [{ name: "id", column_type: "int", nullable: false, key: "PRI", default_value: null, extra: "", comment: "" }],
+              "myapp|users": [
+                {
+                  name: "id",
+                  column_type: "int",
+                  nullable: false,
+                  key: "PRI",
+                  default_value: null,
+                  extra: "",
+                  comment: "",
+                },
+              ],
+              "myapp|posts": [
+                {
+                  name: "id",
+                  column_type: "int",
+                  nullable: false,
+                  key: "PRI",
+                  default_value: null,
+                  extra: "",
+                  comment: "",
+                },
+              ],
             },
             tableInfos: {
-              "myapp|users": { name: "users", table_type: "TABLE", engine: "InnoDB", rows: 10, data_length: 1024, index_length: null, comment: "" },
-              "myapp|posts": { name: "posts", table_type: "TABLE", engine: "InnoDB", rows: 5, data_length: 512, index_length: null, comment: "" },
+              "myapp|users": {
+                name: "users",
+                table_type: "TABLE",
+                engine: "InnoDB",
+                rows: 10,
+                data_length: 1024,
+                index_length: null,
+                comment: "",
+              },
+              "myapp|posts": {
+                name: "posts",
+                table_type: "TABLE",
+                engine: "InnoDB",
+                rows: 5,
+                data_length: 512,
+                index_length: null,
+                comment: "",
+              },
             },
             selectedDatabase: "myapp",
             selectedTable: "users",
@@ -678,10 +813,14 @@ describe("databaseStore", () => {
       useDatabaseStore.getState().switchToConnection("conn-1");
       useDatabaseStore.setState({
         connectionStates: {
-          "conn-1": { ...emptyConnState(),
+          "conn-1": {
+            ...emptyConnState(),
             databases: ["myapp"],
             tables: { myapp: [] },
-            openTables: [{ database: "myapp", table: "users" }, { database: "myapp", table: "posts" }],
+            openTables: [
+              { database: "myapp", table: "users" },
+              { database: "myapp", table: "posts" },
+            ],
             openTabs: [
               { type: "table", database: "myapp", table: "users" },
               { type: "table", database: "myapp", table: "posts" },
@@ -694,8 +833,24 @@ describe("databaseStore", () => {
               "myapp|posts": [],
             },
             tableInfos: {
-              "myapp|users": { name: "users", table_type: "TABLE", engine: "InnoDB", rows: 10, data_length: 1024, index_length: null, comment: "" },
-              "myapp|posts": { name: "posts", table_type: "TABLE", engine: "InnoDB", rows: 5, data_length: 512, index_length: null, comment: "" },
+              "myapp|users": {
+                name: "users",
+                table_type: "TABLE",
+                engine: "InnoDB",
+                rows: 10,
+                data_length: 1024,
+                index_length: null,
+                comment: "",
+              },
+              "myapp|posts": {
+                name: "posts",
+                table_type: "TABLE",
+                engine: "InnoDB",
+                rows: 5,
+                data_length: 512,
+                index_length: null,
+                comment: "",
+              },
             },
             selectedDatabase: "myapp",
             selectedTable: "posts",
@@ -717,7 +872,10 @@ describe("databaseStore", () => {
       useDatabaseStore.getState().closeTab("conn-1", 1);
       const state = useDatabaseStore.getState();
       expect(state.openTables).toHaveLength(1);
-      expect(state.openTables[0]).toEqual({ database: "myapp", table: "users" });
+      expect(state.openTables[0]).toEqual({
+        database: "myapp",
+        table: "users",
+      });
       expect(state.activeTableTabIndex).toBe(0);
       expect(state.selectedTable).toBe("users");
     });
@@ -726,7 +884,8 @@ describe("databaseStore", () => {
       useDatabaseStore.getState().switchToConnection("conn-1");
       useDatabaseStore.setState({
         connectionStates: {
-          "conn-1": { ...emptyConnState(),
+          "conn-1": {
+            ...emptyConnState(),
             databases: ["myapp"],
             tables: { myapp: [] },
             openTables: [{ database: "myapp", table: "users" }],
@@ -748,7 +907,10 @@ describe("databaseStore", () => {
       await useDatabaseStore.getState().selectDatabase("conn-1", "myapp");
       const state = useDatabaseStore.getState();
       expect(state.openTables).toHaveLength(1);
-      expect(state.openTables[0]).toEqual({ database: "myapp", table: "users" });
+      expect(state.openTables[0]).toEqual({
+        database: "myapp",
+        table: "users",
+      });
       expect(state.selectedDatabase).toBe("myapp");
     });
   });
@@ -768,7 +930,8 @@ describe("databaseStore", () => {
       useDatabaseStore.getState().switchToConnection("conn-1");
       useDatabaseStore.setState({
         connectionStates: {
-          "conn-1": { ...emptyConnState(),
+          "conn-1": {
+            ...emptyConnState(),
             databases: ["myapp"],
             tables: {},
             selectedDatabase: "myapp",
@@ -795,7 +958,8 @@ describe("databaseStore", () => {
           table_type: "TABLE",
           engine: "InnoDB",
           rows: 200,
-          data_length: 32768, index_length: null,
+          data_length: 32768,
+          index_length: null,
           comment: "",
         },
       ]);
@@ -810,7 +974,8 @@ describe("databaseStore", () => {
       useDatabaseStore.getState().switchToConnection("conn-1");
       useDatabaseStore.setState({
         connectionStates: {
-          "conn-1": { ...emptyConnState(),
+          "conn-1": {
+            ...emptyConnState(),
             databases: ["myapp"],
             tables: {
               myapp: [
@@ -819,7 +984,8 @@ describe("databaseStore", () => {
                   table_type: "TABLE",
                   engine: "InnoDB",
                   rows: 200,
-                  data_length: 32768, index_length: null,
+                  data_length: 32768,
+                  index_length: null,
                   comment: "",
                 },
               ],
@@ -849,7 +1015,8 @@ describe("databaseStore", () => {
           table_type: "TABLE",
           engine: "InnoDB",
           rows: 200,
-          data_length: 32768, index_length: null,
+          data_length: 32768,
+          index_length: null,
           comment: "",
         },
       ]);
@@ -874,6 +1041,100 @@ describe("databaseStore", () => {
       );
       expect(useDatabaseStore.getState().tableStructure).toHaveLength(1);
     });
+
+    it("同一数据库打开多张表时刷新表列表应只请求一次", async () => {
+      useDatabaseStore.getState().switchToConnection("conn-1");
+      useDatabaseStore.setState({
+        connectionStates: {
+          "conn-1": {
+            ...emptyConnState(),
+            databases: ["myapp"],
+            tables: {
+              myapp: [
+                {
+                  name: "users",
+                  table_type: "TABLE",
+                  engine: "InnoDB",
+                  rows: 200,
+                  data_length: 32768,
+                  index_length: null,
+                  comment: "",
+                },
+                {
+                  name: "posts",
+                  table_type: "TABLE",
+                  engine: "InnoDB",
+                  rows: 50,
+                  data_length: 8192,
+                  index_length: null,
+                  comment: "",
+                },
+              ],
+            },
+            selectedDatabase: "myapp",
+            selectedTable: "users",
+            openTabs: [
+              { type: "table", database: "myapp", table: "users" },
+              { type: "table", database: "myapp", table: "posts" },
+            ],
+            activeTabIndex: 0,
+            openTables: [
+              { database: "myapp", table: "users" },
+              { database: "myapp", table: "posts" },
+            ],
+            activeTableTabIndex: 0,
+            expandedKeys: [],
+            databaseSortOrder: "asc",
+            tableSortOrder: "asc",
+            tableStructure: null,
+            selectedTableInfo: null,
+            tableStructures: {},
+            tableInfos: {},
+            databaseInfo: null,
+          },
+        },
+        selectedDatabase: "myapp",
+        selectedTable: "users",
+      });
+
+      mockApi.listDatabases.mockResolvedValue(["myapp"]);
+      mockApi.listTables.mockResolvedValue([
+        {
+          name: "users",
+          table_type: "TABLE",
+          engine: "InnoDB",
+          rows: 200,
+          data_length: 32768,
+          index_length: null,
+          comment: "",
+        },
+        {
+          name: "posts",
+          table_type: "TABLE",
+          engine: "InnoDB",
+          rows: 50,
+          data_length: 8192,
+          index_length: null,
+          comment: "",
+        },
+      ]);
+      mockApi.getTableStructure.mockResolvedValue([
+        {
+          name: "id",
+          column_type: "int",
+          nullable: false,
+          key: "PRI",
+          default_value: null,
+          extra: "auto_increment",
+          comment: "",
+        },
+      ]);
+
+      await useDatabaseStore.getState().refresh("conn-1");
+
+      expect(mockApi.listTables).toHaveBeenCalledTimes(1);
+      expect(mockApi.listTables).toHaveBeenCalledWith("conn-1", "myapp");
+    });
   });
 
   describe("selectDatabase", () => {
@@ -884,7 +1145,8 @@ describe("databaseStore", () => {
           table_type: "TABLE",
           engine: "InnoDB",
           rows: 100,
-          data_length: 16384, index_length: null,
+          data_length: 16384,
+          index_length: null,
           comment: "",
         },
       ];
@@ -903,7 +1165,8 @@ describe("databaseStore", () => {
       useDatabaseStore.getState().switchToConnection("conn-1");
       useDatabaseStore.setState({
         connectionStates: {
-          "conn-1": { ...emptyConnState(),
+          "conn-1": {
+            ...emptyConnState(),
             databases: ["myapp"],
             tables: {
               myapp: [
@@ -912,7 +1175,8 @@ describe("databaseStore", () => {
                   table_type: "TABLE",
                   engine: "InnoDB",
                   rows: 100,
-                  data_length: 16384, index_length: null,
+                  data_length: 16384,
+                  index_length: null,
                   comment: "",
                 },
               ],
@@ -938,7 +1202,8 @@ describe("databaseStore", () => {
               table_type: "TABLE",
               engine: "InnoDB",
               rows: 100,
-              data_length: 16384, index_length: null,
+              data_length: 16384,
+              index_length: null,
               comment: "",
             },
           ],
@@ -964,7 +1229,8 @@ describe("databaseStore", () => {
       useDatabaseStore.getState().switchToConnection("conn-1");
       useDatabaseStore.setState({
         connectionStates: {
-          "conn-1": { ...emptyConnState(),
+          "conn-1": {
+            ...emptyConnState(),
             databases: ["myapp"],
             tables: { myapp: [] },
             selectedDatabase: null,
@@ -988,7 +1254,9 @@ describe("databaseStore", () => {
       await useDatabaseStore.getState().selectDatabase("conn-1", "myapp");
 
       const state = useDatabaseStore.getState();
-      expect(state.expandedKeys.filter((k) => k === "db:myapp")).toHaveLength(1);
+      expect(state.expandedKeys.filter((k) => k === "db:myapp")).toHaveLength(
+        1
+      );
     });
   });
 
@@ -1050,7 +1318,12 @@ describe("databaseStore", () => {
       await expect(
         useDatabaseStore
           .getState()
-          .createDatabase("conn-1", "my_new_db", "utf8mb4", "utf8mb4_general_ci")
+          .createDatabase(
+            "conn-1",
+            "my_new_db",
+            "utf8mb4",
+            "utf8mb4_general_ci"
+          )
       ).rejects.toThrow("权限不足");
     });
   });
@@ -1064,7 +1337,8 @@ describe("databaseStore", () => {
           table_type: "TABLE",
           engine: "InnoDB",
           rows: 100,
-          data_length: 16384, index_length: null,
+          data_length: 16384,
+          index_length: null,
           comment: "",
         },
       ];
@@ -1134,7 +1408,8 @@ describe("databaseStore", () => {
       useDatabaseStore.getState().switchToConnection("conn-1");
       useDatabaseStore.setState({
         connectionStates: {
-          "conn-1": { ...emptyConnState(),
+          "conn-1": {
+            ...emptyConnState(),
             databases: ["old_db", "other_db"],
             tables: {
               old_db: [
@@ -1143,7 +1418,8 @@ describe("databaseStore", () => {
                   table_type: "TABLE",
                   engine: "InnoDB",
                   rows: 10,
-                  data_length: 0, index_length: null,
+                  data_length: 0,
+                  index_length: null,
                   comment: "",
                 },
               ],
@@ -1171,7 +1447,8 @@ describe("databaseStore", () => {
               table_type: "TABLE",
               engine: "InnoDB",
               rows: 10,
-              data_length: 0, index_length: null,
+              data_length: 0,
+              index_length: null,
               comment: "",
             },
           ],
@@ -1183,7 +1460,13 @@ describe("databaseStore", () => {
 
       await useDatabaseStore
         .getState()
-        .renameDatabase("conn-1", "old_db", "new_db", "utf8mb4", "utf8mb4_general_ci");
+        .renameDatabase(
+          "conn-1",
+          "old_db",
+          "new_db",
+          "utf8mb4",
+          "utf8mb4_general_ci"
+        );
 
       expect(mockApi.renameDatabase).toHaveBeenCalledWith(
         "conn-1",
@@ -1208,7 +1491,13 @@ describe("databaseStore", () => {
       await expect(
         useDatabaseStore
           .getState()
-          .renameDatabase("conn-1", "old_db", "new_db", "utf8mb4", "utf8mb4_general_ci")
+          .renameDatabase(
+            "conn-1",
+            "old_db",
+            "new_db",
+            "utf8mb4",
+            "utf8mb4_general_ci"
+          )
       ).rejects.toThrow("迁移失败");
     });
   });
@@ -1218,7 +1507,8 @@ describe("databaseStore", () => {
       useDatabaseStore.getState().switchToConnection("conn-1");
       useDatabaseStore.setState({
         connectionStates: {
-          "conn-1": { ...emptyConnState(),
+          "conn-1": {
+            ...emptyConnState(),
             databases: ["myapp"],
             tables: {
               myapp: [
@@ -1227,7 +1517,8 @@ describe("databaseStore", () => {
                   table_type: "TABLE",
                   engine: "InnoDB",
                   rows: 100,
-                  data_length: 16384, index_length: null,
+                  data_length: 16384,
+                  index_length: null,
                   comment: "",
                 },
               ],
@@ -1240,7 +1531,9 @@ describe("databaseStore", () => {
             tableStructure: null,
             selectedTableInfo: null,
             openTables: [],
-            openTabs: [{ type: "table", database: "myapp", table: "old_table" }],
+            openTabs: [
+              { type: "table", database: "myapp", table: "old_table" },
+            ],
             activeTabIndex: 0,
             activeTableTabIndex: 0,
             sqlTabContents: {},
@@ -1258,7 +1551,8 @@ describe("databaseStore", () => {
               table_type: "TABLE",
               engine: "InnoDB",
               rows: 100,
-              data_length: 16384, index_length: null,
+              data_length: 16384,
+              index_length: null,
               comment: "",
             },
           ],
@@ -1272,7 +1566,8 @@ describe("databaseStore", () => {
           table_type: "TABLE",
           engine: "InnoDB",
           rows: 100,
-          data_length: 16384, index_length: null,
+          data_length: 16384,
+          index_length: null,
           comment: "",
         },
       ]);
@@ -1321,7 +1616,8 @@ describe("databaseStore", () => {
       useDatabaseStore.getState().switchToConnection("conn-1");
       useDatabaseStore.setState({
         connectionStates: {
-          "conn-1": { ...emptyConnState(),
+          "conn-1": {
+            ...emptyConnState(),
             databases: ["myapp"],
             tables: {
               myapp: [
@@ -1330,7 +1626,8 @@ describe("databaseStore", () => {
                   table_type: "TABLE",
                   engine: "InnoDB",
                   rows: 100,
-                  data_length: 16384, index_length: null,
+                  data_length: 16384,
+                  index_length: null,
                   comment: "",
                 },
               ],
@@ -1342,7 +1639,8 @@ describe("databaseStore", () => {
               table_type: "TABLE",
               engine: "InnoDB",
               rows: 100,
-              data_length: 16384, index_length: null,
+              data_length: 16384,
+              index_length: null,
               comment: "",
             },
             openTables: [],
@@ -1363,7 +1661,8 @@ describe("databaseStore", () => {
           table_type: "TABLE",
           engine: "InnoDB",
           rows: 100,
-          data_length: 16384, index_length: null,
+          data_length: 16384,
+          index_length: null,
           comment: "",
         },
         tables: {
@@ -1373,7 +1672,8 @@ describe("databaseStore", () => {
               table_type: "TABLE",
               engine: "InnoDB",
               rows: 100,
-              data_length: 16384, index_length: null,
+              data_length: 16384,
+              index_length: null,
               comment: "",
             },
           ],
@@ -1387,7 +1687,8 @@ describe("databaseStore", () => {
           table_type: "TABLE",
           engine: "MyISAM",
           rows: 100,
-          data_length: 16384, index_length: null,
+          data_length: 16384,
+          index_length: null,
           comment: "",
         },
       ]);
@@ -1424,7 +1725,8 @@ describe("databaseStore", () => {
       useDatabaseStore.getState().switchToConnection("conn-1");
       useDatabaseStore.setState({
         connectionStates: {
-          "conn-1": { ...emptyConnState(),
+          "conn-1": {
+            ...emptyConnState(),
             databases: ["myapp"],
             tables: {},
             selectedDatabase: "myapp",
@@ -1529,7 +1831,8 @@ describe("databaseStore", () => {
       useDatabaseStore.getState().switchToConnection("conn-1");
       useDatabaseStore.setState({
         connectionStates: {
-          "conn-1": { ...emptyConnState(),
+          "conn-1": {
+            ...emptyConnState(),
             databases: ["myapp"],
             tables: {},
             selectedDatabase: "myapp",
@@ -1636,7 +1939,8 @@ describe("databaseStore", () => {
       useDatabaseStore.getState().switchToConnection("conn-1");
       useDatabaseStore.setState({
         connectionStates: {
-          "conn-1": { ...emptyConnState(),
+          "conn-1": {
+            ...emptyConnState(),
             databases: ["myapp"],
             tables: {},
             selectedDatabase: "myapp",
@@ -1673,20 +1977,19 @@ describe("databaseStore", () => {
       mockApi.addColumn.mockResolvedValue(undefined);
       mockApi.getTableStructure.mockResolvedValue(updatedStructure);
 
-      await useDatabaseStore
-        .getState()
-        .addColumn("conn-1", "myapp", "users", {
-          name: "email",
-          column_type: "varchar(255)",
-          nullable: true,
-          default_value: null,
-          extra: "",
-          comment: "邮箱",
-          after_column: "id",
-        });
+      await useDatabaseStore.getState().addColumn("conn-1", "myapp", "users", {
+        name: "email",
+        column_type: "varchar(255)",
+        nullable: true,
+        default_value: null,
+        extra: "",
+        comment: "邮箱",
+        after_column: "id",
+      });
 
       const state = useDatabaseStore.getState();
-      const cached = state.connectionStates["conn-1"]?.tableStructures?.["myapp|users"];
+      const cached =
+        state.connectionStates["conn-1"]?.tableStructures?.["myapp|users"];
       expect(cached).toBeDefined();
       expect(cached).toHaveLength(2);
       expect(cached?.[1]?.name).toBe("email");
@@ -1716,7 +2019,8 @@ describe("databaseStore", () => {
       useDatabaseStore.getState().switchToConnection("conn-1");
       useDatabaseStore.setState({
         connectionStates: {
-          "conn-1": { ...emptyConnState(),
+          "conn-1": {
+            ...emptyConnState(),
             databases: ["myapp"],
             tables: {},
             selectedDatabase: "myapp",
@@ -1823,7 +2127,8 @@ describe("databaseStore", () => {
       useDatabaseStore.getState().switchToConnection("conn-1");
       useDatabaseStore.setState({
         connectionStates: {
-          "conn-1": { ...emptyConnState(),
+          "conn-1": {
+            ...emptyConnState(),
             databases: ["myapp"],
             tables: {
               myapp: [
@@ -1832,7 +2137,8 @@ describe("databaseStore", () => {
                   table_type: "TABLE",
                   engine: "InnoDB",
                   rows: 100,
-                  data_length: 16384, index_length: null,
+                  data_length: 16384,
+                  index_length: null,
                   comment: "用户表",
                 },
                 {
@@ -1840,7 +2146,8 @@ describe("databaseStore", () => {
                   table_type: "TABLE",
                   engine: "InnoDB",
                   rows: 500,
-                  data_length: 32768, index_length: null,
+                  data_length: 32768,
+                  index_length: null,
                   comment: "日志表",
                 },
               ],
@@ -1867,7 +2174,8 @@ describe("databaseStore", () => {
               table_type: "TABLE",
               engine: "InnoDB",
               rows: 100,
-              data_length: 16384, index_length: null,
+              data_length: 16384,
+              index_length: null,
               comment: "用户表",
             },
             {
@@ -1875,7 +2183,8 @@ describe("databaseStore", () => {
               table_type: "TABLE",
               engine: "InnoDB",
               rows: 500,
-              data_length: 32768, index_length: null,
+              data_length: 32768,
+              index_length: null,
               comment: "日志表",
             },
           ],
@@ -1889,14 +2198,13 @@ describe("databaseStore", () => {
           table_type: "TABLE",
           engine: "InnoDB",
           rows: 100,
-          data_length: 16384, index_length: null,
+          data_length: 16384,
+          index_length: null,
           comment: "用户表",
         },
       ]);
 
-      await useDatabaseStore
-        .getState()
-        .dropTable("conn-1", "myapp", "logs");
+      await useDatabaseStore.getState().dropTable("conn-1", "myapp", "logs");
 
       expect(mockApi.dropTable).toHaveBeenCalledWith("conn-1", "myapp", "logs");
       expect(mockApi.listTables).toHaveBeenCalledWith("conn-1", "myapp");
@@ -1910,7 +2218,8 @@ describe("databaseStore", () => {
       useDatabaseStore.getState().switchToConnection("conn-1");
       useDatabaseStore.setState({
         connectionStates: {
-          "conn-1": { ...emptyConnState(),
+          "conn-1": {
+            ...emptyConnState(),
             databases: ["myapp"],
             tables: {
               myapp: [
@@ -1919,7 +2228,8 @@ describe("databaseStore", () => {
                   table_type: "TABLE",
                   engine: "InnoDB",
                   rows: 500,
-                  data_length: 32768, index_length: null,
+                  data_length: 32768,
+                  index_length: null,
                   comment: "日志表",
                 },
               ],
@@ -1945,7 +2255,8 @@ describe("databaseStore", () => {
               table_type: "TABLE",
               engine: "InnoDB",
               rows: 500,
-              data_length: 32768, index_length: null,
+              data_length: 32768,
+              index_length: null,
               comment: "日志表",
             },
             openTables: [],
@@ -1973,7 +2284,8 @@ describe("databaseStore", () => {
           table_type: "TABLE",
           engine: "InnoDB",
           rows: 500,
-          data_length: 32768, index_length: null,
+          data_length: 32768,
+          index_length: null,
           comment: "日志表",
         },
         tables: {
@@ -1983,7 +2295,8 @@ describe("databaseStore", () => {
               table_type: "TABLE",
               engine: "InnoDB",
               rows: 500,
-              data_length: 32768, index_length: null,
+              data_length: 32768,
+              index_length: null,
               comment: "日志表",
             },
           ],
@@ -1993,9 +2306,7 @@ describe("databaseStore", () => {
       mockApi.dropTable.mockResolvedValue(undefined);
       mockApi.listTables.mockResolvedValue([]);
 
-      await useDatabaseStore
-        .getState()
-        .dropTable("conn-1", "myapp", "logs");
+      await useDatabaseStore.getState().dropTable("conn-1", "myapp", "logs");
 
       const state = useDatabaseStore.getState();
       expect(state.selectedTable).toBeNull();
@@ -2008,7 +2319,8 @@ describe("databaseStore", () => {
       useDatabaseStore.getState().switchToConnection("conn-1");
       useDatabaseStore.setState({
         connectionStates: {
-          "conn-1": { ...emptyConnState(),
+          "conn-1": {
+            ...emptyConnState(),
             databases: ["myapp"],
             tables: {
               myapp: [
@@ -2017,7 +2329,8 @@ describe("databaseStore", () => {
                   table_type: "TABLE",
                   engine: "InnoDB",
                   rows: 100,
-                  data_length: 16384, index_length: null,
+                  data_length: 16384,
+                  index_length: null,
                   comment: "",
                 },
                 {
@@ -2025,7 +2338,8 @@ describe("databaseStore", () => {
                   table_type: "TABLE",
                   engine: "InnoDB",
                   rows: 500,
-                  data_length: 32768, index_length: null,
+                  data_length: 32768,
+                  index_length: null,
                   comment: "",
                 },
               ],
@@ -2053,7 +2367,8 @@ describe("databaseStore", () => {
               table_type: "TABLE",
               engine: "InnoDB",
               rows: 100,
-              data_length: 16384, index_length: null,
+              data_length: 16384,
+              index_length: null,
               comment: "",
             },
             {
@@ -2061,7 +2376,8 @@ describe("databaseStore", () => {
               table_type: "TABLE",
               engine: "InnoDB",
               rows: 500,
-              data_length: 32768, index_length: null,
+              data_length: 32768,
+              index_length: null,
               comment: "",
             },
           ],
@@ -2075,14 +2391,13 @@ describe("databaseStore", () => {
           table_type: "TABLE",
           engine: "InnoDB",
           rows: 100,
-          data_length: 16384, index_length: null,
+          data_length: 16384,
+          index_length: null,
           comment: "",
         },
       ]);
 
-      await useDatabaseStore
-        .getState()
-        .dropTable("conn-1", "myapp", "logs");
+      await useDatabaseStore.getState().dropTable("conn-1", "myapp", "logs");
 
       const state = useDatabaseStore.getState();
       expect(state.selectedTable).toBe("users");
@@ -2093,9 +2408,7 @@ describe("databaseStore", () => {
       mockApi.dropTable.mockRejectedValue("删除表失败: 权限不足");
 
       await expect(
-        useDatabaseStore
-          .getState()
-          .dropTable("conn-1", "myapp", "users")
+        useDatabaseStore.getState().dropTable("conn-1", "myapp", "users")
       ).rejects.toThrow("删除表失败: 权限不足");
     });
   });
@@ -2115,7 +2428,8 @@ describe("databaseStore", () => {
                   table_type: "TABLE",
                   engine: "InnoDB",
                   rows: 500,
-                  data_length: 32768, index_length: null,
+                  data_length: 32768,
+                  index_length: null,
                   comment: "",
                 },
               ],
@@ -2136,7 +2450,8 @@ describe("databaseStore", () => {
               table_type: "TABLE",
               engine: "InnoDB",
               rows: 500,
-              data_length: 32768, index_length: null,
+              data_length: 32768,
+              index_length: null,
               comment: "",
             },
           ],
@@ -2146,7 +2461,8 @@ describe("databaseStore", () => {
           table_type: "TABLE",
           engine: "InnoDB",
           rows: 500,
-          data_length: 32768, index_length: null,
+          data_length: 32768,
+          index_length: null,
           comment: "",
         },
       });
@@ -2158,7 +2474,8 @@ describe("databaseStore", () => {
           table_type: "TABLE",
           engine: "InnoDB",
           rows: 0,
-          data_length: 16384, index_length: null,
+          data_length: 16384,
+          index_length: null,
           comment: "",
         },
       ]);
@@ -2183,9 +2500,7 @@ describe("databaseStore", () => {
       mockApi.truncateTable.mockRejectedValue("清空表失败: 权限不足");
 
       await expect(
-        useDatabaseStore
-          .getState()
-          .truncateTable("conn-1", "myapp", "logs")
+        useDatabaseStore.getState().truncateTable("conn-1", "myapp", "logs")
       ).rejects.toThrow("清空表失败: 权限不足");
     });
 
@@ -2219,7 +2534,8 @@ describe("databaseStore", () => {
                   table_type: "TABLE",
                   engine: "InnoDB",
                   rows: 10,
-                  data_length: 16384, index_length: null,
+                  data_length: 16384,
+                  index_length: null,
                   comment: "",
                 },
               ],
@@ -2235,7 +2551,8 @@ describe("databaseStore", () => {
               table_type: "TABLE",
               engine: "InnoDB",
               rows: 10,
-              data_length: 16384, index_length: null,
+              data_length: 16384,
+              index_length: null,
               comment: "",
             },
           ],
@@ -2249,7 +2566,8 @@ describe("databaseStore", () => {
           table_type: "TABLE",
           engine: "InnoDB",
           rows: 0,
-          data_length: 8192, index_length: null,
+          data_length: 8192,
+          index_length: null,
           comment: "",
         },
       ]);
