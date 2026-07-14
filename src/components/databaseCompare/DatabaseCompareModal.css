@@ -1,0 +1,80 @@
+.database-compare-modal-body {
+  display: grid;
+  gap: 16px;
+  max-height: min(72vh, 760px);
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.database-compare-endpoints {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 48px minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+}
+
+.database-compare-endpoints .ant-form-item:last-child {
+  margin-bottom: 0;
+}
+
+.database-compare-swap {
+  justify-self: center;
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.database-compare-results {
+  display: grid;
+  gap: 16px;
+}
+
+.database-compare-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.database-compare-summary .ant-statistic {
+  min-width: 0;
+}
+
+.database-compare-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+}
+
+.database-compare-table-wrap,
+.database-compare-expanded-table {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+@media (max-width: 899px) {
+  .database-compare-endpoints {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .database-compare-swap {
+    transform: rotate(90deg);
+  }
+
+  .database-compare-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .database-compare-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .database-compare-toolbar .ant-segmented {
+    overflow-x: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .database-compare-swap {
+    transition: none;
+  }
+}
