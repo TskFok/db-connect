@@ -5,8 +5,8 @@ mod models;
 mod util;
 
 use commands::{
-    connection, data, database, file_io, foreign_key, github_issue, index_cmd, preferences,
-    routine_event, runtime, sql_file, trigger,
+    connection, data, database, database_compare, file_io, foreign_key, github_issue, index_cmd,
+    preferences, routine_event, runtime, sql_file, trigger,
 };
 use db::connection::ConnectionManager;
 use db::postgres::PostgresCancelHandle;
@@ -93,6 +93,8 @@ pub fn run() {
             database::rename_database,
             database::rename_table,
             database::alter_table_engine,
+            database_compare::list_compare_databases,
+            database_compare::compare_databases,
             database::get_primary_keys,
             database::column_ops::alter_column,
             database::column_ops::add_column,

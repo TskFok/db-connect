@@ -1272,6 +1272,7 @@ dependencies = [
  "tauri-plugin-clipboard-manager",
  "tauri-plugin-dialog",
  "tiberius",
+ "time",
  "tokio",
  "tokio-postgres",
  "uuid",

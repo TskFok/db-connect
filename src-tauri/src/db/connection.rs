@@ -233,7 +233,7 @@ impl ActiveDatabaseConnection {
         }
     }
 
-    fn pool_handle(&self) -> DatabasePoolHandle {
+    pub(crate) fn pool_handle(&self) -> DatabasePoolHandle {
         match self {
             ActiveDatabaseConnection::MySql(conn) => {
                 DatabasePoolHandle::MySql(conn.adapter.pool_clone())
@@ -270,7 +270,7 @@ impl ActiveDatabaseConnection {
         }
     }
 
-    async fn disconnect(self) -> Result<(), String> {
+    pub(crate) async fn disconnect(self) -> Result<(), String> {
         match self {
             ActiveDatabaseConnection::MySql(mut conn) => {
                 if let Some(tunnel) = conn.ssh_tunnel.take() {

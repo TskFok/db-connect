@@ -29,6 +29,7 @@ clickhouse_rs = { package = "clickhouse", version = "0.15", default-features = f
 native-tls = "0.2"
 futures-util = "0.3"
 tokio = { version = "1", features = ["full"] }
+time = { version = "0.3", features = ["formatting"] }
 uuid = { version = "1", features = ["v4"] }
 aes-gcm = "0.10"
 base64 = "0.21"

@@ -314,7 +314,9 @@ fn load_connection_storage_internal(app: &AppHandle) -> Result<ConnectionStorage
     parse_connection_storage_json(content).map_err(|e| format!("解析配置文件失败: {}", e))
 }
 
-fn load_saved_connections_internal(app: &AppHandle) -> Result<Vec<ConnectionConfig>, String> {
+pub(crate) fn load_saved_connections_internal(
+    app: &AppHandle,
+) -> Result<Vec<ConnectionConfig>, String> {
     Ok(load_connection_storage_internal(app)?.connections)
 }
 
