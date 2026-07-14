@@ -7,6 +7,7 @@ use crate::models::types::{
 
 pub(crate) mod mysql;
 pub(crate) mod postgres;
+pub(crate) mod sqlite;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SnapshotRow {
