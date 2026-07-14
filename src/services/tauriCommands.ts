@@ -26,6 +26,8 @@ import type {
   AddForeignKeyRequest,
   RoutineInfo,
   EventInfo,
+  DatabaseCompareEndpointRequest,
+  DatabaseCompareResult,
 } from "../types";
 
 type SessionInfoCacheEntry = {
@@ -133,6 +135,24 @@ export async function saveConnection(config: ConnectionConfig): Promise<void> {
  */
 export async function listSavedConnections(): Promise<ConnectionConfig[]> {
   return invoke<ConnectionConfig[]>("list_saved_connections");
+}
+
+/** 使用已保存连接临时加载可对比的数据库/schema */
+export async function listCompareDatabases(
+  savedConnectionId: string
+): Promise<string[]> {
+  return invoke<string[]>("list_compare_databases", { savedConnectionId });
+}
+
+/** 对比两个已保存连接的指定数据库/schema */
+export async function compareDatabases(
+  source: DatabaseCompareEndpointRequest,
+  target: DatabaseCompareEndpointRequest
+): Promise<DatabaseCompareResult> {
+  return invoke<DatabaseCompareResult>("compare_databases", {
+    source,
+    target,
+  });
 }
 
 /** 获取连接分组 */

@@ -20,6 +20,66 @@ export type DatabaseType =
   | "sqlserver"
   | "clickhouse";
 
+export type SchemaDiffStatus = "source_only" | "target_only" | "changed";
+
+export type ColumnChangedField =
+  | "ordinal_position"
+  | "column_type"
+  | "nullable"
+  | "default_value"
+  | "primary_key"
+  | "extra"
+  | "comment";
+
+export interface DatabaseCompareEndpointRequest {
+  saved_connection_id: string;
+  database: string;
+}
+
+export interface CompareEndpointInfo {
+  connection_id: string;
+  connection_name: string;
+  database: string;
+}
+
+export interface ColumnSnapshot {
+  ordinal_position: number;
+  column_type: string;
+  nullable: boolean;
+  default_value: string | null;
+  primary_key: boolean;
+  extra: string;
+  comment: string;
+}
+
+export interface ColumnDiff {
+  name: string;
+  status: SchemaDiffStatus;
+  changed_fields: ColumnChangedField[];
+  source: ColumnSnapshot | null;
+  target: ColumnSnapshot | null;
+}
+
+export interface TableDiff {
+  name: string;
+  status: SchemaDiffStatus;
+  columns: ColumnDiff[];
+}
+
+export interface DatabaseCompareResult {
+  database_type: DatabaseType;
+  source: CompareEndpointInfo;
+  target: CompareEndpointInfo;
+  compared_at: string;
+  summary: {
+    source_only_tables: number;
+    target_only_tables: number;
+    changed_tables: number;
+    different_columns: number;
+  };
+  tables: TableDiff[];
+}
+
 /** 数据库连接配置 */
 export interface ConnectionConfig {
   /** 唯一标识 (保存时自动生成) */

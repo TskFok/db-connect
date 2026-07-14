@@ -3,6 +3,11 @@ import { writeBinaryFile } from "../services/tauriCommands";
 
 export { assertCsvRowWithinLimit, CSV_EXPORT_MAX_ROWS } from "./csvExport";
 
+export interface ExcelSheetData {
+  sheet: string;
+  data: (string | number | boolean)[][];
+}
+
 /** Excel 工作表名非法字符，最长 31 */
 export function sanitizeExcelSheetName(name: string): string {
   const cleaned = name.replace(/[:\\/?*[\]]/g, "_").slice(0, 31);
@@ -32,8 +37,7 @@ function uint8ArrayToBase64(bytes: Uint8Array): string {
 }
 
 function workbookWriteBufferToBase64(buffer: ArrayBuffer | Uint8Array): string {
-  const bytes =
-    buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   return uint8ArrayToBase64(bytes);
 }
 
@@ -57,6 +61,15 @@ async function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
   });
 }
 
+/** 生成多工作表 xlsx 的 Base64 */
+export async function buildWorkbookBase64(
+  sheets: ExcelSheetData[]
+): Promise<string> {
+  const writeXlsxFile = (await import("write-excel-file/universal")).default;
+  const blob = await (await writeXlsxFile(sheets)).toBlob();
+  return workbookWriteBufferToBase64(await blobToArrayBuffer(blob));
+}
+
 /** 生成 xlsx 的 Base64（供 `writeBinaryFile` 写入） */
 export async function buildQueryResultWorkbookBase64(
   columns: string[],
@@ -67,15 +80,9 @@ export async function buildQueryResultWorkbookBase64(
     columns,
     ...rows.map((row) => row.map(cellValueForXlsx)),
   ];
-  // 动态导入：仅在导出时加载；write-excel-file 不依赖 eval，兼容 Tauri CSP
-  const writeXlsxFile = (await import("write-excel-file/universal")).default;
-  const blob = await (
-    await writeXlsxFile(sheetData, {
-      sheet: sanitizeExcelSheetName(sheetName),
-    })
-  ).toBlob();
-  const buf = await blobToArrayBuffer(blob);
-  return workbookWriteBufferToBase64(buf);
+  return buildWorkbookBase64([
+    { sheet: sanitizeExcelSheetName(sheetName), data: sheetData },
+  ]);
 }
 
 /**

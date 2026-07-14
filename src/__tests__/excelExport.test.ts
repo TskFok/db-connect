@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   buildQueryResultWorkbookBase64,
+  buildWorkbookBase64,
   cellValueForXlsx,
   sanitizeExcelSheetName,
   saveExcelWithDialog,
@@ -56,6 +57,22 @@ describe("excelExport", () => {
       "t1"
     );
     const bytes = base64ToBytes(b64);
+    expect(Array.from(bytes.slice(0, 4))).toEqual(XLSX_ZIP_MAGIC);
+  });
+
+  it("buildWorkbookBase64 生成多工作表 xlsx", async () => {
+    const b64 = await buildWorkbookBase64([
+      {
+        sheet: "摘要",
+        data: [
+          ["项目", "值"],
+          ["表数", 2],
+        ],
+      },
+      { sheet: "明细", data: [["表名"], ["users"]] },
+    ]);
+    const bytes = base64ToBytes(b64);
+
     expect(Array.from(bytes.slice(0, 4))).toEqual(XLSX_ZIP_MAGIC);
   });
 
