@@ -10,6 +10,34 @@ import {
   type ExcelSheetData,
 } from "./excelExport";
 
+const INVALID_FILENAME_CHARACTER = /[<>:"/\\|?*]/;
+// 两侧均为 4 字节 Unicode 字符时，完整文件名仍控制在 240 UTF-8 字节内。
+const MAX_ENDPOINT_FILENAME_LENGTH = 27;
+
+function sanitizeFilenamePart(value: string): string {
+  const cleaned = Array.from(value)
+    .map((character) =>
+      character.charCodeAt(0) < 32 || INVALID_FILENAME_CHARACTER.test(character)
+        ? "_"
+        : character
+    )
+    .join("")
+    .trim()
+    .replace(/\.+$/u, "");
+  return (
+    Array.from(cleaned).slice(0, MAX_ENDPOINT_FILENAME_LENGTH).join("") ||
+    "database"
+  );
+}
+
+export function buildDatabaseCompareFilename(
+  result: DatabaseCompareResult
+): string {
+  const source = sanitizeFilenamePart(result.source.database);
+  const target = sanitizeFilenamePart(result.target.database);
+  return `数据库对比-${source}-${target}.xlsx`;
+}
+
 export function buildDatabaseCompareWorkbookSheets(
   result: DatabaseCompareResult
 ): ExcelSheetData[] {
@@ -74,7 +102,7 @@ export async function saveDatabaseCompareWorkbook(
 ): Promise<boolean> {
   const workbookBase64 = await buildDatabaseCompareWorkbookBase64(result);
   return saveExcelWithDialog(
-    `数据库对比-${result.source.database}-${result.target.database}.xlsx`,
+    buildDatabaseCompareFilename(result),
     workbookBase64
   );
 }

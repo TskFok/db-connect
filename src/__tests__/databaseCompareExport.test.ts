@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DatabaseCompareResult } from "../types";
 import {
+  buildDatabaseCompareFilename,
   buildDatabaseCompareWorkbookBase64,
   buildDatabaseCompareWorkbookSheets,
 } from "../utils/databaseCompareExport";
@@ -124,5 +125,24 @@ describe("databaseCompareExport", () => {
     const bytes = base64ToBytes(base64);
 
     expect(Array.from(bytes.slice(0, 4))).toEqual(XLSX_ZIP_MAGIC);
+  });
+
+  it("净化并限制跨平台导出文件名", () => {
+    const result = sampleCompareResult();
+    result.source.database = "app/prod";
+    result.target.database = `audit:2026\\main.${"库".repeat(80)}`;
+
+    const filename = buildDatabaseCompareFilename(result);
+
+    expect(filename).not.toMatch(/[<>:"/\\|?*]/);
+    expect(filename).toMatch(/^数据库对比-app_prod-audit_2026_main/);
+    expect(Array.from(filename).length).toBeLessThanOrEqual(100);
+    expect(filename.endsWith(".xlsx")).toBe(true);
+
+    result.source.database = "😀".repeat(80);
+    result.target.database = "😀".repeat(80);
+    expect(
+      new TextEncoder().encode(buildDatabaseCompareFilename(result)).length
+    ).toBeLessThanOrEqual(240);
   });
 });

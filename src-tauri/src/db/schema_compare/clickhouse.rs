@@ -8,7 +8,8 @@ use super::{rows_to_tables, SnapshotRow, TableSnapshot};
 pub(crate) fn snapshot_sql() -> &'static str {
     "SELECT tables.name AS table_name, columns.name AS column_name, \
             columns.position AS ordinal_position, columns.type AS column_type, \
-            startsWith(columns.type, 'Nullable(') AS nullable, \
+            (startsWith(columns.type, 'Nullable(') OR \
+             startsWith(columns.type, 'LowCardinality(Nullable(')) AS nullable, \
             if(columns.default_kind = '', NULL, columns.default_expression) AS default_value, \
             columns.is_in_primary_key AS primary_key, \
             lower(columns.default_kind) AS extra, columns.comment AS comment \
@@ -72,6 +73,7 @@ mod tests {
         assert!(sql.contains("FROM system.tables AS tables"));
         assert!(sql.contains("JOIN system.columns AS columns"));
         assert!(sql.contains("tables.database = ?"));
+        assert!(sql.contains("startsWith(columns.type, 'LowCardinality(Nullable(')"));
         assert!(sql.contains("NOT IN ('View', 'MaterializedView', 'LiveView', 'WindowView')"));
     }
 }

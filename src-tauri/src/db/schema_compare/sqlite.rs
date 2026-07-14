@@ -8,7 +8,7 @@ pub(crate) fn snapshot_sql(schema: &str) -> String {
     format!(
         "SELECT objects.name AS table_name, columns.name AS column_name, \
                 columns.cid + 1 AS ordinal_position, columns.type AS column_type, \
-                CASE WHEN columns.\"notnull\" = 0 AND columns.pk = 0 THEN 1 ELSE 0 END AS nullable, \
+                CASE WHEN columns.\"notnull\" = 0 THEN 1 ELSE 0 END AS nullable, \
                 columns.dflt_value AS default_value, \
                 CASE WHEN columns.pk > 0 THEN 1 ELSE 0 END AS primary_key, \
                 CASE \
@@ -18,7 +18,7 @@ pub(crate) fn snapshot_sql(schema: &str) -> String {
                 END AS extra \
          FROM {}.sqlite_schema objects \
          JOIN pragma_table_xinfo(objects.name, {}) columns \
-         WHERE objects.type = 'table' AND objects.name NOT LIKE 'sqlite_%' \
+         WHERE objects.type = 'table' AND lower(objects.name) NOT GLOB 'sqlite_*' \
          ORDER BY objects.name, columns.cid, columns.name",
         sqlite_id(schema),
         sqlite_str(schema)
@@ -88,6 +88,7 @@ mod tests {
                    order_id INTEGER NOT NULL, item_id INTEGER NOT NULL,\
                    PRIMARY KEY (order_id, item_id)\
                  );\
+                 CREATE TABLE sqliteXnotes (id INTEGER);\
                  CREATE VIEW user_names AS SELECT name FROM users;",
             )
         })
@@ -102,7 +103,7 @@ mod tests {
                 .iter()
                 .map(|table| table.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["order_items", "users"]
+            vec!["order_items", "sqliteXnotes", "users"]
         );
         let users = tables.iter().find(|table| table.name == "users").unwrap();
         assert_eq!(users.columns[0].0, "id");
@@ -110,6 +111,42 @@ mod tests {
         assert_eq!(users.columns[0].1.extra, "auto_increment");
         assert_eq!(users.columns[1].1.default_value.as_deref(), Some("'anon'"));
         assert_eq!(users.columns[2].1.extra, "generated");
+
+        pool.close();
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn preserves_declared_nullability_for_primary_key_columns() {
+        let path =
+            std::env::temp_dir().join(format!("db-connect-nullable-pk-{}.sqlite", Uuid::new_v4()));
+        std::fs::File::create(&path).expect("create sqlite file");
+        let pool = SqliteConfig::new(path.to_str().expect("utf8 path"))
+            .create_pool(Runtime::Tokio1)
+            .expect("create pool");
+        let conn = pool.get().await.expect("get connection");
+        conn.interact(|conn| {
+            conn.execute_batch(
+                "CREATE TABLE nullable_pk (code TEXT PRIMARY KEY);\
+                 CREATE TABLE required_pk (code TEXT PRIMARY KEY NOT NULL);",
+            )
+        })
+        .await
+        .expect("interact")
+        .expect("create schema");
+        drop(conn);
+
+        let tables = load_snapshot(&pool, "main").await.expect("load snapshot");
+        let nullable_pk = tables
+            .iter()
+            .find(|table| table.name == "nullable_pk")
+            .expect("nullable_pk");
+        let required_pk = tables
+            .iter()
+            .find(|table| table.name == "required_pk")
+            .expect("required_pk");
+        assert!(nullable_pk.columns[0].1.nullable);
+        assert!(!required_pk.columns[0].1.nullable);
 
         pool.close();
         let _ = std::fs::remove_file(path);

@@ -76,6 +76,7 @@ export function DatabaseCompareModal({
   const [targetDatabases, setTargetDatabases] = useState<string[]>([]);
   const [loadingSide, setLoadingSide] = useState<LoadingSide>(null);
   const [comparing, setComparing] = useState(false);
+  const [comparePending, setComparePending] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [result, setResult] = useState<DatabaseCompareResult | null>(null);
   const [loadErrors, setLoadErrors] = useState<
@@ -88,6 +89,7 @@ export function DatabaseCompareModal({
   const sourceLoadId = useRef(0);
   const targetLoadId = useRef(0);
   const compareId = useRef(0);
+  const comparePendingRef = useRef(false);
   const exportId = useRef(0);
 
   const resetResult = useCallback(() => {
@@ -221,11 +223,14 @@ export function DatabaseCompareModal({
       !sourceConnectionId ||
       !sourceDatabase ||
       !targetConnectionId ||
-      !targetDatabase
+      !targetDatabase ||
+      comparePendingRef.current
     ) {
       return;
     }
     const requestId = ++compareId.current;
+    comparePendingRef.current = true;
+    setComparePending(true);
     setComparing(true);
     setCompareError(null);
     setResult(null);
@@ -246,6 +251,8 @@ export function DatabaseCompareModal({
         setCompareError(`数据库对比失败：${errorMessage(compareError)}`);
       }
     } finally {
+      comparePendingRef.current = false;
+      setComparePending(false);
       if (compareId.current === requestId) setComparing(false);
     }
   }, [sourceConnectionId, sourceDatabase, targetConnectionId, targetDatabase]);
@@ -275,7 +282,7 @@ export function DatabaseCompareModal({
       loadingSide !== null ||
       loadErrors.source !== null ||
       loadErrors.target !== null ||
-      comparing ||
+      comparePendingRef.current ||
       exporting
     ) {
       return;
@@ -291,7 +298,6 @@ export function DatabaseCompareModal({
     resetResult();
   }, [
     resetResult,
-    comparing,
     exporting,
     loadErrors.source,
     loadErrors.target,
@@ -368,9 +374,9 @@ export function DatabaseCompareModal({
     !targetConnectionId ||
     !targetDatabase ||
     loadingSide !== null ||
-    comparing ||
+    comparePending ||
     exporting;
-  const exportDisabled = !result || comparing || exporting;
+  const exportDisabled = !result || comparePending || exporting;
 
   return (
     <Modal
@@ -455,7 +461,7 @@ export function DatabaseCompareModal({
               loadingSide !== null ||
               loadErrors.source !== null ||
               loadErrors.target !== null ||
-              comparing ||
+              comparePending ||
               exporting
             }
             onClick={handleSwap}

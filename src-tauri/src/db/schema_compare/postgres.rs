@@ -6,13 +6,7 @@ use super::{rows_to_tables, SnapshotRow, TableSnapshot};
 
 pub(crate) fn snapshot_sql() -> &'static str {
     "SELECT cls.relname AS table_name, cols.column_name, cols.ordinal_position, \
-            CASE \
-              WHEN cols.data_type = 'USER-DEFINED' THEN cols.udt_name \
-              WHEN cols.character_maximum_length IS NOT NULL THEN cols.data_type || '(' || cols.character_maximum_length || ')' \
-              WHEN cols.numeric_precision IS NOT NULL AND cols.numeric_scale IS NOT NULL THEN cols.data_type || '(' || cols.numeric_precision || ',' || cols.numeric_scale || ')' \
-              WHEN cols.numeric_precision IS NOT NULL THEN cols.data_type || '(' || cols.numeric_precision || ')' \
-              ELSE cols.data_type \
-            END AS column_type, \
+            pg_catalog.format_type(attr.atttypid, attr.atttypmod) AS column_type, \
             cols.is_nullable = 'YES' AS nullable, cols.column_default, \
             pk.column_name IS NOT NULL AS primary_key, \
             trim(concat_ws(' ', \
@@ -35,8 +29,9 @@ pub(crate) fn snapshot_sql() -> &'static str {
        WHERE tc.constraint_type = 'PRIMARY KEY' \
      ) pk ON pk.table_schema = cols.table_schema \
          AND pk.table_name = cols.table_name AND pk.column_name = cols.column_name \
-     LEFT JOIN pg_catalog.pg_attribute attr \
+     JOIN pg_catalog.pg_attribute attr \
        ON attr.attrelid = cls.oid AND attr.attname = cols.column_name \
+      AND attr.attnum > 0 AND NOT attr.attisdropped \
      LEFT JOIN pg_catalog.pg_description description \
        ON description.classoid = 'pg_catalog.pg_class'::regclass \
       AND description.objoid = cls.oid AND description.objsubid = attr.attnum \
@@ -83,6 +78,9 @@ mod tests {
     fn postgres_snapshot_query_reads_all_physical_table_columns_once() {
         let sql = snapshot_sql();
         assert!(sql.contains("information_schema.columns"));
+        assert!(
+            sql.contains("pg_catalog.format_type(attr.atttypid, attr.atttypmod) AS column_type")
+        );
         assert!(sql.contains("cls.relkind IN ('r', 'p')"));
         assert!(sql.contains("cols.table_schema = $1"));
         assert!(sql.contains("description.classoid = 'pg_catalog.pg_class'::regclass"));

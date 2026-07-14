@@ -570,4 +570,26 @@ describe("DatabaseCompareModal", () => {
       screen.getByLabelText("源数据库/schema").parentElement?.parentElement
     ).toHaveTextContent("audit");
   });
+
+  it("端点变化后等待旧对比请求结束才允许再次开始", async () => {
+    const oldComparison = deferred<DatabaseCompareResult>();
+    vi.mocked(api.compareDatabases)
+      .mockReturnValueOnce(oldComparison.promise)
+      .mockResolvedValueOnce(sampleCompareResult());
+    render(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await configureEndpoints();
+    fireEvent.click(screen.getByRole("button", { name: "开始对比" }));
+
+    await selectAntOption("源数据库/schema", "audit");
+    const compareButton = screen.getByRole("button", { name: "开始对比" });
+    expect(compareButton).toBeDisabled();
+
+    await act(async () => {
+      oldComparison.resolve(sampleCompareResult());
+      await oldComparison.promise;
+    });
+    await waitFor(() => expect(compareButton).toBeEnabled());
+    fireEvent.click(compareButton);
+    await waitFor(() => expect(api.compareDatabases).toHaveBeenCalledTimes(2));
+  });
 });

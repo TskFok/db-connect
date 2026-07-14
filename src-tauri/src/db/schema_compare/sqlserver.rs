@@ -1,4 +1,4 @@
-use crate::db::sql_utils::sqlserver_str;
+use crate::db::sql_utils::{sqlserver_id, sqlserver_str};
 use crate::db::sqlserver::{
     build_sqlserver_column_extra, format_sqlserver_column_type, normalize_sqlserver_error,
     SqlServerPool,
@@ -23,6 +23,7 @@ pub(crate) fn snapshot_sql(schema: &str) -> String {
                 CAST(columns.max_length AS int) AS max_length, \
                 CAST(columns.precision AS int) AS precision_value, \
                 CAST(columns.scale AS int) AS scale_value, types.is_user_defined, \
+                TYPE_SCHEMA_NAME(types.schema_id) AS type_schema, \
                 columns.is_nullable, defaults.definition AS default_value, \
                 CAST(CASE WHEN primary_columns.column_id IS NULL THEN 0 ELSE 1 END AS bit) AS primary_key, \
                 columns.is_identity, computed.definition AS computed_definition, \
@@ -64,18 +65,21 @@ pub(crate) async fn load_snapshot(
         .iter()
         .map(|row| {
             let type_name = row_string(row, "type_name");
+            let type_schema = row_string(row, "type_schema");
+            let is_user_defined = row.get::<bool, _>("is_user_defined").unwrap_or(false);
             let ordinal_position = row.get::<i32, _>("ordinal_position").unwrap_or_default();
             SnapshotRow {
                 table_name: row_string(row, "table_name"),
                 column_name: row_string(row, "column_name"),
                 details: ColumnSnapshot {
                     ordinal_position: u32::try_from(ordinal_position).unwrap_or_default(),
-                    column_type: format_sqlserver_column_type(
+                    column_type: format_comparison_column_type(
                         &type_name,
+                        &type_schema,
+                        is_user_defined,
                         row.get::<i32, _>("max_length"),
                         row.get::<i32, _>("precision_value"),
                         row.get::<i32, _>("scale_value"),
-                        row.get::<bool, _>("is_user_defined").unwrap_or(false),
                     ),
                     nullable: row.get::<bool, _>("is_nullable").unwrap_or(false),
                     default_value: row.get::<&str, _>("default_value").map(str::to_string),
@@ -93,6 +97,22 @@ pub(crate) async fn load_snapshot(
     Ok(rows_to_tables(mapped))
 }
 
+fn format_comparison_column_type(
+    type_name: &str,
+    type_schema: &str,
+    is_user_defined: bool,
+    max_length: Option<i32>,
+    precision: Option<i32>,
+    scale: Option<i32>,
+) -> String {
+    let display_name = if is_user_defined && !type_schema.is_empty() {
+        format!("{}.{}", sqlserver_id(type_schema), sqlserver_id(type_name))
+    } else {
+        type_name.to_string()
+    };
+    format_sqlserver_column_type(&display_name, max_length, precision, scale, is_user_defined)
+}
+
 fn row_string(row: &Row, column: &str) -> String {
     row.get::<&str, _>(column)
         .map(str::to_string)
@@ -108,8 +128,21 @@ mod tests {
         let sql = snapshot_sql("dbo");
         assert!(sql.contains("FROM sys.tables"));
         assert!(sql.contains("JOIN sys.columns"));
+        assert!(sql.contains("TYPE_SCHEMA_NAME(types.schema_id) AS type_schema"));
         assert!(sql.contains("indexes.is_primary_key = 1"));
         assert!(sql.contains("schemas.name = N'dbo'"));
         assert!(!sql.contains("sys.views"));
+    }
+
+    #[test]
+    fn sqlserver_user_defined_types_include_their_schema() {
+        assert_eq!(
+            format_comparison_column_type("Phone", "billing", true, None, None, None),
+            "[billing].[Phone]"
+        );
+        assert_eq!(
+            format_comparison_column_type("Phone", "crm", true, None, None, None),
+            "[crm].[Phone]"
+        );
     }
 }
