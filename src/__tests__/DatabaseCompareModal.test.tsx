@@ -249,7 +249,7 @@ describe("DatabaseCompareModal", () => {
 
     await selectAntOption("源连接", "MySQL A");
     expect(await screen.findByText(/连接超时/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    fireEvent.click(screen.getByRole("button", { name: "重试源端列表" }));
 
     await waitFor(() => {
       expect(api.listCompareDatabases).toHaveBeenCalledTimes(2);
@@ -258,6 +258,58 @@ describe("DatabaseCompareModal", () => {
     expect(
       screen.getByLabelText("源数据库/schema").parentElement?.parentElement
     ).toHaveTextContent("app");
+  });
+
+  it("选择目标连接不会清除源端列表错误及重试入口", async () => {
+    let sourceAttempts = 0;
+    vi.mocked(api.listCompareDatabases).mockImplementation((connectionId) => {
+      if (connectionId === "mysql-a") {
+        sourceAttempts += 1;
+        return sourceAttempts === 1
+          ? Promise.reject("源端连接超时")
+          : Promise.resolve(["app"]);
+      }
+      return Promise.resolve(["audit"]);
+    });
+    render(<DatabaseCompareModal open onClose={vi.fn()} />);
+
+    await selectAntOption("源连接", "MySQL A");
+    expect(await screen.findByText(/源端连接超时/)).toBeInTheDocument();
+    await selectAntOption("目标连接", "MySQL B");
+    expect(screen.getByText(/源端连接超时/)).toBeInTheDocument();
+
+    const retrySource = screen.getByRole("button", {
+      name: "重试源端列表",
+    });
+    await waitFor(() => expect(retrySource).toBeEnabled());
+    fireEvent.click(retrySource);
+    await waitFor(() => expect(sourceAttempts).toBe(2));
+    await selectAntOption("源数据库/schema", "app");
+  });
+
+  it("切换源数据库不会清除目标端列表错误及重试入口", async () => {
+    let targetAttempts = 0;
+    vi.mocked(api.listCompareDatabases).mockImplementation((connectionId) => {
+      if (connectionId === "mysql-b") {
+        targetAttempts += 1;
+        return targetAttempts === 1
+          ? Promise.reject("目标端连接超时")
+          : Promise.resolve(["audit"]);
+      }
+      return Promise.resolve(["app", "audit"]);
+    });
+    render(<DatabaseCompareModal open onClose={vi.fn()} />);
+
+    await selectAntOption("源连接", "MySQL A");
+    await selectAntOption("源数据库/schema", "app");
+    await selectAntOption("目标连接", "MySQL B");
+    expect(await screen.findByText(/目标端连接超时/)).toBeInTheDocument();
+    await selectAntOption("源数据库/schema", "audit");
+    expect(screen.getByText(/目标端连接超时/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "重试目标端列表" }));
+    await waitFor(() => expect(targetAttempts).toBe(2));
+    await selectAntOption("目标数据库/schema", "audit");
   });
 
   it("目标端列表加载期间禁止交换，完成后恢复", async () => {
@@ -337,13 +389,17 @@ describe("DatabaseCompareModal", () => {
 
     const sourceOnlyRow = screen.getByText("audit_logs").closest("tr");
     const changedRow = screen.getByText("users").closest("tr");
-    expect(
-      sourceOnlyRow?.querySelector("button.ant-table-row-expand-icon")
-    ).toHaveClass("ant-table-row-expand-icon-spaced");
+    const sourceOnlyExpandButton =
+      sourceOnlyRow?.querySelector<HTMLButtonElement>(
+        'button[aria-label="Expand row"]'
+      );
     const expandButton = changedRow?.querySelector<HTMLButtonElement>(
-      "button.ant-table-row-expand-icon"
+      'button[aria-label="Expand row"]'
     );
+    expect(sourceOnlyExpandButton).toBeTruthy();
     expect(expandButton).toBeTruthy();
+    fireEvent.click(sourceOnlyExpandButton as HTMLButtonElement);
+    expect(screen.queryByText("email")).not.toBeInTheDocument();
     await act(async () => {
       fireEvent.click(expandButton as HTMLButtonElement);
     });

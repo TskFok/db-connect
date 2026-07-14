@@ -41,7 +41,6 @@ export interface DatabaseCompareModalProps {
 
 type LoadingSide = "source" | "target" | null;
 type StatusFilter = "all" | SchemaDiffStatus;
-type ErrorKind = "source_load" | "target_load" | "compare" | null;
 
 const STATUS_TAG_COLORS: Record<SchemaDiffStatus, string> = {
   source_only: "gold",
@@ -79,8 +78,10 @@ export function DatabaseCompareModal({
   const [comparing, setComparing] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [result, setResult] = useState<DatabaseCompareResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [errorKind, setErrorKind] = useState<ErrorKind>(null);
+  const [loadErrors, setLoadErrors] = useState<
+    Record<Exclude<LoadingSide, null>, string | null>
+  >({ source: null, target: null });
+  const [compareError, setCompareError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [search, setSearch] = useState("");
 
@@ -95,8 +96,7 @@ export function DatabaseCompareModal({
     setComparing(false);
     setExporting(false);
     setResult(null);
-    setError(null);
-    setErrorKind(null);
+    setCompareError(null);
     setStatusFilter("all");
     setSearch("");
   }, []);
@@ -116,8 +116,8 @@ export function DatabaseCompareModal({
     setComparing(false);
     setExporting(false);
     setResult(null);
-    setError(null);
-    setErrorKind(null);
+    setLoadErrors({ source: null, target: null });
+    setCompareError(null);
     setStatusFilter("all");
     setSearch("");
   }, []);
@@ -166,8 +166,7 @@ export function DatabaseCompareModal({
       const requestRef = side === "source" ? sourceLoadId : targetLoadId;
       const requestId = ++requestRef.current;
       setLoadingSide(side);
-      setError(null);
-      setErrorKind(null);
+      setLoadErrors((current) => ({ ...current, [side]: null }));
       try {
         const databases = await api.listCompareDatabases(connectionId);
         if (requestRef.current !== requestId) return;
@@ -177,10 +176,10 @@ export function DatabaseCompareModal({
         if (requestRef.current !== requestId) return;
         if (side === "source") setSourceDatabases([]);
         else setTargetDatabases([]);
-        setError(
-          `加载${side === "source" ? "源端" : "目标端"}数据库/schema 失败：${errorMessage(requestError)}`
-        );
-        setErrorKind(side === "source" ? "source_load" : "target_load");
+        setLoadErrors((current) => ({
+          ...current,
+          [side]: `加载${side === "source" ? "源端" : "目标端"}数据库/schema 失败：${errorMessage(requestError)}`,
+        }));
       } finally {
         if (requestRef.current === requestId) setLoadingSide(null);
       }
@@ -198,6 +197,7 @@ export function DatabaseCompareModal({
       setTargetConnectionId(undefined);
       setTargetDatabase(undefined);
       setTargetDatabases([]);
+      setLoadErrors({ source: null, target: null });
       resetResult();
       void loadDatabases("source", connectionId);
     },
@@ -227,8 +227,7 @@ export function DatabaseCompareModal({
     }
     const requestId = ++compareId.current;
     setComparing(true);
-    setError(null);
-    setErrorKind(null);
+    setCompareError(null);
     setResult(null);
     try {
       const comparison = await api.compareDatabases(
@@ -244,8 +243,7 @@ export function DatabaseCompareModal({
       if (compareId.current === requestId) setResult(comparison);
     } catch (compareError) {
       if (compareId.current === requestId) {
-        setError(`数据库对比失败：${errorMessage(compareError)}`);
-        setErrorKind("compare");
+        setCompareError(`数据库对比失败：${errorMessage(compareError)}`);
       }
     } finally {
       if (compareId.current === requestId) setComparing(false);
@@ -275,6 +273,8 @@ export function DatabaseCompareModal({
       !sourceConnectionId ||
       !targetConnectionId ||
       loadingSide !== null ||
+      loadErrors.source !== null ||
+      loadErrors.target !== null ||
       comparing ||
       exporting
     ) {
@@ -293,6 +293,8 @@ export function DatabaseCompareModal({
     resetResult,
     comparing,
     exporting,
+    loadErrors.source,
+    loadErrors.target,
     loadingSide,
     sourceConnectionId,
     sourceDatabase,
@@ -300,24 +302,6 @@ export function DatabaseCompareModal({
     targetConnectionId,
     targetDatabase,
     targetDatabases,
-  ]);
-
-  const handleRetry = useCallback(() => {
-    if (errorKind === "source_load" && sourceConnectionId) {
-      void loadDatabases("source", sourceConnectionId);
-      return;
-    }
-    if (errorKind === "target_load" && targetConnectionId) {
-      void loadDatabases("target", targetConnectionId);
-      return;
-    }
-    if (errorKind === "compare") void handleCompare();
-  }, [
-    errorKind,
-    handleCompare,
-    loadDatabases,
-    sourceConnectionId,
-    targetConnectionId,
   ]);
 
   const handleClose = useCallback(() => {
@@ -469,6 +453,8 @@ export function DatabaseCompareModal({
               !sourceConnectionId ||
               !targetConnectionId ||
               loadingSide !== null ||
+              loadErrors.source !== null ||
+              loadErrors.target !== null ||
               comparing ||
               exporting
             }
@@ -516,18 +502,48 @@ export function DatabaseCompareModal({
           </Card>
         </div>
 
-        {error && (
+        {(["source", "target"] as const).map((side) => {
+          const loadError = loadErrors[side];
+          const connectionId =
+            side === "source" ? sourceConnectionId : targetConnectionId;
+          if (!loadError || !connectionId) return null;
+          const sideLabel = side === "source" ? "源端" : "目标端";
+          return (
+            <Alert
+              key={side}
+              type="error"
+              showIcon
+              message={loadError}
+              action={
+                <Button
+                  size="small"
+                  aria-label={`重试${sideLabel}列表`}
+                  onClick={() => void loadDatabases(side, connectionId)}
+                  disabled={loadingSide !== null}
+                  loading={loadingSide === side}
+                >
+                  重试
+                </Button>
+              }
+            />
+          );
+        })}
+
+        {compareError && (
           <Alert
             type="error"
             showIcon
-            message={error}
+            message={compareError}
             action={
-              errorKind ? (
+              sourceConnectionId &&
+              sourceDatabase &&
+              targetConnectionId &&
+              targetDatabase ? (
                 <Button
                   size="small"
                   aria-label="重试"
-                  onClick={handleRetry}
-                  loading={comparing || loadingSide !== null}
+                  onClick={() => void handleCompare()}
+                  loading={comparing}
                 >
                   重试
                 </Button>
