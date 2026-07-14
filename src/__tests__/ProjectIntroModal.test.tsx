@@ -13,6 +13,8 @@ describe("ProjectIntroModal", () => {
       )
     ).toBeInTheDocument();
     expect(screen.getByText("连接管理")).toBeInTheDocument();
+    expect(screen.getByText("跨连接数据库对比")).toBeInTheDocument();
+    expect(screen.getByText(/同类型已保存连接/)).toBeInTheDocument();
     expect(screen.getByText("SQL 编辑器")).toBeInTheDocument();
   });
 

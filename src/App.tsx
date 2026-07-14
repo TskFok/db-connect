@@ -1,5 +1,6 @@
 import { useEffect, useCallback, useRef, useState } from "react";
-import { Layout, message } from "antd";
+import { DiffOutlined } from "@ant-design/icons";
+import { Button, Layout, message } from "antd";
 import { ConnectionList } from "./components/connection/ConnectionList";
 import { ConnectionForm } from "./components/connection/ConnectionForm";
 import { DatabaseTree } from "./components/database/DatabaseTree";
@@ -14,6 +15,7 @@ import { ProjectIntroTrigger } from "./components/common/ProjectIntroTrigger";
 import { ShortcutsHelpModal } from "./components/common/ShortcutsHelpModal";
 import { ThemeToggle } from "./components/common/ThemeToggle";
 import { IdleTimeoutSetting } from "./components/common/IdleTimeoutSetting";
+import { DatabaseCompareModal } from "./components/databaseCompare/DatabaseCompareModal";
 import { useIdleDisconnect } from "./hooks/useIdleDisconnect";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useGlobalErrorHandler } from "./hooks/useGlobalErrorHandler";
@@ -91,6 +93,7 @@ function AppInner() {
 
   const [messageApi, contextHolder] = message.useMessage();
   const [introVisible, setIntroVisible] = useState(false);
+  const [compareVisible, setCompareVisible] = useState(false);
 
   const handleResizeStart = useCallback(
     (e: React.MouseEvent) => {
@@ -230,6 +233,10 @@ function AppInner() {
       <ProjectIntroModal
         open={introVisible}
         onClose={() => setIntroVisible(false)}
+      />
+      <DatabaseCompareModal
+        open={compareVisible}
+        onClose={() => setCompareVisible(false)}
       />
 
       {/* 左侧边栏（可拖拽调整宽度） */}
@@ -462,6 +469,15 @@ function AppInner() {
             )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Button
+              type="text"
+              size="small"
+              icon={<DiffOutlined />}
+              aria-label="数据库对比"
+              onClick={() => setCompareVisible(true)}
+            >
+              数据库对比
+            </Button>
             <IdleTimeoutSetting />
             <ProjectIntroTrigger onOpen={() => setIntroVisible(true)} />
             <ThemeToggle />

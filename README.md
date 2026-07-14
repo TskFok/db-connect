@@ -27,6 +27,7 @@
 ### 数据库管理
 
 - **数据库 / schema / SQLite main 列表**：MySQL / ClickHouse 展示数据库，PostgreSQL / SQL Server 展示 schema，SQLite 展示 `main` 等库名；SQL Server 当前浏览的是连接配置所选 database 内的 schema 树，不是 server 级 database 管理工具；树形展示对象及表，支持虚拟滚动，支持按名称排序（A→Z / Z→A）
+- **跨连接数据库对比**：可从两个同类型的已保存连接中选择数据库 / schema，批量对比物理表及字段顺序、类型、可空、默认值、主键、extra 和注释，按表展开字段差异，并将摘要、表差异和字段差异导出为 Excel。首版不比较视图、索引、外键、触发器或表数据
 - **视图与基表**：表列表中对 **VIEW** 与 **BASE TABLE** 区分展示；打开视图后，部分仅适用于物理表的能力（如外键页签）会自动隐藏
 - **数据库 / schema 编辑**：MySQL 支持修改字符集/排序规则（utf8mb4、utf8、latin1、gbk 等）；PostgreSQL / SQL Server 支持 schema 创建、删除与重命名；ClickHouse 支持 database 创建、删除与重命名；SQLite 不展示数据库级编辑、字符集或存储引擎入口
 - **数据库 / schema 重命名**：MySQL 通过创建新库 → 迁移表 → 删除旧库实现；PostgreSQL / SQL Server 走 schema 重命名

@@ -8,7 +8,8 @@ interface ProjectIntroModalProps {
   onClose: () => void;
 }
 
-const isMac = typeof navigator !== "undefined" && navigator.platform.includes("Mac");
+const isMac =
+  typeof navigator !== "undefined" && navigator.platform.includes("Mac");
 const modKey = isMac ? "⌘" : "Ctrl";
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -37,13 +38,20 @@ export function ProjectIntroModal({ open, onClose }: ProjectIntroModalProps) {
       styles={{ body: { maxHeight: "70vh", overflow: "auto", paddingTop: 8 } }}
     >
       <Paragraph type="secondary" style={{ marginBottom: 16 }}>
-        DB Connect 是基于 Tauri 与 React 的跨平台数据库桌面客户端，支持 MySQL、PostgreSQL、SQLite、SQL Server 与 ClickHouse，在本地连接并管理您的数据库。
+        DB Connect 是基于 Tauri 与 React 的跨平台数据库桌面客户端，支持
+        MySQL、PostgreSQL、SQLite、SQL Server 与
+        ClickHouse，在本地连接并管理您的数据库。
       </Paragraph>
 
       <Section title="连接管理">
-        <ul style={{ paddingLeft: 20, margin: 0, color: "var(--text-secondary)" }}>
+        <ul
+          style={{ paddingLeft: 20, margin: 0, color: "var(--text-secondary)" }}
+        >
           <li>
-            <Text>保存与排序 MySQL / PostgreSQL / SQLite / SQL Server / ClickHouse 连接、连接测试、直连或 SSH 隧道</Text>
+            <Text>
+              保存与排序 MySQL / PostgreSQL / SQLite / SQL Server / ClickHouse
+              连接、连接测试、直连或 SSH 隧道
+            </Text>
           </li>
           <li>
             <Text>SSL/TLS、多种认证方式、空闲超时自动断开</Text>
@@ -55,12 +63,16 @@ export function ProjectIntroModal({ open, onClose }: ProjectIntroModalProps) {
       </Section>
 
       <Section title="数据库与对象">
-        <ul style={{ paddingLeft: 20, margin: 0, color: "var(--text-secondary)" }}>
+        <ul
+          style={{ paddingLeft: 20, margin: 0, color: "var(--text-secondary)" }}
+        >
           <li>
             <Text>树形浏览数据库与表，虚拟滚动、排序、按名称或注释搜索表</Text>
           </li>
           <li>
-            <Text>收藏常用表；数据库 / schema / 表的创建、编辑、删除与重命名</Text>
+            <Text>
+              收藏常用表；数据库 / schema / 表的创建、编辑、删除与重命名
+            </Text>
           </li>
           <li>
             <Text>索引、触发器、外键、函数/过程等对象的可视化管理</Text>
@@ -68,10 +80,33 @@ export function ProjectIntroModal({ open, onClose }: ProjectIntroModalProps) {
         </ul>
       </Section>
 
-      <Section title="表结构与数据">
-        <ul style={{ paddingLeft: 20, margin: 0, color: "var(--text-secondary)" }}>
+      <Section title="跨连接数据库对比">
+        <ul
+          style={{ paddingLeft: 20, margin: 0, color: "var(--text-secondary)" }}
+        >
           <li>
-            <Text>查看与修改列；MySQL / ClickHouse 表引擎管理；分页、排序、Where 条件筛选</Text>
+            <Text>
+              从两个同类型已保存连接中选择数据库 /
+              schema，对比物理表与字段结构差异
+            </Text>
+          </li>
+          <li>
+            <Text>
+              按表查看差异字段，并将摘要、表差异和字段差异导出为 Excel
+            </Text>
+          </li>
+        </ul>
+      </Section>
+
+      <Section title="表结构与数据">
+        <ul
+          style={{ paddingLeft: 20, margin: 0, color: "var(--text-secondary)" }}
+        >
+          <li>
+            <Text>
+              查看与修改列；MySQL / ClickHouse 表引擎管理；分页、排序、Where
+              条件筛选
+            </Text>
           </li>
           <li>
             <Text>表格内新增、编辑、批量删除；复制为 INSERT；导出 Excel</Text>
@@ -80,7 +115,9 @@ export function ProjectIntroModal({ open, onClose }: ProjectIntroModalProps) {
       </Section>
 
       <Section title="SQL 编辑器">
-        <ul style={{ paddingLeft: 20, margin: 0, color: "var(--text-secondary)" }}>
+        <ul
+          style={{ paddingLeft: 20, margin: 0, color: "var(--text-secondary)" }}
+        >
           <li>
             <Text>Monaco 语法高亮、库/表/列自动补全</Text>
           </li>
@@ -94,7 +131,9 @@ export function ProjectIntroModal({ open, onClose }: ProjectIntroModalProps) {
       </Section>
 
       <Section title="界面与交互">
-        <ul style={{ paddingLeft: 20, margin: 0, color: "var(--text-secondary)" }}>
+        <ul
+          style={{ paddingLeft: 20, margin: 0, color: "var(--text-secondary)" }}
+        >
           <li>
             <Text>深色 / 浅色主题切换</Text>
           </li>
