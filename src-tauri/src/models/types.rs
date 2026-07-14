@@ -37,6 +37,72 @@ pub enum DatabaseType {
     ClickHouse,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DatabaseCompareEndpointRequest {
+    pub saved_connection_id: String,
+    pub database: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompareEndpointInfo {
+    pub connection_id: String,
+    pub connection_name: String,
+    pub database: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ColumnSnapshot {
+    pub ordinal_position: u32,
+    pub column_type: String,
+    pub nullable: bool,
+    pub default_value: Option<String>,
+    pub primary_key: bool,
+    pub extra: String,
+    pub comment: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SchemaDiffStatus {
+    SourceOnly,
+    TargetOnly,
+    Changed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ColumnDiff {
+    pub name: String,
+    pub status: SchemaDiffStatus,
+    pub changed_fields: Vec<String>,
+    pub source: Option<ColumnSnapshot>,
+    pub target: Option<ColumnSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TableDiff {
+    pub name: String,
+    pub status: SchemaDiffStatus,
+    pub columns: Vec<ColumnDiff>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct DatabaseCompareSummary {
+    pub source_only_tables: usize,
+    pub target_only_tables: usize,
+    pub changed_tables: usize,
+    pub different_columns: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DatabaseCompareResult {
+    pub database_type: DatabaseType,
+    pub source: CompareEndpointInfo,
+    pub target: CompareEndpointInfo,
+    pub compared_at: String,
+    pub summary: DatabaseCompareSummary,
+    pub tables: Vec<TableDiff>,
+}
+
 /// 数据库连接配置
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ConnectionConfig {
