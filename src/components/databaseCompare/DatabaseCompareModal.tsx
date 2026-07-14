@@ -41,6 +41,7 @@ export interface DatabaseCompareModalProps {
 
 type LoadingSide = "source" | "target" | null;
 type StatusFilter = "all" | SchemaDiffStatus;
+type ErrorKind = "source_load" | "target_load" | "compare" | null;
 
 const STATUS_TAG_COLORS: Record<SchemaDiffStatus, string> = {
   source_only: "gold",
@@ -79,6 +80,7 @@ export function DatabaseCompareModal({
   const [exporting, setExporting] = useState(false);
   const [result, setResult] = useState<DatabaseCompareResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorKind, setErrorKind] = useState<ErrorKind>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [search, setSearch] = useState("");
 
@@ -94,6 +96,7 @@ export function DatabaseCompareModal({
     setExporting(false);
     setResult(null);
     setError(null);
+    setErrorKind(null);
     setStatusFilter("all");
     setSearch("");
   }, []);
@@ -114,6 +117,7 @@ export function DatabaseCompareModal({
     setExporting(false);
     setResult(null);
     setError(null);
+    setErrorKind(null);
     setStatusFilter("all");
     setSearch("");
   }, []);
@@ -162,6 +166,8 @@ export function DatabaseCompareModal({
       const requestRef = side === "source" ? sourceLoadId : targetLoadId;
       const requestId = ++requestRef.current;
       setLoadingSide(side);
+      setError(null);
+      setErrorKind(null);
       try {
         const databases = await api.listCompareDatabases(connectionId);
         if (requestRef.current !== requestId) return;
@@ -174,6 +180,7 @@ export function DatabaseCompareModal({
         setError(
           `加载${side === "source" ? "源端" : "目标端"}数据库/schema 失败：${errorMessage(requestError)}`
         );
+        setErrorKind(side === "source" ? "source_load" : "target_load");
       } finally {
         if (requestRef.current === requestId) setLoadingSide(null);
       }
@@ -221,6 +228,7 @@ export function DatabaseCompareModal({
     const requestId = ++compareId.current;
     setComparing(true);
     setError(null);
+    setErrorKind(null);
     setResult(null);
     try {
       const comparison = await api.compareDatabases(
@@ -237,6 +245,7 @@ export function DatabaseCompareModal({
     } catch (compareError) {
       if (compareId.current === requestId) {
         setError(`数据库对比失败：${errorMessage(compareError)}`);
+        setErrorKind("compare");
       }
     } finally {
       if (compareId.current === requestId) setComparing(false);
@@ -262,7 +271,15 @@ export function DatabaseCompareModal({
   }, [result]);
 
   const handleSwap = useCallback(() => {
-    if (!sourceConnectionId || !targetConnectionId) return;
+    if (
+      !sourceConnectionId ||
+      !targetConnectionId ||
+      loadingSide !== null ||
+      comparing ||
+      exporting
+    ) {
+      return;
+    }
     sourceLoadId.current += 1;
     targetLoadId.current += 1;
     setSourceConnectionId(targetConnectionId);
@@ -274,12 +291,33 @@ export function DatabaseCompareModal({
     resetResult();
   }, [
     resetResult,
+    comparing,
+    exporting,
+    loadingSide,
     sourceConnectionId,
     sourceDatabase,
     sourceDatabases,
     targetConnectionId,
     targetDatabase,
     targetDatabases,
+  ]);
+
+  const handleRetry = useCallback(() => {
+    if (errorKind === "source_load" && sourceConnectionId) {
+      void loadDatabases("source", sourceConnectionId);
+      return;
+    }
+    if (errorKind === "target_load" && targetConnectionId) {
+      void loadDatabases("target", targetConnectionId);
+      return;
+    }
+    if (errorKind === "compare") void handleCompare();
+  }, [
+    errorKind,
+    handleCompare,
+    loadDatabases,
+    sourceConnectionId,
+    targetConnectionId,
   ]);
 
   const handleClose = useCallback(() => {
@@ -346,7 +384,8 @@ export function DatabaseCompareModal({
     !targetConnectionId ||
     !targetDatabase ||
     loadingSide !== null ||
-    comparing;
+    comparing ||
+    exporting;
   const exportDisabled = !result || comparing || exporting;
 
   return (
@@ -426,7 +465,13 @@ export function DatabaseCompareModal({
             icon={<SwapOutlined />}
             aria-label="交换源端和目标端"
             title="交换源端和目标端"
-            disabled={!sourceConnectionId || !targetConnectionId}
+            disabled={
+              !sourceConnectionId ||
+              !targetConnectionId ||
+              loadingSide !== null ||
+              comparing ||
+              exporting
+            }
             onClick={handleSwap}
           />
 
@@ -438,7 +483,7 @@ export function DatabaseCompareModal({
                   value={targetConnectionId}
                   options={targetConnectionOptions}
                   onChange={handleTargetConnectionChange}
-                  disabled={!sourceConnectionId}
+                  disabled={!sourceConnectionId || loadingSide === "source"}
                   placeholder="请选择同类型连接"
                   showSearch
                   optionFilterProp="label"
@@ -477,15 +522,12 @@ export function DatabaseCompareModal({
             showIcon
             message={error}
             action={
-              sourceConnectionId &&
-              sourceDatabase &&
-              targetConnectionId &&
-              targetDatabase ? (
+              errorKind ? (
                 <Button
                   size="small"
                   aria-label="重试"
-                  onClick={() => void handleCompare()}
-                  loading={comparing}
+                  onClick={handleRetry}
+                  loading={comparing || loadingSide !== null}
                 >
                   重试
                 </Button>

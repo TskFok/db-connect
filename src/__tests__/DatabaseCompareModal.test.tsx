@@ -5,6 +5,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import { message } from "antd";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseCompareModal } from "../components/databaseCompare/DatabaseCompareModal";
 import * as api from "../services/tauriCommands";
@@ -139,6 +140,16 @@ async function configureEndpoints(): Promise<void> {
   await selectAntOption("目标数据库/schema", "audit");
 }
 
+function deferred<T>() {
+  let resolve: (value: T) => void = () => {};
+  let reject: (reason?: unknown) => void = () => {};
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
+}
+
 describe("DatabaseCompareModal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -205,6 +216,143 @@ describe("DatabaseCompareModal", () => {
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
     expect(await screen.findByText("users")).toBeInTheDocument();
     expect(api.compareDatabases).toHaveBeenCalledTimes(2);
+  });
+
+  it("源端列表加载期间阻止选择目标连接，避免列表请求并发", async () => {
+    const sourceDatabases = deferred<string[]>();
+    vi.mocked(api.listCompareDatabases).mockImplementation((connectionId) =>
+      connectionId === "mysql-a"
+        ? sourceDatabases.promise
+        : Promise.resolve(["audit"])
+    );
+    render(<DatabaseCompareModal open onClose={vi.fn()} />);
+
+    await selectAntOption("源连接", "MySQL A");
+    expect(screen.getByLabelText("目标连接")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "开始对比" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "导出 Excel" })).toBeDisabled();
+
+    await act(async () => {
+      sourceDatabases.resolve(["app"]);
+      await sourceDatabases.promise;
+    });
+    await waitFor(() => {
+      expect(screen.getByLabelText("目标连接")).toBeEnabled();
+    });
+  });
+
+  it("数据库列表加载失败后可重试并继续选择", async () => {
+    vi.mocked(api.listCompareDatabases)
+      .mockRejectedValueOnce("连接超时")
+      .mockResolvedValueOnce(["app"]);
+    render(<DatabaseCompareModal open onClose={vi.fn()} />);
+
+    await selectAntOption("源连接", "MySQL A");
+    expect(await screen.findByText(/连接超时/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+
+    await waitFor(() => {
+      expect(api.listCompareDatabases).toHaveBeenCalledTimes(2);
+    });
+    await selectAntOption("源数据库/schema", "app");
+    expect(
+      screen.getByLabelText("源数据库/schema").parentElement?.parentElement
+    ).toHaveTextContent("app");
+  });
+
+  it("目标端列表加载期间禁止交换，完成后恢复", async () => {
+    const targetDatabases = deferred<string[]>();
+    vi.mocked(api.listCompareDatabases).mockImplementation((connectionId) =>
+      connectionId === "mysql-b"
+        ? targetDatabases.promise
+        : Promise.resolve(["app"])
+    );
+    render(<DatabaseCompareModal open onClose={vi.fn()} />);
+
+    await selectAntOption("源连接", "MySQL A");
+    await selectAntOption("源数据库/schema", "app");
+    await selectAntOption("目标连接", "MySQL B");
+    expect(
+      screen.getByRole("button", { name: "交换源端和目标端" })
+    ).toBeDisabled();
+
+    await act(async () => {
+      targetDatabases.resolve(["audit"]);
+      await targetDatabases.promise;
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "交换源端和目标端" })
+      ).toBeEnabled();
+    });
+  });
+
+  it("对比和导出期间正确禁用冲突操作", async () => {
+    const comparison = deferred<DatabaseCompareResult>();
+    const exportResult = deferred<boolean>();
+    vi.mocked(api.compareDatabases).mockReturnValue(comparison.promise);
+    vi.mocked(saveDatabaseCompareWorkbook).mockReturnValue(
+      exportResult.promise
+    );
+    render(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await configureEndpoints();
+
+    const compareButton = screen.getByRole("button", { name: "开始对比" });
+    const exportButton = screen.getByRole("button", { name: "导出 Excel" });
+    expect(compareButton).toBeEnabled();
+    expect(exportButton).toBeDisabled();
+    fireEvent.click(compareButton);
+    expect(compareButton).toBeDisabled();
+    expect(exportButton).toBeDisabled();
+
+    await act(async () => {
+      comparison.resolve(sampleCompareResult());
+      await comparison.promise;
+    });
+    await waitFor(() => {
+      expect(exportButton).toBeEnabled();
+    });
+
+    fireEvent.click(exportButton);
+    expect(compareButton).toBeDisabled();
+    expect(exportButton).toBeDisabled();
+    await act(async () => {
+      exportResult.resolve(true);
+      await exportResult.promise;
+    });
+    await waitFor(() => {
+      expect(compareButton).toBeEnabled();
+      expect(exportButton).toBeEnabled();
+    });
+  });
+
+  it("仅结构变化表可展开并显示字段差异列", async () => {
+    vi.mocked(api.compareDatabases).mockResolvedValue(
+      sampleAllStatusesResult()
+    );
+    render(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await configureEndpoints();
+    fireEvent.click(screen.getByRole("button", { name: "开始对比" }));
+    expect(await screen.findByText("audit_logs")).toBeInTheDocument();
+
+    const sourceOnlyRow = screen.getByText("audit_logs").closest("tr");
+    const changedRow = screen.getByText("users").closest("tr");
+    expect(
+      sourceOnlyRow?.querySelector("button.ant-table-row-expand-icon")
+    ).toHaveClass("ant-table-row-expand-icon-spaced");
+    const expandButton = changedRow?.querySelector<HTMLButtonElement>(
+      "button.ant-table-row-expand-icon"
+    );
+    expect(expandButton).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(expandButton as HTMLButtonElement);
+    });
+
+    expect(screen.getAllByText("字段名")).not.toHaveLength(0);
+    expect(screen.getAllByText("变化属性")).not.toHaveLength(0);
+    expect(screen.getAllByText("源端值")).not.toHaveLength(0);
+    expect(screen.getAllByText("目标端值")).not.toHaveLength(0);
+    expect(screen.getByText("email")).toBeInTheDocument();
   });
 
   it("交换两端后清空旧结果并使用交换后的端点", async () => {
@@ -301,6 +449,46 @@ describe("DatabaseCompareModal", () => {
       screen.getByLabelText("源连接").parentElement?.parentElement
     ).not.toHaveTextContent("MySQL A");
     expect(screen.queryByText("users")).not.toBeInTheDocument();
+  });
+
+  it("关闭后忽略旧列表失败和旧导出成功回调", async () => {
+    const sourceDatabases = deferred<string[]>();
+    const exportResult = deferred<boolean>();
+    const successSpy = vi.spyOn(message, "success");
+    vi.mocked(api.listCompareDatabases).mockReturnValueOnce(
+      sourceDatabases.promise
+    );
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <DatabaseCompareModal open onClose={onClose} />
+    );
+
+    await selectAntOption("源连接", "MySQL A");
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    rerender(<DatabaseCompareModal open={false} onClose={onClose} />);
+    await act(async () => {
+      sourceDatabases.reject("旧请求失败");
+      await sourceDatabases.promise.catch(() => undefined);
+    });
+    rerender(<DatabaseCompareModal open onClose={onClose} />);
+    expect(screen.queryByText(/旧请求失败/)).not.toBeInTheDocument();
+
+    vi.mocked(api.compareDatabases).mockResolvedValue(sampleCompareResult());
+    vi.mocked(saveDatabaseCompareWorkbook).mockReturnValue(
+      exportResult.promise
+    );
+    await configureEndpoints();
+    fireEvent.click(screen.getByRole("button", { name: "开始对比" }));
+    expect(await screen.findByText("users")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "导出 Excel" }));
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    rerender(<DatabaseCompareModal open={false} onClose={onClose} />);
+    await act(async () => {
+      exportResult.resolve(true);
+      await exportResult.promise;
+    });
+    expect(successSpy).not.toHaveBeenCalled();
+    successSpy.mockRestore();
   });
 
   it("端点变化后忽略尚未完成的旧对比结果", async () => {
