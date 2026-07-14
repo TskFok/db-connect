@@ -38,7 +38,8 @@ pub(crate) fn snapshot_sql() -> &'static str {
      LEFT JOIN pg_catalog.pg_attribute attr \
        ON attr.attrelid = cls.oid AND attr.attname = cols.column_name \
      LEFT JOIN pg_catalog.pg_description description \
-       ON description.objoid = cls.oid AND description.objsubid = attr.attnum \
+       ON description.classoid = 'pg_catalog.pg_class'::regclass \
+      AND description.objoid = cls.oid AND description.objsubid = attr.attnum \
      WHERE cols.table_schema = $1 AND cls.relkind IN ('r', 'p') \
      ORDER BY cls.relname, cols.ordinal_position, cols.column_name"
 }
@@ -84,6 +85,7 @@ mod tests {
         assert!(sql.contains("information_schema.columns"));
         assert!(sql.contains("cls.relkind IN ('r', 'p')"));
         assert!(sql.contains("cols.table_schema = $1"));
+        assert!(sql.contains("description.classoid = 'pg_catalog.pg_class'::regclass"));
         assert!(!sql.contains("table_name = $2"));
     }
 }
