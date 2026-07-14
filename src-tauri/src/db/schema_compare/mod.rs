@@ -5,6 +5,9 @@ use crate::models::types::{
     DatabaseType, SchemaDiffStatus, TableDiff,
 };
 
+pub(crate) mod mysql;
+pub(crate) mod postgres;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SnapshotRow {
     pub table_name: String,
