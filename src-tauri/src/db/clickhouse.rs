@@ -210,7 +210,7 @@ where
     }
 }
 
-fn deserialize_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
+pub(crate) fn deserialize_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -670,7 +670,7 @@ async fn fetch_json_result(client: &Client, sql: &str, context: &str) -> Result<
         .map_err(|e| format!("{}: ClickHouse 返回了非 UTF-8 JSON: {}", context, e))
 }
 
-async fn fetch_json_each_rows<T>(query: Query, context: &str) -> Result<Vec<T>, String>
+pub(crate) async fn fetch_json_each_rows<T>(query: Query, context: &str) -> Result<Vec<T>, String>
 where
     T: DeserializeOwned,
 {

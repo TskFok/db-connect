@@ -1,13 +1,21 @@
 use std::collections::BTreeMap;
 
+use crate::db::clickhouse as clickhouse_db;
+use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
+use crate::db::postgres as postgres_db;
+use crate::db::sqlite as sqlite_db;
+use crate::db::sqlserver as sqlserver_db;
 use crate::models::types::{
     ColumnDiff, ColumnSnapshot, CompareEndpointInfo, DatabaseCompareResult, DatabaseCompareSummary,
     DatabaseType, SchemaDiffStatus, TableDiff,
 };
+use mysql_async::prelude::Queryable;
 
+pub(crate) mod clickhouse;
 pub(crate) mod mysql;
 pub(crate) mod postgres;
 pub(crate) mod sqlite;
+pub(crate) mod sqlserver;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SnapshotRow {
@@ -41,6 +49,44 @@ pub(crate) fn rows_to_tables(rows: Vec<SnapshotRow>) -> Vec<TableSnapshot> {
             TableSnapshot { name, columns }
         })
         .collect()
+}
+
+pub(crate) async fn load_schema_snapshot(
+    pool: DatabasePoolHandle,
+    database: &str,
+) -> Result<Vec<TableSnapshot>, String> {
+    match pool {
+        DatabasePoolHandle::MySql(pool) => mysql::load_snapshot(&pool, database).await,
+        DatabasePoolHandle::Postgres(handle) => {
+            postgres::load_snapshot(&handle.pool, database).await
+        }
+        DatabasePoolHandle::Sqlite(handle) => sqlite::load_snapshot(&handle.pool, database).await,
+        DatabasePoolHandle::SqlServer(handle) => {
+            sqlserver::load_snapshot(&handle.pool, database).await
+        }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            clickhouse::load_snapshot(&handle.client, database).await
+        }
+    }
+}
+
+pub(crate) async fn list_databases_for_compare(
+    pool: DatabasePoolHandle,
+) -> Result<Vec<String>, String> {
+    match pool {
+        DatabasePoolHandle::MySql(pool) => {
+            let mut conn = get_conn_with_retry(&pool).await?;
+            conn.query("SHOW DATABASES")
+                .await
+                .map_err(|e| format!("查询数据库列表失败: {}", e))
+        }
+        DatabasePoolHandle::Postgres(handle) => postgres_db::list_schemas(&handle.pool).await,
+        DatabasePoolHandle::Sqlite(handle) => sqlite_db::list_databases(&handle.pool).await,
+        DatabasePoolHandle::SqlServer(handle) => sqlserver_db::list_schemas(&handle.pool).await,
+        DatabasePoolHandle::ClickHouse(handle) => {
+            clickhouse_db::list_databases(&handle.client).await
+        }
+    }
 }
 
 fn changed_fields(source: &ColumnSnapshot, target: &ColumnSnapshot) -> Vec<String> {
