@@ -30,6 +30,11 @@ pub(crate) struct TableSnapshot {
     pub columns: Vec<(String, ColumnSnapshot)>,
 }
 
+type ComparedTableColumns = (
+    Option<Vec<(String, ColumnSnapshot)>>,
+    Option<Vec<(String, ColumnSnapshot)>>,
+);
+
 pub(crate) fn rows_to_tables(rows: Vec<SnapshotRow>) -> Vec<TableSnapshot> {
     let mut tables: BTreeMap<String, Vec<(String, ColumnSnapshot)>> = BTreeMap::new();
     for row in rows {
@@ -107,7 +112,8 @@ fn changed_fields(source: &ColumnSnapshot, target: &ColumnSnapshot) -> Vec<Strin
     ];
     checks
         .into_iter()
-        .filter_map(|(name, changed)| changed.then(|| name.to_string()))
+        .filter(|(_, changed)| *changed)
+        .map(|(name, _)| name.to_string())
         .collect()
 }
 
@@ -119,13 +125,7 @@ pub(crate) fn compare_schema_snapshots(
     source_tables: Vec<TableSnapshot>,
     target_tables: Vec<TableSnapshot>,
 ) -> DatabaseCompareResult {
-    let mut tables: BTreeMap<
-        String,
-        (
-            Option<Vec<(String, ColumnSnapshot)>>,
-            Option<Vec<(String, ColumnSnapshot)>>,
-        ),
-    > = BTreeMap::new();
+    let mut tables: BTreeMap<String, ComparedTableColumns> = BTreeMap::new();
 
     for table in source_tables {
         tables.entry(table.name).or_default().0 = Some(table.columns);
@@ -200,7 +200,7 @@ fn compare_columns(
         .filter_map(|(name, (source, target))| match (&source, &target) {
             (Some(source_details), Some(target_details)) => {
                 let changed_fields = changed_fields(source_details, target_details);
-                (!changed_fields.is_empty()).then(|| ColumnDiff {
+                (!changed_fields.is_empty()).then_some(ColumnDiff {
                     name,
                     status: SchemaDiffStatus::Changed,
                     changed_fields,
