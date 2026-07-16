@@ -24,7 +24,7 @@ pub(crate) struct SnapshotRow {
     pub details: ColumnSnapshot,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct TableSnapshot {
     pub name: String,
     pub columns: Vec<(String, ColumnSnapshot)>,
@@ -156,7 +156,7 @@ pub(crate) fn compare_schema_snapshots(
                 });
             }
             (Some(source_columns), Some(target_columns)) => {
-                let columns = compare_columns(source_columns, target_columns);
+                let columns = compare_columns(&source_columns, &target_columns);
                 if !columns.is_empty() {
                     summary.changed_tables += 1;
                     summary.different_columns += columns.len();
@@ -182,19 +182,32 @@ pub(crate) fn compare_schema_snapshots(
 }
 
 fn compare_columns(
-    source_columns: Vec<(String, ColumnSnapshot)>,
-    target_columns: Vec<(String, ColumnSnapshot)>,
+    source_columns: &[(String, ColumnSnapshot)],
+    target_columns: &[(String, ColumnSnapshot)],
 ) -> Vec<ColumnDiff> {
     let mut columns: BTreeMap<String, (Option<ColumnSnapshot>, Option<ColumnSnapshot>)> =
         BTreeMap::new();
 
     for (name, details) in source_columns {
-        columns.entry(name).or_default().0 = Some(details);
+        columns.entry(name.clone()).or_default().0 = Some(details.clone());
     }
     for (name, details) in target_columns {
-        columns.entry(name).or_default().1 = Some(details);
+        columns.entry(name.clone()).or_default().1 = Some(details.clone());
     }
 
+    build_column_differences(columns)
+}
+
+pub(crate) fn compare_table_columns(
+    source: &TableSnapshot,
+    target: &TableSnapshot,
+) -> Vec<ColumnDiff> {
+    compare_columns(&source.columns, &target.columns)
+}
+
+fn build_column_differences(
+    columns: BTreeMap<String, (Option<ColumnSnapshot>, Option<ColumnSnapshot>)>,
+) -> Vec<ColumnDiff> {
     let mut differences = columns
         .into_iter()
         .filter_map(|(name, (source, target))| match (&source, &target) {

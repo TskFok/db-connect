@@ -103,6 +103,115 @@ pub struct DatabaseCompareResult {
     pub tables: Vec<TableDiff>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DatabaseSyncRequest {
+    pub source: DatabaseCompareEndpointRequest,
+    pub target: DatabaseCompareEndpointRequest,
+    pub selected_tables: Vec<String>,
+    pub include_drops: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DatabaseSyncRisk {
+    Normal,
+    High,
+    Destructive,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DatabaseSyncOperationKind {
+    CreateTable,
+    AddColumn,
+    AlterColumn,
+    ReplacePrimaryKey,
+    DropColumn,
+    DropTable,
+    UpdateComment,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DatabaseSyncOperation {
+    pub id: String,
+    pub table_name: String,
+    pub kind: DatabaseSyncOperationKind,
+    pub summary: String,
+    pub risk: DatabaseSyncRisk,
+    pub sql: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DatabaseSyncSkippedItem {
+    pub table_name: String,
+    pub summary: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DatabaseSyncBlocker {
+    pub table_name: String,
+    pub summary: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct DatabaseSyncPlanSummary {
+    pub selected_tables: usize,
+    pub executable_operations: usize,
+    pub high_risk_operations: usize,
+    pub destructive_operations: usize,
+    pub skipped_items: usize,
+    pub blockers: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DatabaseSyncPreview {
+    pub plan_fingerprint: String,
+    pub summary: DatabaseSyncPlanSummary,
+    pub operations: Vec<DatabaseSyncOperation>,
+    pub skipped_items: Vec<DatabaseSyncSkippedItem>,
+    pub blockers: Vec<DatabaseSyncBlocker>,
+    pub can_execute: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExecuteDatabaseSyncRequest {
+    pub request: DatabaseSyncRequest,
+    pub plan_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DatabaseSyncStatementSuccess {
+    pub operation_id: String,
+    pub statement_index: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DatabaseSyncFailure {
+    pub operation_id: String,
+    pub statement_index: usize,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DatabaseSyncExecutionStatus {
+    Succeeded,
+    PartiallySucceeded,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DatabaseSyncExecutionResult {
+    pub status: DatabaseSyncExecutionStatus,
+    pub completed_statements: Vec<DatabaseSyncStatementSuccess>,
+    pub failed: Option<DatabaseSyncFailure>,
+    pub pending_operation_ids: Vec<String>,
+    pub cleanup_errors: Vec<String>,
+    pub latest_compare_result: Option<DatabaseCompareResult>,
+}
+
 /// 数据库连接配置
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ConnectionConfig {
