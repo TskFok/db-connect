@@ -198,6 +198,7 @@ fn compare_columns(
     build_column_differences(columns)
 }
 
+#[allow(dead_code, reason = "将在后续方言同步计划中复用")]
 pub(crate) fn compare_table_columns(
     source: &TableSnapshot,
     target: &TableSnapshot,

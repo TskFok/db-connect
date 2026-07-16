@@ -10,6 +10,7 @@ use crate::models::types::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[allow(dead_code, reason = "将在后续方言同步计划中使用")]
 pub(crate) enum ColumnSyncMetadata {
     MySql {
         generation_expression: String,
@@ -36,6 +37,7 @@ pub(crate) enum ColumnSyncMetadata {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[allow(dead_code, reason = "将在后续方言同步计划中使用")]
 pub(crate) enum TableSyncMetadata {
     MySql {
         engine: String,
@@ -68,12 +70,14 @@ pub(crate) enum TableSyncMetadata {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[allow(dead_code, reason = "将在后续方言快照加载中构造")]
 pub(crate) struct SyncSchemaSnapshot {
     pub tables: Vec<TableSnapshot>,
     pub metadata: BTreeMap<String, TableSyncMetadata>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[allow(dead_code, reason = "将在后续方言同步计划中使用全部阶段")]
 pub(crate) enum OperationPhase {
     CreateTable,
     AddColumn,
@@ -83,6 +87,7 @@ pub(crate) enum OperationPhase {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code, reason = "将在后续方言同步计划中构造")]
 pub(crate) struct PendingOperation {
     phase: OperationPhase,
     table_name: String,
@@ -93,12 +98,14 @@ pub(crate) struct PendingOperation {
 }
 
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code, reason = "将在后续方言同步计划中构造")]
 pub(crate) struct PlanFragments {
     pub operations: Vec<PendingOperation>,
     pub skipped_items: Vec<DatabaseSyncSkippedItem>,
     pub blockers: Vec<DatabaseSyncBlocker>,
 }
 
+#[allow(dead_code, reason = "将在后续方言同步计划中调用")]
 impl PlanFragments {
     pub fn operation(
         &mut self,
@@ -136,6 +143,7 @@ impl PlanFragments {
     }
 }
 
+#[allow(dead_code, reason = "将在后续方言同步计划中构造")]
 pub(crate) struct TablePlanContext<'a> {
     pub target_database: &'a str,
     pub source: Option<&'a TableSnapshot>,
@@ -145,6 +153,7 @@ pub(crate) struct TablePlanContext<'a> {
     pub include_drops: bool,
 }
 
+#[allow(dead_code, reason = "暂仅由后续命令尚未接入的计划收口调用")]
 fn normalize_selected_tables(values: &[String]) -> Result<Vec<String>, String> {
     let tables = values
         .iter()
@@ -166,15 +175,42 @@ fn normalize_selected_tables(values: &[String]) -> Result<Vec<String>, String> {
 }
 
 #[derive(Serialize)]
+#[allow(dead_code, reason = "暂仅由后续命令尚未接入的计划收口构造")]
 struct FingerprintPayload<'a> {
     request: &'a DatabaseSyncRequest,
-    source_tables: BTreeMap<&'a str, (&'a TableSnapshot, Option<&'a TableSyncMetadata>)>,
-    target_tables: BTreeMap<&'a str, (&'a TableSnapshot, Option<&'a TableSyncMetadata>)>,
+    source_tables: BTreeMap<&'a str, (TableSnapshot, Option<&'a TableSyncMetadata>)>,
+    target_tables: BTreeMap<&'a str, (TableSnapshot, Option<&'a TableSyncMetadata>)>,
     operations: &'a [DatabaseSyncOperation],
     skipped_items: &'a [DatabaseSyncSkippedItem],
     blockers: &'a [DatabaseSyncBlocker],
 }
 
+#[allow(dead_code, reason = "暂仅由后续命令尚未接入的计划收口调用")]
+fn fingerprint_tables<'a>(
+    snapshot: &'a SyncSchemaSnapshot,
+    selected: &[String],
+) -> BTreeMap<&'a str, (TableSnapshot, Option<&'a TableSyncMetadata>)> {
+    snapshot
+        .tables
+        .iter()
+        .filter(|table| selected.binary_search(&table.name).is_ok())
+        .map(|table| {
+            let mut canonical_table = table.clone();
+            canonical_table.columns.sort_by(|left, right| {
+                left.1
+                    .ordinal_position
+                    .cmp(&right.1.ordinal_position)
+                    .then_with(|| left.0.cmp(&right.0))
+            });
+            (
+                table.name.as_str(),
+                (canonical_table, snapshot.metadata.get(&table.name)),
+            )
+        })
+        .collect()
+}
+
+#[allow(dead_code, reason = "将在后续数据库同步命令中调用")]
 pub(crate) fn finalize_preview(
     request: &DatabaseSyncRequest,
     source: &SyncSchemaSnapshot,
@@ -182,21 +218,47 @@ pub(crate) fn finalize_preview(
     mut fragments: PlanFragments,
 ) -> Result<DatabaseSyncPreview, String> {
     let selected = normalize_selected_tables(&request.selected_tables)?;
+    if !request.include_drops {
+        let (drop_operations, retained_operations): (Vec<_>, Vec<_>) =
+            fragments.operations.into_iter().partition(|operation| {
+                matches!(
+                    operation.kind,
+                    DatabaseSyncOperationKind::DropColumn | DatabaseSyncOperationKind::DropTable
+                )
+            });
+        fragments.operations = retained_operations;
+        fragments
+            .skipped_items
+            .extend(
+                drop_operations
+                    .into_iter()
+                    .map(|operation| DatabaseSyncSkippedItem {
+                        table_name: operation.table_name,
+                        summary: operation.summary,
+                        reason: "未开启包含删除操作".to_string(),
+                    }),
+            );
+    }
     fragments.operations.sort_by(|left, right| {
         left.phase
             .cmp(&right.phase)
             .then_with(|| left.table_name.cmp(&right.table_name))
+            .then_with(|| operation_kind_key(left.kind).cmp(operation_kind_key(right.kind)))
             .then_with(|| left.summary.cmp(&right.summary))
+            .then_with(|| operation_risk_key(left.risk).cmp(&operation_risk_key(right.risk)))
+            .then_with(|| left.sql.cmp(&right.sql))
     });
     fragments.skipped_items.sort_by(|a, b| {
         a.table_name
             .cmp(&b.table_name)
             .then_with(|| a.summary.cmp(&b.summary))
+            .then_with(|| a.reason.cmp(&b.reason))
     });
     fragments.blockers.sort_by(|a, b| {
         a.table_name
             .cmp(&b.table_name)
             .then_with(|| a.summary.cmp(&b.summary))
+            .then_with(|| a.reason.cmp(&b.reason))
     });
     let operations = fragments
         .operations
@@ -234,28 +296,8 @@ pub(crate) fn finalize_preview(
         skipped_items: fragments.skipped_items.len(),
         blockers: fragments.blockers.len(),
     };
-    let source_map = source
-        .tables
-        .iter()
-        .filter(|table| selected.binary_search(&table.name).is_ok())
-        .map(|table| {
-            (
-                table.name.as_str(),
-                (table, source.metadata.get(&table.name)),
-            )
-        })
-        .collect();
-    let target_map = target
-        .tables
-        .iter()
-        .filter(|table| selected.binary_search(&table.name).is_ok())
-        .map(|table| {
-            (
-                table.name.as_str(),
-                (table, target.metadata.get(&table.name)),
-            )
-        })
-        .collect();
+    let source_map = fingerprint_tables(source, &selected);
+    let target_map = fingerprint_tables(target, &selected);
     let mut canonical_request = request.clone();
     canonical_request.selected_tables = selected;
     let payload = FingerprintPayload {
@@ -280,6 +322,7 @@ pub(crate) fn finalize_preview(
     })
 }
 
+#[allow(dead_code, reason = "暂仅由后续命令尚未接入的计划收口调用")]
 fn operation_kind_key(kind: DatabaseSyncOperationKind) -> &'static str {
     match kind {
         DatabaseSyncOperationKind::CreateTable => "create_table",
@@ -292,6 +335,16 @@ fn operation_kind_key(kind: DatabaseSyncOperationKind) -> &'static str {
     }
 }
 
+#[allow(dead_code, reason = "暂仅由后续命令尚未接入的计划收口调用")]
+fn operation_risk_key(risk: DatabaseSyncRisk) -> u8 {
+    match risk {
+        DatabaseSyncRisk::Normal => 0,
+        DatabaseSyncRisk::High => 1,
+        DatabaseSyncRisk::Destructive => 2,
+    }
+}
+
+#[allow(dead_code, reason = "将在后续方言主键同步计划中调用")]
 pub(crate) fn primary_key_columns(table: &TableSnapshot) -> Vec<String> {
     table
         .columns
@@ -478,5 +531,210 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error, "请至少选择一张差异表");
+    }
+
+    #[test]
+    fn preview_rejects_blank_table_name() {
+        let error = finalize_preview(
+            &request(vec!["users", "   "], false),
+            &snapshot(Vec::new()),
+            &snapshot(Vec::new()),
+            PlanFragments::default(),
+        )
+        .unwrap_err();
+
+        assert_eq!(error, "同步表名不能为空");
+    }
+
+    #[test]
+    fn preview_converts_drop_operations_to_skipped_when_drops_are_disabled() {
+        let mut fragments = PlanFragments::default();
+        fragments.operation(
+            OperationPhase::DropColumn,
+            "users",
+            DatabaseSyncOperationKind::DropColumn,
+            DatabaseSyncRisk::Destructive,
+            "删除目标端字段 users.legacy",
+            vec!["ALTER TABLE users DROP COLUMN legacy".to_string()],
+        );
+        fragments.operation(
+            OperationPhase::DropTable,
+            "logs",
+            DatabaseSyncOperationKind::DropTable,
+            DatabaseSyncRisk::Destructive,
+            "删除目标端表 logs",
+            vec!["DROP TABLE logs".to_string()],
+        );
+
+        let preview = finalize_preview(
+            &request(vec!["users", "logs"], false),
+            &snapshot(Vec::new()),
+            &snapshot(Vec::new()),
+            fragments,
+        )
+        .unwrap();
+
+        assert!(preview.operations.is_empty());
+        assert_eq!(preview.summary.executable_operations, 0);
+        assert_eq!(preview.summary.destructive_operations, 0);
+        assert_eq!(preview.summary.skipped_items, 2);
+        assert!(preview
+            .skipped_items
+            .iter()
+            .all(|item| item.reason == "未开启包含删除操作"));
+        assert!(!preview.can_execute);
+    }
+
+    #[test]
+    fn equivalent_fragments_have_stable_order_ids_and_fingerprint() {
+        let mut forward = PlanFragments::default();
+        forward.operation(
+            OperationPhase::AlterColumn,
+            "users",
+            DatabaseSyncOperationKind::UpdateComment,
+            DatabaseSyncRisk::Normal,
+            "同步 users 字段",
+            vec!["COMMENT ON COLUMN users.name IS 'name'".to_string()],
+        );
+        forward.operation(
+            OperationPhase::AlterColumn,
+            "users",
+            DatabaseSyncOperationKind::AlterColumn,
+            DatabaseSyncRisk::High,
+            "同步 users 字段",
+            vec!["ALTER TABLE users ALTER COLUMN name TYPE varchar(200)".to_string()],
+        );
+        forward.operation(
+            OperationPhase::AlterColumn,
+            "users",
+            DatabaseSyncOperationKind::AlterColumn,
+            DatabaseSyncRisk::Normal,
+            "同步 users 字段",
+            vec!["ALTER TABLE users ALTER COLUMN age TYPE bigint".to_string()],
+        );
+        forward.operation(
+            OperationPhase::AlterColumn,
+            "users",
+            DatabaseSyncOperationKind::AlterColumn,
+            DatabaseSyncRisk::High,
+            "同步 users 字段",
+            vec!["ALTER TABLE users ALTER COLUMN email TYPE varchar(320)".to_string()],
+        );
+        forward.skip("users", "跳过字段", "原因 B");
+        forward.skip("users", "跳过字段", "原因 A");
+        forward.block("users", "阻塞字段", "原因 B");
+        forward.block("users", "阻塞字段", "原因 A");
+
+        let mut reversed = forward.clone();
+        reversed.operations.reverse();
+        reversed.skipped_items.reverse();
+        reversed.blockers.reverse();
+
+        let sync_request = request(vec!["users"], true);
+        let source = snapshot(Vec::new());
+        let target = snapshot(Vec::new());
+        let first = finalize_preview(&sync_request, &source, &target, forward).unwrap();
+        let second = finalize_preview(&sync_request, &source, &target, reversed).unwrap();
+
+        assert_eq!(first.operations, second.operations);
+        assert_eq!(first.skipped_items, second.skipped_items);
+        assert_eq!(first.blockers, second.blockers);
+        assert_eq!(first.plan_fingerprint, second.plan_fingerprint);
+        assert_eq!(
+            first
+                .operations
+                .iter()
+                .map(|operation| operation.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                DatabaseSyncOperationKind::AlterColumn,
+                DatabaseSyncOperationKind::AlterColumn,
+                DatabaseSyncOperationKind::AlterColumn,
+                DatabaseSyncOperationKind::UpdateComment,
+            ]
+        );
+        assert_eq!(
+            first
+                .operations
+                .iter()
+                .map(|operation| operation.risk)
+                .collect::<Vec<_>>(),
+            vec![
+                DatabaseSyncRisk::Normal,
+                DatabaseSyncRisk::High,
+                DatabaseSyncRisk::High,
+                DatabaseSyncRisk::Normal,
+            ]
+        );
+        assert_eq!(
+            first
+                .operations
+                .iter()
+                .map(|operation| operation.id.as_str())
+                .collect::<BTreeSet<_>>()
+                .len(),
+            first.operations.len()
+        );
+        assert_eq!(
+            first
+                .skipped_items
+                .iter()
+                .map(|item| item.reason.as_str())
+                .collect::<Vec<_>>(),
+            vec!["原因 A", "原因 B"]
+        );
+        assert_eq!(
+            first
+                .blockers
+                .iter()
+                .map(|item| item.reason.as_str())
+                .collect::<Vec<_>>(),
+            vec!["原因 A", "原因 B"]
+        );
+    }
+
+    #[test]
+    fn preview_fingerprint_normalizes_column_vector_order() {
+        let id = (
+            "id".to_string(),
+            ColumnSnapshot {
+                ordinal_position: 1,
+                column_type: "bigint".to_string(),
+                nullable: false,
+                default_value: None,
+                primary_key: true,
+                extra: String::new(),
+                comment: String::new(),
+            },
+        );
+        let name = (
+            "name".to_string(),
+            ColumnSnapshot {
+                ordinal_position: 2,
+                column_type: "varchar(100)".to_string(),
+                nullable: false,
+                default_value: None,
+                primary_key: false,
+                extra: String::new(),
+                comment: String::new(),
+            },
+        );
+        let ordered = snapshot(vec![TableSnapshot {
+            name: "users".to_string(),
+            columns: vec![id.clone(), name.clone()],
+        }]);
+        let reordered = snapshot(vec![TableSnapshot {
+            name: "users".to_string(),
+            columns: vec![name, id],
+        }]);
+        let sync_request = request(vec!["users"], false);
+        let target = snapshot(Vec::new());
+
+        let first =
+            finalize_preview(&sync_request, &ordered, &target, PlanFragments::default()).unwrap();
+        let second =
+            finalize_preview(&sync_request, &reordered, &target, PlanFragments::default()).unwrap();
+
+        assert_eq!(first.plan_fingerprint, second.plan_fingerprint);
     }
 }

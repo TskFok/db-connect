@@ -104,6 +104,7 @@ pub struct DatabaseCompareResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[allow(dead_code, reason = "将在后续数据库同步命令中反序列化")]
 pub struct DatabaseSyncRequest {
     pub source: DatabaseCompareEndpointRequest,
     pub target: DatabaseCompareEndpointRequest,
@@ -113,6 +114,7 @@ pub struct DatabaseSyncRequest {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[allow(dead_code, reason = "将在后续数据库同步命令中使用")]
 pub enum DatabaseSyncRisk {
     Normal,
     High,
@@ -121,6 +123,7 @@ pub enum DatabaseSyncRisk {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[allow(dead_code, reason = "将在后续数据库同步命令中使用")]
 pub enum DatabaseSyncOperationKind {
     CreateTable,
     AddColumn,
@@ -132,6 +135,7 @@ pub enum DatabaseSyncOperationKind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[allow(dead_code, reason = "将在后续数据库同步命令中构造")]
 pub struct DatabaseSyncOperation {
     pub id: String,
     pub table_name: String,
@@ -142,6 +146,7 @@ pub struct DatabaseSyncOperation {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[allow(dead_code, reason = "将在后续数据库同步命令中构造")]
 pub struct DatabaseSyncSkippedItem {
     pub table_name: String,
     pub summary: String,
@@ -149,6 +154,7 @@ pub struct DatabaseSyncSkippedItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[allow(dead_code, reason = "将在后续数据库同步命令中构造")]
 pub struct DatabaseSyncBlocker {
     pub table_name: String,
     pub summary: String,
@@ -156,6 +162,7 @@ pub struct DatabaseSyncBlocker {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[allow(dead_code, reason = "将在后续数据库同步命令中构造")]
 pub struct DatabaseSyncPlanSummary {
     pub selected_tables: usize,
     pub executable_operations: usize,
@@ -166,6 +173,7 @@ pub struct DatabaseSyncPlanSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[allow(dead_code, reason = "将在后续数据库同步命令中返回")]
 pub struct DatabaseSyncPreview {
     pub plan_fingerprint: String,
     pub summary: DatabaseSyncPlanSummary,
@@ -176,18 +184,21 @@ pub struct DatabaseSyncPreview {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[allow(dead_code, reason = "将在后续数据库同步命令中反序列化")]
 pub struct ExecuteDatabaseSyncRequest {
     pub request: DatabaseSyncRequest,
     pub plan_fingerprint: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[allow(dead_code, reason = "将在后续数据库同步命令中构造")]
 pub struct DatabaseSyncStatementSuccess {
     pub operation_id: String,
     pub statement_index: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[allow(dead_code, reason = "将在后续数据库同步命令中构造")]
 pub struct DatabaseSyncFailure {
     pub operation_id: String,
     pub statement_index: usize,
@@ -196,6 +207,7 @@ pub struct DatabaseSyncFailure {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[allow(dead_code, reason = "将在后续数据库同步命令中使用")]
 pub enum DatabaseSyncExecutionStatus {
     Succeeded,
     PartiallySucceeded,
@@ -203,6 +215,7 @@ pub enum DatabaseSyncExecutionStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[allow(dead_code, reason = "将在后续数据库同步命令中返回")]
 pub struct DatabaseSyncExecutionResult {
     pub status: DatabaseSyncExecutionStatus,
     pub completed_statements: Vec<DatabaseSyncStatementSuccess>,
