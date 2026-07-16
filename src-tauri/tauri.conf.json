@@ -1,7 +1,7 @@
 {
   "$schema": "gen/schemas/desktop-schema.json",
   "productName": "DB Connect",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "identifier": "com.tskfok.dbconnect",
   "build": {
     "frontendDist": "../dist",
