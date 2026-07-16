@@ -9,20 +9,25 @@ use crate::models::types::{
     DatabaseSyncPreview, DatabaseSyncRequest, DatabaseSyncRisk, DatabaseSyncSkippedItem,
 };
 
+#[allow(dead_code, reason = "将在后续统一同步分发中调用")]
+pub(crate) mod mysql;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[allow(dead_code, reason = "将在后续方言同步计划中使用")]
 pub(crate) enum ColumnSyncMetadata {
     MySql {
         generation_expression: String,
     },
+    #[allow(dead_code, reason = "将在后续 PostgreSQL 同步方言中使用")]
     Postgres {
         identity_generation: String,
         generated_kind: String,
         generation_expression: Option<String>,
     },
+    #[allow(dead_code, reason = "将在后续 SQLite 同步方言中使用")]
     Sqlite {
         hidden: i64,
     },
+    #[allow(dead_code, reason = "将在后续 SQL Server 同步方言中使用")]
     SqlServer {
         is_identity: bool,
         computed_definition: Option<String>,
@@ -30,6 +35,7 @@ pub(crate) enum ColumnSyncMetadata {
         type_schema: String,
         type_name: String,
     },
+    #[allow(dead_code, reason = "将在后续 ClickHouse 同步方言中使用")]
     ClickHouse {
         default_kind: String,
         default_expression: String,
@@ -37,28 +43,31 @@ pub(crate) enum ColumnSyncMetadata {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[allow(dead_code, reason = "将在后续方言同步计划中使用")]
 pub(crate) enum TableSyncMetadata {
     MySql {
         engine: String,
         comment: String,
         columns: BTreeMap<String, ColumnSyncMetadata>,
     },
+    #[allow(dead_code, reason = "将在后续 PostgreSQL 同步方言中使用")]
     Postgres {
         relkind: String,
         table_comment: String,
         primary_key_constraint: Option<String>,
         columns: BTreeMap<String, ColumnSyncMetadata>,
     },
+    #[allow(dead_code, reason = "将在后续 SQLite 同步方言中使用")]
     Sqlite {
         create_sql: String,
         columns: BTreeMap<String, ColumnSyncMetadata>,
     },
+    #[allow(dead_code, reason = "将在后续 SQL Server 同步方言中使用")]
     SqlServer {
         table_comment: String,
         primary_key_constraint: Option<String>,
         columns: BTreeMap<String, ColumnSyncMetadata>,
     },
+    #[allow(dead_code, reason = "将在后续 ClickHouse 同步方言中使用")]
     ClickHouse {
         engine_full: String,
         sorting_key: String,
@@ -77,7 +86,6 @@ pub(crate) struct SyncSchemaSnapshot {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[allow(dead_code, reason = "将在后续方言同步计划中使用全部阶段")]
 pub(crate) enum OperationPhase {
     CreateTable,
     AddColumn,
@@ -87,7 +95,6 @@ pub(crate) enum OperationPhase {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code, reason = "将在后续方言同步计划中构造")]
 pub(crate) struct PendingOperation {
     phase: OperationPhase,
     table_name: String,
@@ -98,14 +105,12 @@ pub(crate) struct PendingOperation {
 }
 
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code, reason = "将在后续方言同步计划中构造")]
 pub(crate) struct PlanFragments {
     pub operations: Vec<PendingOperation>,
     pub skipped_items: Vec<DatabaseSyncSkippedItem>,
     pub blockers: Vec<DatabaseSyncBlocker>,
 }
 
-#[allow(dead_code, reason = "将在后续方言同步计划中调用")]
 impl PlanFragments {
     pub fn operation(
         &mut self,
@@ -143,12 +148,12 @@ impl PlanFragments {
     }
 }
 
-#[allow(dead_code, reason = "将在后续方言同步计划中构造")]
 pub(crate) struct TablePlanContext<'a> {
     pub target_database: &'a str,
     pub source: Option<&'a TableSnapshot>,
     pub target: Option<&'a TableSnapshot>,
     pub source_metadata: Option<&'a TableSyncMetadata>,
+    #[allow(dead_code, reason = "将在后续需要目标端原生元数据的同步方言中读取")]
     pub target_metadata: Option<&'a TableSyncMetadata>,
     pub include_drops: bool,
 }
@@ -344,7 +349,6 @@ fn operation_risk_key(risk: DatabaseSyncRisk) -> u8 {
     }
 }
 
-#[allow(dead_code, reason = "将在后续方言主键同步计划中调用")]
 pub(crate) fn primary_key_columns(table: &TableSnapshot) -> Vec<String> {
     table
         .columns
