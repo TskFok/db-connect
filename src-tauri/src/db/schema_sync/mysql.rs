@@ -280,6 +280,88 @@ fn plan_changed_table(
     let mut add_column_sql = Vec::new();
     let mut alter_column_sql = Vec::new();
     let mut publicly_changed_columns = BTreeSet::new();
+    let mut blocked_generated_columns = BTreeSet::new();
+    let mut generation_expression_changes = BTreeSet::new();
+
+    for (name, source_column) in &source.columns {
+        let Some((_, target_column)) = target
+            .columns
+            .iter()
+            .find(|(target_name, _)| target_name == name)
+        else {
+            continue;
+        };
+        let source_storage = match generated_storage(&source_column.extra) {
+            Ok(storage) => storage,
+            Err(reason) => {
+                plan.block(
+                    &source.name,
+                    &format!("无法比较生成列表达式 {}.{}", source.name, name),
+                    &reason,
+                );
+                blocked_generated_columns.insert(name.clone());
+                continue;
+            }
+        };
+        if source_storage.is_none() {
+            continue;
+        }
+        let target_storage = match generated_storage(&target_column.extra) {
+            Ok(storage) => storage,
+            Err(reason) => {
+                plan.block(
+                    &source.name,
+                    &format!("无法比较生成列表达式 {}.{}", source.name, name),
+                    &reason,
+                );
+                blocked_generated_columns.insert(name.clone());
+                continue;
+            }
+        };
+        if target_storage.is_none() {
+            continue;
+        }
+        let source_expression = match mysql_generation_expression(
+            source_column,
+            context.source_metadata,
+            &source.name,
+            name,
+        ) {
+            Ok(Some(expression)) => expression,
+            Ok(None) => unreachable!("生成列必须返回生成表达式或错误"),
+            Err(reason) => {
+                plan.block(
+                    &source.name,
+                    &format!("无法比较生成列表达式 {}.{}", source.name, name),
+                    &reason,
+                );
+                blocked_generated_columns.insert(name.clone());
+                continue;
+            }
+        };
+        let target_expression = match mysql_generation_expression(
+            target_column,
+            context.target_metadata,
+            &target.name,
+            name,
+        ) {
+            Ok(Some(expression)) => expression,
+            Ok(None) => unreachable!("生成列必须返回生成表达式或错误"),
+            Err(reason) => {
+                plan.block(
+                    &source.name,
+                    &format!("无法比较生成列表达式 {}.{}", source.name, name),
+                    &reason,
+                );
+                blocked_generated_columns.insert(name.clone());
+                continue;
+            }
+        };
+        if source_expression != target_expression {
+            generation_expression_changes.insert(name.clone());
+        }
+    }
+
     for difference in compare_table_columns(source, target) {
         match difference.status {
             SchemaDiffStatus::SourceOnly => {
@@ -306,6 +388,9 @@ fn plan_changed_table(
             }
             SchemaDiffStatus::Changed => {
                 publicly_changed_columns.insert(difference.name.clone());
+                if blocked_generated_columns.contains(&difference.name) {
+                    continue;
+                }
                 let Some(column) = difference.source.as_ref() else {
                     unreachable!("变化字段必须包含源端定义");
                 };
@@ -366,65 +451,42 @@ fn plan_changed_table(
         }
     }
 
-    let target_column_names = target
-        .columns
-        .iter()
-        .map(|(name, _)| name.as_str())
-        .collect::<BTreeSet<_>>();
-    for (name, column) in &source.columns {
-        if publicly_changed_columns.contains(name) || !target_column_names.contains(name.as_str()) {
+    for name in generation_expression_changes {
+        if publicly_changed_columns.contains(&name) || blocked_generated_columns.contains(&name) {
             continue;
         }
-        let source_expression = mysql_generation_expression(context.source_metadata, name);
-        let target_expression = mysql_generation_expression(context.target_metadata, name);
-        match (source_expression, target_expression) {
-            (None, None) => {}
-            (Some(source_expression), Some(target_expression))
-                if source_expression == target_expression => {}
-            (Some(_), Some(_)) => {
-                match source_column_definition(context, &source.name, name, column) {
-                    Ok(definition) => alter_column_sql.push((
-                        column.ordinal_position,
-                        name.clone(),
-                        format!(
-                            "ALTER TABLE {}.{} MODIFY COLUMN {} {}",
-                            esc_id(context.target_database),
-                            esc_id(&source.name),
-                            esc_id(name),
-                            definition
-                        ),
-                    )),
-                    Err(reason) => plan.block(
-                        &source.name,
-                        &format!("无法修改生成列表达式 {}.{}", source.name, name),
-                        &reason,
-                    ),
-                }
-            }
-            _ => plan.block(
+        let Some((_, column)) = source
+            .columns
+            .iter()
+            .find(|(source_name, _)| source_name == &name)
+        else {
+            continue;
+        };
+        match source_column_definition(context, &source.name, &name, column) {
+            Ok(definition) => alter_column_sql.push((
+                column.ordinal_position,
+                name.clone(),
+                format!(
+                    "ALTER TABLE {}.{} MODIFY COLUMN {} {}",
+                    esc_id(context.target_database),
+                    esc_id(&source.name),
+                    esc_id(&name),
+                    definition
+                ),
+            )),
+            Err(reason) => plan.block(
                 &source.name,
-                &format!("无法比较生成列表达式 {}.{}", source.name, name),
-                "源端或目标端缺少 MySQL 生成列表达式元数据",
+                &format!("无法修改生成列表达式 {}.{}", source.name, name),
+                &reason,
             ),
         }
     }
 
-    if !alter_column_sql.is_empty() {
-        alter_column_sql
-            .sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
-        let sql = alter_column_sql
-            .into_iter()
-            .map(|(_, _, sql)| sql)
-            .collect::<Vec<_>>();
-        plan.operation(
-            OperationPhase::AlterColumn,
-            &source.name,
-            DatabaseSyncOperationKind::AlterColumn,
-            DatabaseSyncRisk::High,
-            &format!("修改表 {} 的 {} 个字段", source.name, sql.len()),
-            sql,
-        );
-    }
+    alter_column_sql.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    let mut modify_column_sql = alter_column_sql
+        .into_iter()
+        .map(|(_, _, sql)| sql)
+        .collect::<Vec<_>>();
 
     if !add_column_sql.is_empty() {
         plan.operation(
@@ -437,72 +499,97 @@ fn plan_changed_table(
         );
     }
 
-    let source_primary_keys = match mysql_primary_key_columns(source, context.source_metadata) {
-        Ok(columns) => columns,
+    let primary_keys = match mysql_primary_key_columns(source, context.source_metadata) {
+        Ok(source_columns) => match mysql_primary_key_columns(target, context.target_metadata) {
+            Ok(target_columns) => Some((source_columns, target_columns)),
+            Err(reason) => {
+                plan.block(&source.name, "无法规划目标端主键", &reason);
+                None
+            }
+        },
         Err(reason) => {
             plan.block(&source.name, "无法规划源端主键", &reason);
-            return;
+            None
         }
     };
-    let target_primary_keys = match mysql_primary_key_columns(target, context.target_metadata) {
-        Ok(columns) => columns,
-        Err(reason) => {
-            plan.block(&source.name, "无法规划目标端主键", &reason);
-            return;
-        }
-    };
-    if source_primary_keys != target_primary_keys {
+
+    if let Some((source_primary_keys, target_primary_keys)) =
+        primary_keys.filter(|(source, target)| source != target)
+    {
+        let mut sql = Vec::new();
         if !target_primary_keys.is_empty() {
-            plan.operation(
-                OperationPhase::DropPrimaryKey,
-                &source.name,
-                DatabaseSyncOperationKind::ReplacePrimaryKey,
-                DatabaseSyncRisk::High,
-                &format!("删除表 {} 的旧主键", source.name),
-                vec![format!(
-                    "ALTER TABLE {}.{} DROP PRIMARY KEY",
-                    esc_id(context.target_database),
-                    esc_id(&source.name)
-                )],
-            );
+            sql.push(format!(
+                "ALTER TABLE {}.{} DROP PRIMARY KEY",
+                esc_id(context.target_database),
+                esc_id(&source.name)
+            ));
         }
+        sql.append(&mut modify_column_sql);
         if !source_primary_keys.is_empty() {
-            plan.operation(
-                OperationPhase::AddPrimaryKey,
-                &source.name,
-                DatabaseSyncOperationKind::ReplacePrimaryKey,
-                DatabaseSyncRisk::High,
-                &format!("增加表 {} 的新主键", source.name),
-                vec![format!(
-                    "ALTER TABLE {}.{} ADD PRIMARY KEY ({})",
-                    esc_id(context.target_database),
-                    esc_id(&source.name),
-                    source_primary_keys
-                        .iter()
-                        .map(|name| esc_id(name))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )],
-            );
+            sql.push(format!(
+                "ALTER TABLE {}.{} ADD PRIMARY KEY ({})",
+                esc_id(context.target_database),
+                esc_id(&source.name),
+                source_primary_keys
+                    .iter()
+                    .map(|name| esc_id(name))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
         }
+        plan.operation(
+            OperationPhase::AlterColumn,
+            &source.name,
+            DatabaseSyncOperationKind::ReplacePrimaryKey,
+            DatabaseSyncRisk::High,
+            &format!("替换表 {} 的主键并同步相关字段", source.name),
+            sql,
+        );
+    } else if !modify_column_sql.is_empty() {
+        plan.operation(
+            OperationPhase::AlterColumn,
+            &source.name,
+            DatabaseSyncOperationKind::AlterColumn,
+            DatabaseSyncRisk::High,
+            &format!(
+                "修改表 {} 的 {} 个字段",
+                source.name,
+                modify_column_sql.len()
+            ),
+            modify_column_sql,
+        );
     }
 }
 
 fn mysql_generation_expression<'a>(
+    column: &ColumnSnapshot,
     metadata: Option<&'a TableSyncMetadata>,
+    table_name: &str,
     column_name: &str,
-) -> Option<&'a str> {
+) -> Result<Option<&'a str>, String> {
+    if generated_storage(&column.extra)?.is_none() {
+        return Ok(None);
+    }
     let Some(TableSyncMetadata::MySql { columns, .. }) = metadata else {
-        return None;
+        return Err(format!(
+            "生成列 {table_name}.{column_name} 缺少 MySQL 生成列表达式元数据，无法无损比较"
+        ));
     };
     let Some(ColumnSyncMetadata::MySql {
         generation_expression,
         ..
     }) = columns.get(column_name)
     else {
-        return None;
+        return Err(format!(
+            "生成列 {table_name}.{column_name} 缺少 MySQL 生成列表达式元数据，无法无损比较"
+        ));
     };
-    (!generation_expression.trim().is_empty()).then_some(generation_expression.as_str())
+    if generation_expression.trim().is_empty() {
+        return Err(format!(
+            "生成列 {table_name}.{column_name} 的 MySQL 生成列表达式元数据为空，无法无损比较"
+        ));
+    }
+    Ok(Some(generation_expression.as_str()))
 }
 
 fn source_column_definition(
@@ -555,14 +642,17 @@ fn source_column_definition(
     if ordinary_extra.default_is_expression {
         let mut parts = vec![column.column_type.clone()];
         parts.push(if column.nullable { "NULL" } else { "NOT NULL" }.to_string());
-        if let Some(default_value) = &column.default_value {
-            if default_value.trim().is_empty() {
-                return Err(format!(
-                    "字段 {table_name}.{column_name} 的生成默认表达式为空，无法无损生成定义"
-                ));
-            }
-            parts.push(format!("DEFAULT {default_value}"));
+        let Some(default_value) = &column.default_value else {
+            return Err(format!(
+                "字段 {table_name}.{column_name} 标记为 DEFAULT_GENERATED 但缺少默认值，无法无损生成定义"
+            ));
+        };
+        if default_value.trim().is_empty() {
+            return Err(format!(
+                "字段 {table_name}.{column_name} 的生成默认表达式为空，无法无损生成定义"
+            ));
         }
+        parts.push(format!("DEFAULT {default_value}"));
         if !ordinary_extra.ddl.is_empty() {
             parts.push(ordinary_extra.ddl);
         }
@@ -1182,6 +1272,109 @@ mod tests {
     }
 
     #[test]
+    fn keeps_same_generated_expression_unchanged() {
+        let mut source = table("totals", vec![("total", 1, "decimal(10,2)", false)]);
+        source.columns[0].1.extra = "STORED GENERATED".to_string();
+        let target = source.clone();
+        let metadata = TableSyncMetadata::MySql {
+            engine: "InnoDB".to_string(),
+            comment: String::new(),
+            columns: BTreeMap::from([(
+                "total".to_string(),
+                crate::db::schema_sync::ColumnSyncMetadata::MySql {
+                    generation_expression: "price * quantity".to_string(),
+                    primary_key_ordinal: None,
+                },
+            )]),
+        };
+
+        let plan = plan_table(TablePlanContext {
+            target_database: "copy",
+            source: Some(&source),
+            target: Some(&target),
+            source_metadata: Some(&metadata),
+            target_metadata: Some(&metadata),
+            include_drops: false,
+        });
+
+        assert!(all_sql(&plan).is_empty());
+        assert!(plan.blockers.is_empty());
+    }
+
+    #[test]
+    fn blocks_when_both_generated_expressions_are_missing() {
+        let mut source = table("totals", vec![("total", 1, "decimal(10,2)", false)]);
+        source.columns[0].1.extra = "STORED GENERATED".to_string();
+        let target = source.clone();
+
+        let plan = plan_table(TablePlanContext {
+            target_database: "copy",
+            source: Some(&source),
+            target: Some(&target),
+            source_metadata: None,
+            target_metadata: None,
+            include_drops: false,
+        });
+
+        assert!(all_sql(&plan).is_empty());
+        assert_eq!(plan.blockers.len(), 1);
+        assert!(plan.blockers[0].reason.contains("生成列表达式元数据"));
+    }
+
+    #[test]
+    fn blocks_changed_generated_columns_when_target_expression_is_missing() {
+        let mut source = table("totals", vec![("total", 1, "decimal(10,2)", false)]);
+        source.columns[0].1.extra = "STORED GENERATED".to_string();
+        let mut target = source.clone();
+        target.columns[0].1.nullable = true;
+        let source_metadata = TableSyncMetadata::MySql {
+            engine: "InnoDB".to_string(),
+            comment: String::new(),
+            columns: BTreeMap::from([(
+                "total".to_string(),
+                crate::db::schema_sync::ColumnSyncMetadata::MySql {
+                    generation_expression: "price * quantity".to_string(),
+                    primary_key_ordinal: None,
+                },
+            )]),
+        };
+
+        let plan = plan_table(TablePlanContext {
+            target_database: "copy",
+            source: Some(&source),
+            target: Some(&target),
+            source_metadata: Some(&source_metadata),
+            target_metadata: None,
+            include_drops: false,
+        });
+
+        assert!(all_sql(&plan).is_empty());
+        assert_eq!(plan.blockers.len(), 1);
+        assert!(plan.blockers[0].reason.contains("生成列表达式元数据"));
+    }
+
+    #[test]
+    fn changes_generated_target_to_ordinary_source_without_expression_metadata() {
+        let source = table("totals", vec![("total", 1, "decimal(10,2)", false)]);
+        let mut target = source.clone();
+        target.columns[0].1.extra = "STORED GENERATED".to_string();
+
+        let plan = plan_table(TablePlanContext {
+            target_database: "copy",
+            source: Some(&source),
+            target: Some(&target),
+            source_metadata: None,
+            target_metadata: None,
+            include_drops: false,
+        });
+
+        assert_eq!(plan.blockers.len(), 0);
+        assert!(all_sql(&plan)
+            .iter()
+            .any(|sql| sql.contains("MODIFY COLUMN `total` decimal(10,2) NOT NULL")));
+    }
+
+    #[test]
     fn blocks_expression_changes_when_generated_extra_is_not_lossless() {
         let mut source = table("totals", vec![("total", 1, "decimal(10,2)", false)]);
         source.columns[0].1.extra = "STORED GENERATED UNKNOWN".to_string();
@@ -1305,6 +1498,30 @@ mod tests {
 
         assert!(all_sql(&plan).is_empty());
         assert_eq!(plan.blockers.len(), 1);
+    }
+
+    #[test]
+    fn blocks_default_generated_without_a_default_value() {
+        let mut source = table("events", vec![("created_at", 1, "timestamp", false)]);
+        source.columns[0].1.extra = "DEFAULT_GENERATED".to_string();
+        let metadata = TableSyncMetadata::MySql {
+            engine: "InnoDB".to_string(),
+            comment: String::new(),
+            columns: BTreeMap::new(),
+        };
+
+        let plan = plan_table(TablePlanContext {
+            target_database: "copy",
+            source: Some(&source),
+            target: None,
+            source_metadata: Some(&metadata),
+            target_metadata: None,
+            include_drops: false,
+        });
+
+        assert!(all_sql(&plan).is_empty());
+        assert_eq!(plan.blockers.len(), 1);
+        assert!(plan.blockers[0].reason.contains("缺少默认值"));
     }
 
     #[test]
@@ -1433,12 +1650,20 @@ mod tests {
     fn drops_old_primary_key_before_altering_columns_and_adds_new_key_afterward() {
         let mut source = table(
             "users",
-            vec![("id", 1, "bigint", false), ("code", 2, "varchar(32)", true)],
+            vec![
+                ("id", 1, "bigint", false),
+                ("code", 2, "varchar(32)", true),
+                ("new_column", 3, "text", false),
+            ],
         );
         source.columns[0].1.nullable = true;
         let target = table(
             "users",
-            vec![("id", 1, "bigint", true), ("code", 2, "varchar(32)", false)],
+            vec![
+                ("id", 1, "bigint", true),
+                ("code", 2, "varchar(32)", false),
+                ("legacy", 3, "text", false),
+            ],
         );
         let fragments = plan_table(TablePlanContext {
             target_database: "copy",
@@ -1446,7 +1671,7 @@ mod tests {
             target: Some(&target),
             source_metadata: None,
             target_metadata: None,
-            include_drops: false,
+            include_drops: true,
         });
         let request = DatabaseSyncRequest {
             source: DatabaseCompareEndpointRequest {
@@ -1458,7 +1683,7 @@ mod tests {
                 database: "copy".to_string(),
             },
             selected_tables: vec!["users".to_string()],
-            include_drops: false,
+            include_drops: true,
         };
         let preview = finalize_preview(
             &request,
@@ -1473,11 +1698,13 @@ mod tests {
             fragments,
         )
         .unwrap();
-        let sql = preview
+        let replacement_operations = preview
             .operations
             .iter()
-            .flat_map(|operation| operation.sql.iter().map(String::as_str))
+            .filter(|operation| operation.kind == DatabaseSyncOperationKind::ReplacePrimaryKey)
             .collect::<Vec<_>>();
+        assert_eq!(replacement_operations.len(), 1);
+        let sql = &replacement_operations[0].sql;
         let drop_index = sql
             .iter()
             .position(|sql| sql.ends_with("DROP PRIMARY KEY"))
@@ -1492,15 +1719,26 @@ mod tests {
             .unwrap();
 
         assert!(drop_index < alter_index && alter_index < add_index);
-        assert_eq!(
-            preview
-                .operations
-                .iter()
-                .filter(|operation| {
-                    operation.kind == DatabaseSyncOperationKind::ReplacePrimaryKey
-                })
-                .count(),
-            2
-        );
+        assert!(!preview
+            .operations
+            .iter()
+            .any(|operation| operation.kind == DatabaseSyncOperationKind::AlterColumn));
+        let add_operation_index = preview
+            .operations
+            .iter()
+            .position(|operation| operation.kind == DatabaseSyncOperationKind::AddColumn)
+            .unwrap();
+        let replace_operation_index = preview
+            .operations
+            .iter()
+            .position(|operation| operation.kind == DatabaseSyncOperationKind::ReplacePrimaryKey)
+            .unwrap();
+        let drop_operation_index = preview
+            .operations
+            .iter()
+            .position(|operation| operation.kind == DatabaseSyncOperationKind::DropColumn)
+            .unwrap();
+        assert!(add_operation_index < replace_operation_index);
+        assert!(replace_operation_index < drop_operation_index);
     }
 }

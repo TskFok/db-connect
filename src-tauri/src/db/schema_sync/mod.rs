@@ -87,9 +87,7 @@ pub(crate) struct SyncSchemaSnapshot {
 pub(crate) enum OperationPhase {
     CreateTable,
     AddColumn,
-    DropPrimaryKey,
     AlterColumn,
-    AddPrimaryKey,
     DropColumn,
     DropTable,
 }
