@@ -9,13 +9,13 @@ use crate::models::types::{
     DatabaseSyncPreview, DatabaseSyncRequest, DatabaseSyncRisk, DatabaseSyncSkippedItem,
 };
 
-#[allow(dead_code, reason = "将在后续统一同步分发中调用")]
 pub(crate) mod mysql;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) enum ColumnSyncMetadata {
     MySql {
         generation_expression: String,
+        primary_key_ordinal: Option<u32>,
     },
     #[allow(dead_code, reason = "将在后续 PostgreSQL 同步方言中使用")]
     Postgres {
@@ -24,9 +24,7 @@ pub(crate) enum ColumnSyncMetadata {
         generation_expression: Option<String>,
     },
     #[allow(dead_code, reason = "将在后续 SQLite 同步方言中使用")]
-    Sqlite {
-        hidden: i64,
-    },
+    Sqlite { hidden: i64 },
     #[allow(dead_code, reason = "将在后续 SQL Server 同步方言中使用")]
     SqlServer {
         is_identity: bool,
@@ -89,7 +87,9 @@ pub(crate) struct SyncSchemaSnapshot {
 pub(crate) enum OperationPhase {
     CreateTable,
     AddColumn,
+    DropPrimaryKey,
     AlterColumn,
+    AddPrimaryKey,
     DropColumn,
     DropTable,
 }
@@ -153,7 +153,6 @@ pub(crate) struct TablePlanContext<'a> {
     pub source: Option<&'a TableSnapshot>,
     pub target: Option<&'a TableSnapshot>,
     pub source_metadata: Option<&'a TableSyncMetadata>,
-    #[allow(dead_code, reason = "将在后续需要目标端原生元数据的同步方言中读取")]
     pub target_metadata: Option<&'a TableSyncMetadata>,
     pub include_drops: bool,
 }
@@ -481,6 +480,7 @@ mod tests {
                     "id".to_string(),
                     ColumnSyncMetadata::MySql {
                         generation_expression: String::new(),
+                        primary_key_ordinal: Some(1),
                     },
                 )]),
             },
@@ -495,6 +495,7 @@ mod tests {
                     "id".to_string(),
                     ColumnSyncMetadata::MySql {
                         generation_expression: "id + 1".to_string(),
+                        primary_key_ordinal: Some(1),
                     },
                 )]),
             },
