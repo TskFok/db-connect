@@ -433,6 +433,18 @@ fn plan_changed_table(
         plan.block(&source.name, "无法规划 SQLite 表同步", &reason);
         return;
     }
+    let source_autoincrement =
+        contains_unquoted_keyword(source_metadata.create_sql, "AUTOINCREMENT");
+    let target_autoincrement =
+        contains_unquoted_keyword(target_metadata.create_sql, "AUTOINCREMENT");
+    if source_autoincrement != target_autoincrement {
+        plan.block(
+            &source.name,
+            &format!("无法修改表 {} 的 AUTOINCREMENT 声明", source.name),
+            "SQLite 首期不重建表修改已有字段的 AUTOINCREMENT 原生声明",
+        );
+        return;
+    }
     let differences = compare_table_columns(source, target);
     let max_target_position = target
         .columns
@@ -982,6 +994,111 @@ mod tests {
 
         pool.close();
         let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn changed_table_blocks_native_autoincrement_mismatch_before_add_and_drop_columns() {
+        let source_path = std::env::temp_dir().join(format!(
+            "db-connect-schema-sync-sqlite-source-autoincrement-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let target_path = std::env::temp_dir().join(format!(
+            "db-connect-schema-sync-sqlite-target-autoincrement-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        std::fs::File::create(&source_path).expect("create source sqlite file");
+        std::fs::File::create(&target_path).expect("create target sqlite file");
+        let source_pool = SqliteConfig::new(source_path.to_str().expect("utf8 source path"))
+            .create_pool(Runtime::Tokio1)
+            .expect("create source pool");
+        let target_pool = SqliteConfig::new(target_path.to_str().expect("utf8 target path"))
+            .create_pool(Runtime::Tokio1)
+            .expect("create target pool");
+        let source_conn = source_pool.get().await.expect("get source connection");
+        source_conn
+            .interact(|conn| {
+                conn.execute_batch(
+                    "CREATE TABLE users (\
+                       id INTEGER PRIMARY KEY AUTOINCREMENT,\
+                       name TEXT,\
+                       added TEXT\
+                     );",
+                )
+            })
+            .await
+            .expect("source interact")
+            .expect("create source schema");
+        drop(source_conn);
+        let target_conn = target_pool.get().await.expect("get target connection");
+        target_conn
+            .interact(|conn| {
+                conn.execute_batch(
+                    "CREATE TABLE users (\
+                       id INTEGER PRIMARY KEY,\
+                       name TEXT,\
+                       legacy TEXT\
+                     );",
+                )
+            })
+            .await
+            .expect("target interact")
+            .expect("create target schema");
+        drop(target_conn);
+
+        let mut source_tables =
+            crate::db::schema_compare::sqlite::load_snapshot(&source_pool, "main")
+                .await
+                .expect("load source snapshot");
+        let target_tables = crate::db::schema_compare::sqlite::load_snapshot(&target_pool, "main")
+            .await
+            .expect("load target snapshot");
+        let source_native = load_metadata(&source_pool, "main")
+            .await
+            .expect("load source metadata");
+        let target_native = load_metadata(&target_pool, "main")
+            .await
+            .expect("load target metadata");
+        let source = source_tables
+            .iter_mut()
+            .find(|table| table.name == "users")
+            .expect("source users");
+        let source_id = source
+            .columns
+            .iter_mut()
+            .find(|(name, _)| name == "id")
+            .expect("source id");
+        assert_eq!(source_id.1.extra, "auto_increment");
+        source_id.1.extra.clear();
+        source
+            .columns
+            .iter_mut()
+            .find(|(name, _)| name == "added")
+            .expect("source added")
+            .1
+            .ordinal_position = 4;
+        let target = target_tables
+            .iter()
+            .find(|table| table.name == "users")
+            .expect("target users");
+
+        let plan = plan_table(TablePlanContext {
+            target_database: "main",
+            source: Some(source),
+            target: Some(target),
+            source_metadata: source_native.get("users"),
+            target_metadata: target_native.get("users"),
+            include_drops: true,
+        });
+        assert!(plan.operations.is_empty());
+        assert!(plan
+            .blockers
+            .iter()
+            .any(|blocker| blocker.reason.contains("AUTOINCREMENT")));
+
+        source_pool.close();
+        target_pool.close();
+        let _ = std::fs::remove_file(source_path);
+        let _ = std::fs::remove_file(target_path);
     }
 
     #[test]
