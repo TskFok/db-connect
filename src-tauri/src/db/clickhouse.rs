@@ -297,11 +297,11 @@ pub(crate) struct ClickHouseTableDataQuery<'a> {
 
 impl ClickHouseDialect {
     pub(crate) fn identifier(&self, name: &str) -> String {
-        format!("`{}`", name.replace('`', "``"))
+        format!("`{}`", name.replace('\\', "\\\\").replace('`', "``"))
     }
 
     pub(crate) fn string_literal(&self, value: &str) -> String {
-        format!("'{}'", value.replace('\'', "''"))
+        format!("'{}'", value.replace('\\', "\\\\").replace('\'', "''"))
     }
 
     pub(crate) fn table_ref(&self, database: &str, table: &str) -> String {
@@ -1421,7 +1421,12 @@ mod tests {
     fn clickhouse_dialect_builds_table_read_sql() {
         let dialect = super::ClickHouseDialect;
         assert_eq!(dialect.identifier("we`ird"), "`we``ird`");
+        assert_eq!(dialect.identifier("db\\`name"), "`db\\\\``name`");
         assert_eq!(dialect.string_literal("Bob's"), "'Bob''s'");
+        assert_eq!(
+            dialect.string_literal("C:\\new\\' , DROP COLUMN secret -- "),
+            "'C:\\\\new\\\\'' , DROP COLUMN secret -- '"
+        );
         assert_eq!(
             dialect.table_ref("analytics", "events"),
             "`analytics`.`events`"

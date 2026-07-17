@@ -9,6 +9,7 @@ use crate::models::types::{
     DatabaseSyncPreview, DatabaseSyncRequest, DatabaseSyncRisk, DatabaseSyncSkippedItem,
 };
 
+pub(crate) mod clickhouse;
 pub(crate) mod mysql;
 pub(crate) mod postgres;
 pub(crate) mod sqlite;
@@ -55,10 +56,16 @@ pub(crate) enum ColumnSyncMetadata {
         is_masked: bool,
         encryption_type: Option<i32>,
     },
-    #[allow(dead_code, reason = "将在后续 ClickHouse 同步方言中使用")]
     ClickHouse {
         default_kind: String,
         default_expression: String,
+        compression_codec: String,
+        ttl_expression: String,
+        unsupported_clauses: Vec<String>,
+        is_in_partition_key: bool,
+        is_in_sorting_key: bool,
+        is_in_primary_key: bool,
+        is_in_sampling_key: bool,
     },
 }
 
@@ -90,12 +97,17 @@ pub(crate) enum TableSyncMetadata {
         is_filetable: bool,
         columns: BTreeMap<String, ColumnSyncMetadata>,
     },
-    #[allow(dead_code, reason = "将在后续 ClickHouse 同步方言中使用")]
     ClickHouse {
+        engine: String,
         engine_full: String,
+        create_table_query: String,
         sorting_key: String,
         partition_key: String,
         primary_key: String,
+        sampling_key: String,
+        table_ttl: String,
+        settings: String,
+        unsupported_definitions: Vec<String>,
         comment: String,
         columns: BTreeMap<String, ColumnSyncMetadata>,
     },
