@@ -298,6 +298,61 @@ fn validate_snapshot_metadata(
     Ok(())
 }
 
+fn block_unhandled_table_metadata_differences(
+    database_type: DatabaseType,
+    table_name: &str,
+    source: Option<&TableSyncMetadata>,
+    target: Option<&TableSyncMetadata>,
+    plan: &mut PlanFragments,
+) {
+    match (database_type, source, target) {
+        (
+            DatabaseType::MySql,
+            Some(TableSyncMetadata::MySql {
+                engine: source_engine,
+                comment: source_comment,
+                ..
+            }),
+            Some(TableSyncMetadata::MySql {
+                engine: target_engine,
+                comment: target_comment,
+                ..
+            }),
+        ) => {
+            if source_engine != target_engine {
+                plan.block(
+                    table_name,
+                    &format!("无法同步表 {table_name} 的存储引擎"),
+                    "MySQL 存储引擎原生元数据差异未被当前方言计划器支持",
+                );
+            }
+            if source_comment != target_comment {
+                plan.block(
+                    table_name,
+                    &format!("无法同步表 {table_name} 的表注释"),
+                    "MySQL 表注释原生元数据差异未被当前方言计划器支持",
+                );
+            }
+        }
+        (
+            DatabaseType::Postgres,
+            Some(TableSyncMetadata::Postgres {
+                table_comment: source_comment,
+                ..
+            }),
+            Some(TableSyncMetadata::Postgres {
+                table_comment: target_comment,
+                ..
+            }),
+        ) if source_comment != target_comment => plan.block(
+            table_name,
+            &format!("无法同步表 {table_name} 的表注释"),
+            "PostgreSQL 表注释原生元数据差异未被当前方言计划器支持",
+        ),
+        _ => {}
+    }
+}
+
 #[allow(dead_code, reason = "将在后续数据库同步命令中调用")]
 pub(crate) fn build_database_sync_preview(
     database_type: DatabaseType,
@@ -355,6 +410,13 @@ pub(crate) fn build_database_sync_preview(
             DatabaseType::SqlServer => sqlserver::plan_table(context),
             DatabaseType::ClickHouse => clickhouse::plan_table(context),
         };
+        block_unhandled_table_metadata_differences(
+            database_type,
+            table_name,
+            source_metadata,
+            target_metadata,
+            &mut table_plan,
+        );
         if !public_difference
             && native_difference
             && table_plan.operations.is_empty()
@@ -835,6 +897,105 @@ mod tests {
         assert_eq!(preview.blockers.len(), 1);
         assert_eq!(preview.blockers[0].table_name, "users");
         assert!(preview.blockers[0].reason.contains("原生元数据差异"));
+    }
+
+    #[test]
+    fn build_preview_blocks_partial_plan_when_public_and_unhandled_native_changes_coexist() {
+        let mut source_table = table("users", "bigint");
+        source_table.columns.push((
+            "name".to_string(),
+            ColumnSnapshot {
+                ordinal_position: 2,
+                column_type: "varchar(100)".to_string(),
+                nullable: true,
+                default_value: None,
+                primary_key: false,
+                extra: String::new(),
+                comment: String::new(),
+            },
+        ));
+        let mut source_mysql_metadata = mysql_metadata("", "InnoDB");
+        let TableSyncMetadata::MySql { columns, .. } = source_mysql_metadata
+            .get_mut("users")
+            .expect("MySQL 测试元数据必须存在")
+        else {
+            unreachable!("MySQL 测试元数据必须是 MySql 变体");
+        };
+        columns.insert(
+            "name".to_string(),
+            ColumnSyncMetadata::MySql {
+                generation_expression: String::new(),
+                primary_key_ordinal: None,
+            },
+        );
+
+        let mysql_preview = build_database_sync_preview(
+            DatabaseType::MySql,
+            &request(vec!["users"], false),
+            &SyncSchemaSnapshot {
+                tables: vec![source_table.clone()],
+                metadata: source_mysql_metadata,
+            },
+            &SyncSchemaSnapshot {
+                tables: vec![table("users", "bigint")],
+                metadata: mysql_metadata("", "MyISAM"),
+            },
+        )
+        .unwrap();
+
+        assert!(!mysql_preview.operations.is_empty());
+        assert!(!mysql_preview.can_execute);
+        assert!(mysql_preview
+            .blockers
+            .iter()
+            .any(|blocker| blocker.reason.contains("存储引擎")));
+
+        let mut source_postgres_metadata = native_metadata(DatabaseType::Postgres);
+        let TableSyncMetadata::Postgres {
+            table_comment,
+            columns,
+            ..
+        } = &mut source_postgres_metadata
+        else {
+            unreachable!("PostgreSQL 测试元数据必须是 Postgres 变体");
+        };
+        *table_comment = "源端用户表".to_string();
+        columns.insert(
+            "name".to_string(),
+            ColumnSyncMetadata::Postgres {
+                identity_generation: String::new(),
+                generated_kind: "NEVER".to_string(),
+                generation_expression: None,
+                default_expression: None,
+                is_user_defined: false,
+                type_schema: "pg_catalog".to_string(),
+                type_name: "varchar".to_string(),
+                primary_key_ordinal: None,
+            },
+        );
+        let postgres_preview = build_database_sync_preview(
+            DatabaseType::Postgres,
+            &request(vec!["users"], false),
+            &SyncSchemaSnapshot {
+                tables: vec![source_table],
+                metadata: BTreeMap::from([("users".to_string(), source_postgres_metadata)]),
+            },
+            &SyncSchemaSnapshot {
+                tables: vec![table("users", "bigint")],
+                metadata: BTreeMap::from([(
+                    "users".to_string(),
+                    native_metadata(DatabaseType::Postgres),
+                )]),
+            },
+        )
+        .unwrap();
+
+        assert!(!postgres_preview.operations.is_empty());
+        assert!(!postgres_preview.can_execute);
+        assert!(postgres_preview
+            .blockers
+            .iter()
+            .any(|blocker| blocker.reason.contains("表注释")));
     }
 
     #[test]
