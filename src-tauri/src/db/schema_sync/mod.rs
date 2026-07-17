@@ -442,8 +442,7 @@ pub(crate) fn build_database_sync_preview(
     finalize_preview(request, source, target, fragments)
 }
 
-#[allow(dead_code, reason = "暂仅由后续命令尚未接入的计划收口调用")]
-fn normalize_selected_tables(values: &[String]) -> Result<Vec<String>, String> {
+pub(crate) fn normalize_selected_tables(values: &[String]) -> Result<Vec<String>, String> {
     let tables = values
         .iter()
         .map(|value| value.trim())

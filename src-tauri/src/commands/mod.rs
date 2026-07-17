@@ -2,6 +2,7 @@ pub mod connection;
 pub mod data;
 pub mod database;
 pub mod database_compare;
+pub mod database_sync;
 pub mod file_io;
 pub mod foreign_key;
 pub mod github_issue;
