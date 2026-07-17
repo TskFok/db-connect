@@ -243,20 +243,57 @@ fn metadata_matches_database_type(
     )
 }
 
+fn column_metadata_matches_database_type(
+    database_type: DatabaseType,
+    metadata: &ColumnSyncMetadata,
+) -> bool {
+    matches!(
+        (database_type, metadata),
+        (DatabaseType::MySql, ColumnSyncMetadata::MySql { .. })
+            | (DatabaseType::Postgres, ColumnSyncMetadata::Postgres { .. })
+            | (DatabaseType::Sqlite, ColumnSyncMetadata::Sqlite { .. })
+            | (
+                DatabaseType::SqlServer,
+                ColumnSyncMetadata::SqlServer { .. }
+            )
+            | (
+                DatabaseType::ClickHouse,
+                ColumnSyncMetadata::ClickHouse { .. }
+            )
+    )
+}
+
+fn metadata_columns(metadata: &TableSyncMetadata) -> &BTreeMap<String, ColumnSyncMetadata> {
+    match metadata {
+        TableSyncMetadata::MySql { columns, .. }
+        | TableSyncMetadata::Postgres { columns, .. }
+        | TableSyncMetadata::Sqlite { columns, .. }
+        | TableSyncMetadata::SqlServer { columns, .. }
+        | TableSyncMetadata::ClickHouse { columns, .. } => columns,
+    }
+}
+
 fn validate_snapshot_metadata(
     database_type: DatabaseType,
     endpoint: &str,
     snapshot: &SyncSchemaSnapshot,
 ) -> Result<(), String> {
-    if let Some((table_name, _)) = snapshot
-        .metadata
-        .iter()
-        .find(|(_, metadata)| !metadata_matches_database_type(database_type, metadata))
-    {
-        return Err(format!(
-            "{endpoint}表 {table_name} 的原生元数据与 {} 方言不兼容",
-            database_type_name(database_type)
-        ));
+    for (table_name, metadata) in &snapshot.metadata {
+        if !metadata_matches_database_type(database_type, metadata) {
+            return Err(format!(
+                "{endpoint}表 {table_name} 的原生元数据与 {} 方言不兼容",
+                database_type_name(database_type)
+            ));
+        }
+        if let Some((column_name, _)) = metadata_columns(metadata)
+            .iter()
+            .find(|(_, metadata)| !column_metadata_matches_database_type(database_type, metadata))
+        {
+            return Err(format!(
+                "{endpoint}表 {table_name} 字段 {column_name} 的原生元数据与 {} 方言不兼容",
+                database_type_name(database_type)
+            ));
+        }
     }
     Ok(())
 }
@@ -611,6 +648,100 @@ mod tests {
         )])
     }
 
+    fn native_metadata(database_type: DatabaseType) -> TableSyncMetadata {
+        match database_type {
+            DatabaseType::MySql => mysql_metadata("", "InnoDB")
+                .remove("users")
+                .expect("MySQL 测试元数据必须存在"),
+            DatabaseType::Postgres => TableSyncMetadata::Postgres {
+                relkind: "r".to_string(),
+                table_comment: String::new(),
+                primary_key_constraint: Some("users_pkey".to_string()),
+                columns: BTreeMap::from([(
+                    "id".to_string(),
+                    ColumnSyncMetadata::Postgres {
+                        identity_generation: String::new(),
+                        generated_kind: "NEVER".to_string(),
+                        generation_expression: None,
+                        default_expression: None,
+                        is_user_defined: false,
+                        type_schema: "pg_catalog".to_string(),
+                        type_name: "int8".to_string(),
+                        primary_key_ordinal: Some(1),
+                    },
+                )]),
+            },
+            DatabaseType::Sqlite => TableSyncMetadata::Sqlite {
+                create_sql: "CREATE TABLE users (id bigint PRIMARY KEY)".to_string(),
+                columns: BTreeMap::from([(
+                    "id".to_string(),
+                    ColumnSyncMetadata::Sqlite { hidden: 0 },
+                )]),
+            },
+            DatabaseType::SqlServer => TableSyncMetadata::SqlServer {
+                table_comment: String::new(),
+                primary_key_constraint: Some("PK_users".to_string()),
+                temporal_type: 0,
+                is_memory_optimized: false,
+                is_node: false,
+                is_edge: false,
+                is_filetable: false,
+                columns: BTreeMap::from([(
+                    "id".to_string(),
+                    ColumnSyncMetadata::SqlServer {
+                        is_identity: false,
+                        identity_seed: None,
+                        identity_increment: None,
+                        computed_definition: None,
+                        default_expression: None,
+                        default_constraint_name: None,
+                        default_constraint_is_system_named: None,
+                        is_user_defined: false,
+                        type_schema: "sys".to_string(),
+                        type_name: "bigint".to_string(),
+                        primary_key_ordinal: Some(1),
+                        is_hidden: false,
+                        generated_always_type: 0,
+                        is_sparse: false,
+                        is_column_set: false,
+                        is_filestream: false,
+                        is_rowguidcol: false,
+                        is_masked: false,
+                        encryption_type: None,
+                    },
+                )]),
+            },
+            DatabaseType::ClickHouse => TableSyncMetadata::ClickHouse {
+                engine: "MergeTree".to_string(),
+                engine_full: "MergeTree ORDER BY id".to_string(),
+                create_table_query: "CREATE TABLE users (id Int64) ENGINE = MergeTree ORDER BY id"
+                    .to_string(),
+                sorting_key: "id".to_string(),
+                partition_key: String::new(),
+                primary_key: "id".to_string(),
+                sampling_key: String::new(),
+                table_ttl: String::new(),
+                settings: String::new(),
+                unsupported_definitions: Vec::new(),
+                comment: String::new(),
+                columns: BTreeMap::from([(
+                    "id".to_string(),
+                    ColumnSyncMetadata::ClickHouse {
+                        default_kind: String::new(),
+                        default_expression: String::new(),
+                        compression_codec: String::new(),
+                        ttl_expression: String::new(),
+                        unsupported_clauses: Vec::new(),
+                        is_in_partition_key: false,
+                        is_in_sorting_key: true,
+                        is_in_primary_key: true,
+                        is_in_sampling_key: false,
+                    },
+                )]),
+            },
+        }
+    }
+
     #[test]
     fn build_preview_rejects_selected_table_that_is_no_longer_different() {
         for database_type in [
@@ -730,6 +861,125 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error, "源端表 users 的原生元数据与 MySQL 方言不兼容");
+    }
+
+    #[test]
+    fn build_preview_rejects_incompatible_source_and_target_column_metadata() {
+        for endpoint in ["源端", "目标端"] {
+            let incompatible = SyncSchemaSnapshot {
+                tables: vec![table("users", "bigint")],
+                metadata: BTreeMap::from([(
+                    "users".to_string(),
+                    TableSyncMetadata::MySql {
+                        engine: "InnoDB".to_string(),
+                        comment: String::new(),
+                        columns: BTreeMap::from([(
+                            "id".to_string(),
+                            ColumnSyncMetadata::Postgres {
+                                identity_generation: String::new(),
+                                generated_kind: "NEVER".to_string(),
+                                generation_expression: None,
+                                default_expression: None,
+                                is_user_defined: false,
+                                type_schema: "pg_catalog".to_string(),
+                                type_name: "int8".to_string(),
+                                primary_key_ordinal: Some(1),
+                            },
+                        )]),
+                    },
+                )]),
+            };
+            let compatible = SyncSchemaSnapshot {
+                tables: Vec::new(),
+                metadata: BTreeMap::new(),
+            };
+            let (source, target) = if endpoint == "源端" {
+                (&incompatible, &compatible)
+            } else {
+                (&compatible, &incompatible)
+            };
+
+            let error = build_database_sync_preview(
+                DatabaseType::MySql,
+                &request(vec!["users"], false),
+                source,
+                target,
+            )
+            .unwrap_err();
+
+            assert_eq!(
+                error,
+                format!("{endpoint}表 users 字段 id 的原生元数据与 MySQL 方言不兼容")
+            );
+        }
+    }
+
+    #[test]
+    fn build_preview_dispatches_source_only_table_to_every_dialect() {
+        let cases = [
+            (DatabaseType::MySql, "`app_copy`.`users`"),
+            (DatabaseType::Postgres, "\"app_copy\".\"users\""),
+            (DatabaseType::Sqlite, "\"app_copy\".\"users\""),
+            (DatabaseType::SqlServer, "[app_copy].[users]"),
+            (DatabaseType::ClickHouse, "`app_copy`.`users`"),
+        ];
+        for (database_type, qualified_table) in cases {
+            let source = SyncSchemaSnapshot {
+                tables: vec![table("users", "bigint")],
+                metadata: BTreeMap::from([("users".to_string(), native_metadata(database_type))]),
+            };
+
+            let preview = build_database_sync_preview(
+                database_type,
+                &request(vec!["users"], false),
+                &source,
+                &snapshot(Vec::new()),
+            )
+            .unwrap();
+
+            assert_eq!(preview.operations.len(), 1, "{database_type:?}");
+            assert_eq!(
+                preview.operations[0].kind,
+                DatabaseSyncOperationKind::CreateTable,
+                "{database_type:?}"
+            );
+            assert!(
+                preview.operations[0]
+                    .sql
+                    .iter()
+                    .any(|sql| sql.contains(qualified_table)),
+                "{database_type:?} 未生成预期限定表名: {:?}",
+                preview.operations[0].sql
+            );
+        }
+    }
+
+    #[test]
+    fn build_preview_fingerprint_changes_with_native_metadata() {
+        let mut source_table = table("users", "bigint");
+        source_table.columns[0].1.extra = "STORED GENERATED".to_string();
+        let target_table = source_table.clone();
+        let target = SyncSchemaSnapshot {
+            tables: vec![target_table],
+            metadata: mysql_metadata("price + quantity", "InnoDB"),
+        };
+        let preview = |expression| {
+            build_database_sync_preview(
+                DatabaseType::MySql,
+                &request(vec!["users"], false),
+                &SyncSchemaSnapshot {
+                    tables: vec![source_table.clone()],
+                    metadata: mysql_metadata(expression, "InnoDB"),
+                },
+                &target,
+            )
+            .unwrap()
+        };
+
+        assert_ne!(
+            preview("price * quantity").plan_fingerprint,
+            preview("price - quantity").plan_fingerprint
+        );
     }
 
     #[test]
