@@ -80,6 +80,93 @@ export interface DatabaseCompareResult {
   tables: TableDiff[];
 }
 
+export type DatabaseSyncRisk = "normal" | "high" | "destructive";
+
+export type DatabaseSyncOperationKind =
+  | "create_table"
+  | "add_column"
+  | "alter_column"
+  | "replace_primary_key"
+  | "drop_column"
+  | "drop_table"
+  | "update_comment";
+
+export interface DatabaseSyncRequest {
+  source: DatabaseCompareEndpointRequest;
+  target: DatabaseCompareEndpointRequest;
+  selected_tables: string[];
+  include_drops: boolean;
+}
+
+export interface DatabaseSyncOperation {
+  id: string;
+  table_name: string;
+  kind: DatabaseSyncOperationKind;
+  summary: string;
+  risk: DatabaseSyncRisk;
+  sql: string[];
+}
+
+export interface DatabaseSyncSkippedItem {
+  table_name: string;
+  summary: string;
+  reason: string;
+}
+
+export interface DatabaseSyncBlocker {
+  table_name: string;
+  summary: string;
+  reason: string;
+}
+
+export interface DatabaseSyncPlanSummary {
+  selected_tables: number;
+  executable_operations: number;
+  high_risk_operations: number;
+  destructive_operations: number;
+  skipped_items: number;
+  blockers: number;
+}
+
+export interface DatabaseSyncPreview {
+  plan_fingerprint: string;
+  summary: DatabaseSyncPlanSummary;
+  operations: DatabaseSyncOperation[];
+  skipped_items: DatabaseSyncSkippedItem[];
+  blockers: DatabaseSyncBlocker[];
+  can_execute: boolean;
+}
+
+export interface ExecuteDatabaseSyncRequest {
+  request: DatabaseSyncRequest;
+  plan_fingerprint: string;
+}
+
+export interface DatabaseSyncStatementSuccess {
+  operation_id: string;
+  statement_index: number;
+}
+
+export interface DatabaseSyncFailure {
+  operation_id: string;
+  statement_index: number;
+  error: string;
+}
+
+export type DatabaseSyncExecutionStatus =
+  | "succeeded"
+  | "partially_succeeded"
+  | "failed";
+
+export interface DatabaseSyncExecutionResult {
+  status: DatabaseSyncExecutionStatus;
+  completed_statements: DatabaseSyncStatementSuccess[];
+  failed: DatabaseSyncFailure | null;
+  pending_operation_ids: string[];
+  cleanup_errors: string[];
+  latest_compare_result: DatabaseCompareResult | null;
+}
+
 /** 数据库连接配置 */
 export interface ConnectionConfig {
   /** 唯一标识 (保存时自动生成) */

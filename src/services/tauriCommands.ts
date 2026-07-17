@@ -28,6 +28,10 @@ import type {
   EventInfo,
   DatabaseCompareEndpointRequest,
   DatabaseCompareResult,
+  DatabaseSyncRequest,
+  DatabaseSyncPreview,
+  ExecuteDatabaseSyncRequest,
+  DatabaseSyncExecutionResult,
 } from "../types";
 
 type SessionInfoCacheEntry = {
@@ -154,6 +158,14 @@ export async function compareDatabases(
     target,
   });
 }
+
+/** 生成数据库结构同步预览计划 */
+export const previewDatabaseSync = (request: DatabaseSyncRequest) =>
+  invoke<DatabaseSyncPreview>("preview_database_sync", { request });
+
+/** 按后端重新校验后的计划执行数据库结构同步 */
+export const executeDatabaseSync = (input: ExecuteDatabaseSyncRequest) =>
+  invoke<DatabaseSyncExecutionResult>("execute_database_sync", { input });
 
 /** 获取连接分组 */
 export async function listConnectionGroups(): Promise<ConnectionGroup[]> {
