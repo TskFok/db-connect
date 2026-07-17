@@ -96,6 +96,7 @@ pub fn run() {
             database_compare::list_compare_databases,
             database_compare::compare_databases,
             database_sync::preview_database_sync,
+            database_sync::execute_database_sync,
             database::get_primary_keys,
             database::column_ops::alter_column,
             database::column_ops::add_column,
