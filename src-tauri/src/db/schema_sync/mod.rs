@@ -3,10 +3,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::db::schema_compare::TableSnapshot;
+use crate::db::connection::DatabasePoolHandle;
+use crate::db::schema_compare::{compare_table_columns, load_schema_snapshot, TableSnapshot};
 use crate::models::types::{
     DatabaseSyncBlocker, DatabaseSyncOperation, DatabaseSyncOperationKind, DatabaseSyncPlanSummary,
     DatabaseSyncPreview, DatabaseSyncRequest, DatabaseSyncRisk, DatabaseSyncSkippedItem,
+    DatabaseType,
 };
 
 pub(crate) mod clickhouse;
@@ -190,6 +192,155 @@ pub(crate) struct TablePlanContext<'a> {
     pub source_metadata: Option<&'a TableSyncMetadata>,
     pub target_metadata: Option<&'a TableSyncMetadata>,
     pub include_drops: bool,
+}
+
+#[allow(dead_code, reason = "将在后续数据库同步命令中调用")]
+pub(crate) async fn load_sync_schema_snapshot(
+    pool: DatabasePoolHandle,
+    database: &str,
+) -> Result<SyncSchemaSnapshot, String> {
+    let tables = load_schema_snapshot(pool.clone(), database).await?;
+    let metadata = match pool {
+        DatabasePoolHandle::MySql(pool) => mysql::load_metadata(&pool, database).await?,
+        DatabasePoolHandle::Postgres(handle) => {
+            postgres::load_metadata(&handle.pool, database).await?
+        }
+        DatabasePoolHandle::Sqlite(handle) => sqlite::load_metadata(&handle.pool, database).await?,
+        DatabasePoolHandle::SqlServer(handle) => {
+            sqlserver::load_metadata(&handle.pool, database).await?
+        }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            clickhouse::load_metadata(&handle.client, database).await?
+        }
+    };
+    Ok(SyncSchemaSnapshot { tables, metadata })
+}
+
+fn database_type_name(database_type: DatabaseType) -> &'static str {
+    match database_type {
+        DatabaseType::MySql => "MySQL",
+        DatabaseType::Postgres => "PostgreSQL",
+        DatabaseType::Sqlite => "SQLite",
+        DatabaseType::SqlServer => "SQL Server",
+        DatabaseType::ClickHouse => "ClickHouse",
+    }
+}
+
+fn metadata_matches_database_type(
+    database_type: DatabaseType,
+    metadata: &TableSyncMetadata,
+) -> bool {
+    matches!(
+        (database_type, metadata),
+        (DatabaseType::MySql, TableSyncMetadata::MySql { .. })
+            | (DatabaseType::Postgres, TableSyncMetadata::Postgres { .. })
+            | (DatabaseType::Sqlite, TableSyncMetadata::Sqlite { .. })
+            | (DatabaseType::SqlServer, TableSyncMetadata::SqlServer { .. })
+            | (
+                DatabaseType::ClickHouse,
+                TableSyncMetadata::ClickHouse { .. }
+            )
+    )
+}
+
+fn validate_snapshot_metadata(
+    database_type: DatabaseType,
+    endpoint: &str,
+    snapshot: &SyncSchemaSnapshot,
+) -> Result<(), String> {
+    if let Some((table_name, _)) = snapshot
+        .metadata
+        .iter()
+        .find(|(_, metadata)| !metadata_matches_database_type(database_type, metadata))
+    {
+        return Err(format!(
+            "{endpoint}表 {table_name} 的原生元数据与 {} 方言不兼容",
+            database_type_name(database_type)
+        ));
+    }
+    Ok(())
+}
+
+#[allow(dead_code, reason = "将在后续数据库同步命令中调用")]
+pub(crate) fn build_database_sync_preview(
+    database_type: DatabaseType,
+    request: &DatabaseSyncRequest,
+    source: &SyncSchemaSnapshot,
+    target: &SyncSchemaSnapshot,
+) -> Result<DatabaseSyncPreview, String> {
+    let selected = normalize_selected_tables(&request.selected_tables)?;
+    validate_snapshot_metadata(database_type, "源端", source)?;
+    validate_snapshot_metadata(database_type, "目标端", target)?;
+
+    let source_tables = source
+        .tables
+        .iter()
+        .map(|table| (table.name.as_str(), table))
+        .collect::<BTreeMap<_, _>>();
+    let target_tables = target
+        .tables
+        .iter()
+        .map(|table| (table.name.as_str(), table))
+        .collect::<BTreeMap<_, _>>();
+    let mut fragments = PlanFragments::default();
+    for table_name in &selected {
+        let source_table = source_tables.get(table_name.as_str()).copied();
+        let target_table = target_tables.get(table_name.as_str()).copied();
+        if source_table.is_none() && target_table.is_none() {
+            return Err(format!("所选表 {table_name} 已不存在，请重新对比"));
+        }
+
+        let source_metadata = source.metadata.get(table_name);
+        let target_metadata = target.metadata.get(table_name);
+        let public_difference = match (source_table, target_table) {
+            (Some(source_table), Some(target_table)) => {
+                !compare_table_columns(source_table, target_table).is_empty()
+            }
+            _ => true,
+        };
+        let native_difference = source_metadata != target_metadata;
+        if !public_difference && !native_difference {
+            return Err(format!("所选表 {table_name} 已不存在差异，请重新对比"));
+        }
+
+        let context = TablePlanContext {
+            target_database: &request.target.database,
+            source: source_table,
+            target: target_table,
+            source_metadata,
+            target_metadata,
+            include_drops: request.include_drops,
+        };
+        let mut table_plan = match database_type {
+            DatabaseType::MySql => mysql::plan_table(context),
+            DatabaseType::Postgres => postgres::plan_table(context),
+            DatabaseType::Sqlite => sqlite::plan_table(context),
+            DatabaseType::SqlServer => sqlserver::plan_table(context),
+            DatabaseType::ClickHouse => clickhouse::plan_table(context),
+        };
+        if !public_difference
+            && native_difference
+            && table_plan.operations.is_empty()
+            && table_plan.skipped_items.is_empty()
+            && table_plan.blockers.is_empty()
+        {
+            table_plan.block(
+                table_name,
+                &format!("无法规划表 {table_name} 的原生元数据变更"),
+                &format!(
+                    "{} 方言未能安全表达检测到的原生元数据差异",
+                    database_type_name(database_type)
+                ),
+            );
+        }
+        fragments.operations.append(&mut table_plan.operations);
+        fragments
+            .skipped_items
+            .append(&mut table_plan.skipped_items);
+        fragments.blockers.append(&mut table_plan.blockers);
+    }
+
+    finalize_preview(request, source, target, fragments)
 }
 
 #[allow(dead_code, reason = "暂仅由后续命令尚未接入的计划收口调用")]
@@ -397,7 +548,7 @@ mod tests {
     use super::*;
     use crate::models::types::{
         ColumnSnapshot, DatabaseCompareEndpointRequest, DatabaseSyncOperationKind,
-        DatabaseSyncRequest, DatabaseSyncRisk,
+        DatabaseSyncRequest, DatabaseSyncRisk, DatabaseType,
     };
 
     fn request(selected_tables: Vec<&str>, include_drops: bool) -> DatabaseSyncRequest {
@@ -438,6 +589,147 @@ mod tests {
             tables,
             metadata: BTreeMap::new(),
         }
+    }
+
+    fn mysql_metadata(
+        generation_expression: &str,
+        engine: &str,
+    ) -> BTreeMap<String, TableSyncMetadata> {
+        BTreeMap::from([(
+            "users".to_string(),
+            TableSyncMetadata::MySql {
+                engine: engine.to_string(),
+                comment: String::new(),
+                columns: BTreeMap::from([(
+                    "id".to_string(),
+                    ColumnSyncMetadata::MySql {
+                        generation_expression: generation_expression.to_string(),
+                        primary_key_ordinal: Some(1),
+                    },
+                )]),
+            },
+        )])
+    }
+
+    #[test]
+    fn build_preview_rejects_selected_table_that_is_no_longer_different() {
+        for database_type in [
+            DatabaseType::MySql,
+            DatabaseType::Postgres,
+            DatabaseType::Sqlite,
+            DatabaseType::SqlServer,
+            DatabaseType::ClickHouse,
+        ] {
+            let error = build_database_sync_preview(
+                database_type,
+                &request(vec!["users"], false),
+                &snapshot(vec![table("users", "bigint")]),
+                &snapshot(vec![table("users", "bigint")]),
+            )
+            .unwrap_err();
+
+            assert_eq!(error, "所选表 users 已不存在差异，请重新对比");
+        }
+    }
+
+    #[test]
+    fn delete_disabled_preview_contains_skipped_item_and_no_drop_sql() {
+        let preview = build_database_sync_preview(
+            DatabaseType::MySql,
+            &request(vec!["legacy"], false),
+            &snapshot(Vec::new()),
+            &snapshot(vec![table("legacy", "bigint")]),
+        )
+        .unwrap();
+
+        assert!(!preview.can_execute);
+        assert!(preview.operations.is_empty());
+        assert_eq!(preview.skipped_items.len(), 1);
+        assert!(preview
+            .operations
+            .iter()
+            .flat_map(|operation| &operation.sql)
+            .all(|sql| !sql.to_ascii_uppercase().contains("DROP")));
+    }
+
+    #[test]
+    fn build_preview_dispatches_metadata_only_difference_to_mysql_planner() {
+        let mut source_table = table("users", "bigint");
+        source_table.columns[0].1.extra = "STORED GENERATED".to_string();
+        let target_table = source_table.clone();
+        let source = SyncSchemaSnapshot {
+            tables: vec![source_table],
+            metadata: mysql_metadata("price * quantity", "InnoDB"),
+        };
+        let target = SyncSchemaSnapshot {
+            tables: vec![target_table],
+            metadata: mysql_metadata("price + quantity", "InnoDB"),
+        };
+
+        let preview = build_database_sync_preview(
+            DatabaseType::MySql,
+            &request(vec!["users"], false),
+            &source,
+            &target,
+        )
+        .unwrap();
+
+        assert!(preview.can_execute);
+        assert_eq!(preview.operations.len(), 1);
+        assert!(preview.operations[0].sql.iter().any(|sql| sql
+            .contains("MODIFY COLUMN `id` bigint GENERATED ALWAYS AS (price * quantity) STORED")));
+    }
+
+    #[test]
+    fn build_preview_surfaces_unplanned_native_metadata_difference_as_blocker() {
+        let source = SyncSchemaSnapshot {
+            tables: vec![table("users", "bigint")],
+            metadata: mysql_metadata("", "InnoDB"),
+        };
+        let target = SyncSchemaSnapshot {
+            tables: vec![table("users", "bigint")],
+            metadata: mysql_metadata("", "MyISAM"),
+        };
+
+        let preview = build_database_sync_preview(
+            DatabaseType::MySql,
+            &request(vec!["users"], false),
+            &source,
+            &target,
+        )
+        .unwrap();
+
+        assert!(!preview.can_execute);
+        assert!(preview.operations.is_empty());
+        assert_eq!(preview.blockers.len(), 1);
+        assert_eq!(preview.blockers[0].table_name, "users");
+        assert!(preview.blockers[0].reason.contains("原生元数据差异"));
+    }
+
+    #[test]
+    fn build_preview_rejects_metadata_incompatible_with_database_type() {
+        let source = SyncSchemaSnapshot {
+            tables: vec![table("users", "bigint")],
+            metadata: BTreeMap::from([(
+                "users".to_string(),
+                TableSyncMetadata::Postgres {
+                    relkind: "r".to_string(),
+                    table_comment: String::new(),
+                    primary_key_constraint: None,
+                    columns: BTreeMap::new(),
+                },
+            )]),
+        };
+
+        let error = build_database_sync_preview(
+            DatabaseType::MySql,
+            &request(vec!["users"], false),
+            &source,
+            &snapshot(Vec::new()),
+        )
+        .unwrap_err();
+
+        assert_eq!(error, "源端表 users 的原生元数据与 MySQL 方言不兼容");
     }
 
     #[test]
