@@ -11,6 +11,7 @@ use crate::models::types::{
 
 pub(crate) mod mysql;
 pub(crate) mod postgres;
+pub(crate) mod sqlite;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) enum ColumnSyncMetadata {
@@ -28,8 +29,9 @@ pub(crate) enum ColumnSyncMetadata {
         type_name: String,
         primary_key_ordinal: Option<u32>,
     },
-    #[allow(dead_code, reason = "将在后续 SQLite 同步方言中使用")]
-    Sqlite { hidden: i64 },
+    Sqlite {
+        hidden: i64,
+    },
     #[allow(dead_code, reason = "将在后续 SQL Server 同步方言中使用")]
     SqlServer {
         is_identity: bool,
@@ -58,7 +60,6 @@ pub(crate) enum TableSyncMetadata {
         primary_key_constraint: Option<String>,
         columns: BTreeMap<String, ColumnSyncMetadata>,
     },
-    #[allow(dead_code, reason = "将在后续 SQLite 同步方言中使用")]
     Sqlite {
         create_sql: String,
         columns: BTreeMap<String, ColumnSyncMetadata>,
