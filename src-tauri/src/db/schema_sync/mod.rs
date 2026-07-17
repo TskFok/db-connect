@@ -10,6 +10,7 @@ use crate::models::types::{
 };
 
 pub(crate) mod mysql;
+pub(crate) mod postgres;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) enum ColumnSyncMetadata {
@@ -17,11 +18,15 @@ pub(crate) enum ColumnSyncMetadata {
         generation_expression: String,
         primary_key_ordinal: Option<u32>,
     },
-    #[allow(dead_code, reason = "将在后续 PostgreSQL 同步方言中使用")]
     Postgres {
         identity_generation: String,
         generated_kind: String,
         generation_expression: Option<String>,
+        default_expression: Option<String>,
+        is_user_defined: bool,
+        type_schema: String,
+        type_name: String,
+        primary_key_ordinal: Option<u32>,
     },
     #[allow(dead_code, reason = "将在后续 SQLite 同步方言中使用")]
     Sqlite { hidden: i64 },
@@ -47,7 +52,6 @@ pub(crate) enum TableSyncMetadata {
         comment: String,
         columns: BTreeMap<String, ColumnSyncMetadata>,
     },
-    #[allow(dead_code, reason = "将在后续 PostgreSQL 同步方言中使用")]
     Postgres {
         relkind: String,
         table_comment: String,
