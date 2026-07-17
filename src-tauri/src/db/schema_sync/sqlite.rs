@@ -20,10 +20,15 @@ pub(crate) fn metadata_sql(schema: &str) -> String {
         "SELECT objects.name AS table_name, COALESCE(objects.sql, '') AS create_sql, \
                 columns.name AS column_name, columns.hidden \
          FROM {}.sqlite_schema objects \
+         JOIN pragma_table_list table_list \
+           ON table_list.schema = {} \
+          AND table_list.name = objects.name \
+          AND table_list.type = 'table' \
          JOIN pragma_table_xinfo(objects.name, {}) columns \
          WHERE objects.type = 'table' AND lower(objects.name) NOT GLOB 'sqlite_*' \
          ORDER BY objects.name, columns.cid",
         sqlite_id(schema),
+        sqlite_str(schema),
         sqlite_str(schema)
     )
 }
@@ -106,6 +111,25 @@ fn plan_target_only_table(
     context: &TablePlanContext<'_>,
     target: &TableSnapshot,
 ) {
+    let metadata = match table_metadata(context.target_metadata, &target.name) {
+        Ok(metadata) => metadata,
+        Err(reason) => {
+            plan.block(
+                &target.name,
+                &format!("无法删除表 {}", target.name),
+                &reason,
+            );
+            return;
+        }
+    };
+    if let Err(reason) = validate_physical_table(metadata) {
+        plan.block(
+            &target.name,
+            &format!("无法删除表 {}", target.name),
+            &reason,
+        );
+        return;
+    }
     if context.include_drops {
         plan.operation(
             OperationPhase::DropTable,
@@ -161,16 +185,12 @@ fn column_hidden(
 }
 
 fn validate_plain_table(metadata: SqliteTableMetadataRef<'_>) -> Result<(), String> {
+    validate_physical_table(metadata)?;
     let create_sql = metadata.create_sql.trim().trim_end_matches(';').trim();
-    if create_sql.is_empty() {
-        return Err("SQLite 原始建表声明为空，无法确认表形态".to_string());
-    }
-    let upper = create_sql.to_ascii_uppercase();
-    if upper.starts_with("CREATE VIRTUAL TABLE") {
-        return Err("SQLite 虚拟表无法由普通建表 builder 无损表达".to_string());
-    }
-    if !upper.starts_with("CREATE TABLE") {
-        return Err("SQLite 原始建表声明不是普通 CREATE TABLE".to_string());
+    if contains_unquoted_keyword(create_sql, "AUTOINCREMENT") {
+        return Err(
+            "SQLite 原始建表声明包含 AUTOINCREMENT，无法由结构化 builder 无损重建".to_string(),
+        );
     }
     let Some((_, suffix)) = create_sql.rsplit_once(')') else {
         return Err("SQLite 原始建表声明缺少完整字段列表".to_string());
@@ -180,6 +200,86 @@ fn validate_plain_table(metadata: SqliteTableMetadataRef<'_>) -> Result<(), Stri
             "SQLite 表选项 `{}` 无法由普通建表 builder 无损表达",
             suffix.trim()
         ));
+    }
+    Ok(())
+}
+
+fn contains_unquoted_keyword(sql: &str, keyword: &str) -> bool {
+    let bytes = sql.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\'' | b'"' | b'`' => {
+                let quote = bytes[index];
+                index += 1;
+                while index < bytes.len() {
+                    if bytes[index] == quote {
+                        if bytes.get(index + 1) == Some(&quote) {
+                            index += 2;
+                            continue;
+                        }
+                        index += 1;
+                        break;
+                    }
+                    index += 1;
+                }
+            }
+            b'[' => {
+                index += 1;
+                while index < bytes.len() {
+                    if bytes[index] == b']' {
+                        index += 1;
+                        break;
+                    }
+                    index += 1;
+                }
+            }
+            b'-' if bytes.get(index + 1) == Some(&b'-') => {
+                index += 2;
+                while index < bytes.len() && !matches!(bytes[index], b'\r' | b'\n') {
+                    index += 1;
+                }
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                index += 2;
+                while index + 1 < bytes.len() {
+                    if bytes[index] == b'*' && bytes[index + 1] == b'/' {
+                        index += 2;
+                        break;
+                    }
+                    index += 1;
+                }
+            }
+            byte if byte.is_ascii_alphabetic() || byte == b'_' => {
+                let start = index;
+                index += 1;
+                while bytes
+                    .get(index)
+                    .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+                {
+                    index += 1;
+                }
+                if sql[start..index].eq_ignore_ascii_case(keyword) {
+                    return true;
+                }
+            }
+            _ => index += 1,
+        }
+    }
+    false
+}
+
+fn validate_physical_table(metadata: SqliteTableMetadataRef<'_>) -> Result<(), String> {
+    let create_sql = metadata.create_sql.trim().trim_end_matches(';').trim();
+    if create_sql.is_empty() {
+        return Err("SQLite 原始建表声明为空，无法确认表形态".to_string());
+    }
+    let upper = create_sql.to_ascii_uppercase();
+    if upper.starts_with("CREATE VIRTUAL TABLE") {
+        return Err("SQLite 虚拟表不在首期物理表同步范围内".to_string());
+    }
+    if !upper.starts_with("CREATE TABLE") {
+        return Err("SQLite 原始建表声明不是普通 CREATE TABLE".to_string());
     }
     Ok(())
 }
@@ -311,6 +411,28 @@ fn plan_changed_table(
     source: &TableSnapshot,
     target: &TableSnapshot,
 ) {
+    let source_metadata = match table_metadata(context.source_metadata, &source.name) {
+        Ok(metadata) => metadata,
+        Err(reason) => {
+            plan.block(&source.name, "无法规划 SQLite 表同步", &reason);
+            return;
+        }
+    };
+    let target_metadata = match table_metadata(context.target_metadata, &target.name) {
+        Ok(metadata) => metadata,
+        Err(reason) => {
+            plan.block(&source.name, "无法规划 SQLite 表同步", &reason);
+            return;
+        }
+    };
+    if let Err(reason) = validate_physical_table(source_metadata) {
+        plan.block(&source.name, "无法规划 SQLite 表同步", &reason);
+        return;
+    }
+    if let Err(reason) = validate_physical_table(target_metadata) {
+        plan.block(&source.name, "无法规划 SQLite 表同步", &reason);
+        return;
+    }
     let differences = compare_table_columns(source, target);
     let max_target_position = target
         .columns
@@ -318,16 +440,6 @@ fn plan_changed_table(
         .map(|(_, column)| column.ordinal_position)
         .max()
         .unwrap_or_default();
-    let source_metadata = context.source_metadata.and_then(|metadata| match metadata {
-        TableSyncMetadata::Sqlite {
-            create_sql,
-            columns,
-        } => Some(SqliteTableMetadataRef {
-            create_sql,
-            columns,
-        }),
-        _ => None,
-    });
     let mut add_columns = Vec::new();
     let mut drop_columns = Vec::new();
 
@@ -353,15 +465,7 @@ fn plan_changed_table(
                     );
                     continue;
                 }
-                let Some(metadata) = source_metadata else {
-                    plan.block(
-                        &source.name,
-                        &format!("无法新增字段 {}.{}", source.name, difference.name),
-                        "缺少 SQLite 原生表元数据",
-                    );
-                    continue;
-                };
-                let hidden = match column_hidden(metadata, &source.name, &difference.name) {
+                let hidden = match column_hidden(source_metadata, &source.name, &difference.name) {
                     Ok(hidden) => hidden,
                     Err(reason) => {
                         plan.block(
@@ -710,6 +814,8 @@ mod tests {
     fn metadata_query_reads_sqlite_schema_once() {
         let sql = metadata_sql("ma\"in");
         assert!(sql.contains("\"ma\"\"in\".sqlite_schema"));
+        assert!(sql.contains("pragma_table_list"));
+        assert!(sql.contains("table_list.type = 'table'"));
         assert!(sql.contains("objects.type = 'table'"));
         assert!(sql.contains("lower(objects.name) NOT GLOB 'sqlite_*'"));
         assert!(sql.contains("pragma_table_xinfo(objects.name"));
@@ -796,6 +902,88 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
+    #[tokio::test]
+    async fn excludes_virtual_tables_and_their_shadow_tables_from_metadata() {
+        let path = std::env::temp_dir().join(format!(
+            "db-connect-schema-sync-sqlite-physical-tables-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        std::fs::File::create(&path).expect("create sqlite file");
+        let pool = SqliteConfig::new(path.to_str().expect("utf8 path"))
+            .create_pool(Runtime::Tokio1)
+            .expect("create pool");
+        let conn = pool.get().await.expect("get connection");
+        conn.interact(|conn| {
+            conn.execute_batch(
+                "CREATE TABLE users (id INTEGER);\
+                 CREATE VIRTUAL TABLE search_documents USING fts5(body);",
+            )
+        })
+        .await
+        .expect("interact")
+        .expect("create schema");
+        drop(conn);
+
+        let result = load_metadata(&pool, "main").await.expect("load metadata");
+        assert_eq!(
+            result.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["users"]
+        );
+
+        pool.close();
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn real_autoincrement_table_is_blocked_by_native_declaration() {
+        let path = std::env::temp_dir().join(format!(
+            "db-connect-schema-sync-sqlite-autoincrement-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        std::fs::File::create(&path).expect("create sqlite file");
+        let pool = SqliteConfig::new(path.to_str().expect("utf8 path"))
+            .create_pool(Runtime::Tokio1)
+            .expect("create pool");
+        let conn = pool.get().await.expect("get connection");
+        conn.interact(|conn| {
+            conn.execute_batch(
+                "CREATE TABLE users (\
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,\
+                   name TEXT\
+                 );",
+            )
+        })
+        .await
+        .expect("interact")
+        .expect("create schema");
+        drop(conn);
+
+        let tables = crate::db::schema_compare::sqlite::load_snapshot(&pool, "main")
+            .await
+            .expect("load snapshot");
+        let native = load_metadata(&pool, "main").await.expect("load metadata");
+        let source = tables
+            .iter()
+            .find(|table| table.name == "users")
+            .expect("users table");
+        let plan = plan_table(TablePlanContext {
+            target_database: "main",
+            source: Some(source),
+            target: None,
+            source_metadata: native.get("users"),
+            target_metadata: None,
+            include_drops: false,
+        });
+        assert!(plan.operations.is_empty());
+        assert!(plan
+            .blockers
+            .iter()
+            .any(|blocker| blocker.reason.contains("AUTOINCREMENT")));
+
+        pool.close();
+        let _ = std::fs::remove_file(path);
+    }
+
     #[test]
     fn creates_plain_table_from_structured_snapshot_without_copying_excluded_objects() {
         let source = table(
@@ -834,6 +1022,33 @@ mod tests {
         assert!(sql.contains("DEFAULT 'anon'"));
         assert!(!sql.contains("DEFAULT '''anon'''"));
         assert!(!sql.contains("FOREIGN KEY"));
+    }
+
+    #[test]
+    fn autoincrement_inside_default_literal_is_not_treated_as_native_keyword() {
+        let source = table(
+            "notes",
+            vec![(
+                "body",
+                column(1, "TEXT", true, Some("'AUTOINCREMENT is text'"), false, ""),
+            )],
+        );
+        let native = metadata(
+            "CREATE TABLE notes (body TEXT DEFAULT 'AUTOINCREMENT is text')",
+            vec![("body", 0)],
+        );
+
+        let plan = plan_table(TablePlanContext {
+            target_database: "main",
+            source: Some(&source),
+            target: None,
+            source_metadata: Some(&native),
+            target_metadata: None,
+            include_drops: false,
+        });
+        assert!(plan.blockers.is_empty());
+        assert_eq!(plan.operations.len(), 1);
+        assert!(plan.operations[0].sql[0].contains("DEFAULT 'AUTOINCREMENT is text'"));
     }
 
     #[test]
@@ -1091,13 +1306,18 @@ mod tests {
                 ("old\"value", column(2, "TEXT", true, None, false, "")),
             ],
         );
+        let source_native = metadata("CREATE TABLE users (id INTEGER)", vec![("id", 0)]);
+        let target_native = metadata(
+            "CREATE TABLE users (id INTEGER, old_value TEXT)",
+            vec![("id", 0), ("old\"value", 0)],
+        );
 
         let protected = plan_table(TablePlanContext {
             target_database: "ma\"in",
             source: Some(&source),
             target: Some(&target),
-            source_metadata: None,
-            target_metadata: None,
+            source_metadata: Some(&source_native),
+            target_metadata: Some(&target_native),
             include_drops: false,
         });
         assert!(all_sql(&protected).iter().all(|sql| !sql.contains("DROP")));
@@ -1107,8 +1327,8 @@ mod tests {
             target_database: "ma\"in",
             source: Some(&source),
             target: Some(&target),
-            source_metadata: None,
-            target_metadata: None,
+            source_metadata: Some(&source_native),
+            target_metadata: Some(&target_native),
             include_drops: true,
         });
         assert_eq!(
@@ -1123,12 +1343,13 @@ mod tests {
             "old\"table",
             vec![("id", column(1, "INTEGER", false, None, false, ""))],
         );
+        let target_native = metadata("CREATE TABLE old_table (id INTEGER)", vec![("id", 0)]);
         let protected = plan_table(TablePlanContext {
             target_database: "ma\"in",
             source: None,
             target: Some(&target),
             source_metadata: None,
-            target_metadata: None,
+            target_metadata: Some(&target_native),
             include_drops: false,
         });
         assert!(all_sql(&protected).iter().all(|sql| !sql.contains("DROP")));
@@ -1139,12 +1360,52 @@ mod tests {
             source: None,
             target: Some(&target),
             source_metadata: None,
-            target_metadata: None,
+            target_metadata: Some(&target_native),
             include_drops: true,
         });
         assert_eq!(
             all_sql(&allowed),
             vec!["DROP TABLE \"ma\"\"in\".\"old\"\"table\""]
         );
+    }
+
+    #[test]
+    fn missing_plain_table_metadata_blocks_table_and_column_drops() {
+        let target_only = table(
+            "search_documents",
+            vec![("body", column(1, "TEXT", true, None, false, ""))],
+        );
+        let target_only_plan = plan_table(TablePlanContext {
+            target_database: "main",
+            source: None,
+            target: Some(&target_only),
+            source_metadata: None,
+            target_metadata: None,
+            include_drops: true,
+        });
+        assert!(target_only_plan.operations.is_empty());
+        assert_eq!(target_only_plan.blockers.len(), 1);
+
+        let source = table(
+            "search_documents",
+            vec![("body", column(1, "TEXT", true, None, false, ""))],
+        );
+        let target = table(
+            "search_documents",
+            vec![
+                ("body", column(1, "TEXT", true, None, false, "")),
+                ("rank", column(2, "REAL", true, None, false, "")),
+            ],
+        );
+        let changed_plan = plan_table(TablePlanContext {
+            target_database: "main",
+            source: Some(&source),
+            target: Some(&target),
+            source_metadata: None,
+            target_metadata: None,
+            include_drops: true,
+        });
+        assert!(changed_plan.operations.is_empty());
+        assert_eq!(changed_plan.blockers.len(), 1);
     }
 }
