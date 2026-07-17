@@ -516,6 +516,14 @@ fn plan_changed_table(
     if let Some((source_primary_keys, target_primary_keys)) =
         primary_keys.filter(|(source, target)| source != target)
     {
+        if !target_primary_keys.is_empty() && !context.include_drops {
+            plan.block(
+                &source.name,
+                &format!("无法替换表 {} 的主键", source.name),
+                "目标端已有主键，替换主键需要先删除旧主键，但未开启包含删除操作",
+            );
+            return;
+        }
         let mut sql = Vec::new();
         if !target_primary_keys.is_empty() {
             sql.push(format!(
@@ -988,7 +996,7 @@ mod tests {
             target: Some(&target),
             source_metadata: Some(&source_metadata),
             target_metadata: Some(&target_metadata),
-            include_drops: false,
+            include_drops: true,
         });
         let sql = all_sql(&plan);
 
@@ -996,6 +1004,72 @@ mod tests {
         assert!(sql
             .iter()
             .any(|sql| sql.contains("ADD PRIMARY KEY (`b`, `a`)")));
+    }
+
+    #[test]
+    fn blocks_replacing_existing_primary_key_when_drops_are_disabled() {
+        let source = table(
+            "users",
+            vec![("id", 1, "bigint", false), ("code", 2, "varchar(32)", true)],
+        );
+        let target = table(
+            "users",
+            vec![("id", 1, "bigint", true), ("code", 2, "varchar(32)", false)],
+        );
+        let fragments = plan_table(TablePlanContext {
+            target_database: "copy",
+            source: Some(&source),
+            target: Some(&target),
+            source_metadata: None,
+            target_metadata: None,
+            include_drops: false,
+        });
+
+        assert!(!all_sql(&fragments)
+            .iter()
+            .any(|sql| sql.to_ascii_uppercase().contains("DROP")));
+        assert!(!fragments
+            .operations
+            .iter()
+            .any(|operation| operation.kind == DatabaseSyncOperationKind::ReplacePrimaryKey));
+        assert_eq!(fragments.blockers.len(), 1);
+        assert!(fragments.blockers[0]
+            .reason
+            .contains("替换主键需要先删除旧主键"));
+        assert!(fragments.blockers[0].reason.contains("未开启包含删除操作"));
+
+        let request = DatabaseSyncRequest {
+            source: DatabaseCompareEndpointRequest {
+                saved_connection_id: "source".to_string(),
+                database: "app".to_string(),
+            },
+            target: DatabaseCompareEndpointRequest {
+                saved_connection_id: "target".to_string(),
+                database: "copy".to_string(),
+            },
+            selected_tables: vec!["users".to_string()],
+            include_drops: false,
+        };
+        let preview = finalize_preview(
+            &request,
+            &SyncSchemaSnapshot {
+                tables: vec![source],
+                metadata: BTreeMap::new(),
+            },
+            &SyncSchemaSnapshot {
+                tables: vec![target],
+                metadata: BTreeMap::new(),
+            },
+            fragments,
+        )
+        .unwrap();
+
+        assert!(!preview.can_execute);
+        assert!(!preview
+            .operations
+            .iter()
+            .flat_map(|operation| &operation.sql)
+            .any(|sql| sql.to_ascii_uppercase().contains("DROP")));
     }
 
     #[test]
