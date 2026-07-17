@@ -12,6 +12,7 @@ use crate::models::types::{
 pub(crate) mod mysql;
 pub(crate) mod postgres;
 pub(crate) mod sqlite;
+pub(crate) mod sqlserver;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) enum ColumnSyncMetadata {
@@ -35,10 +36,24 @@ pub(crate) enum ColumnSyncMetadata {
     #[allow(dead_code, reason = "将在后续 SQL Server 同步方言中使用")]
     SqlServer {
         is_identity: bool,
+        identity_seed: Option<String>,
+        identity_increment: Option<String>,
         computed_definition: Option<String>,
+        default_expression: Option<String>,
+        default_constraint_name: Option<String>,
+        default_constraint_is_system_named: Option<bool>,
         is_user_defined: bool,
         type_schema: String,
         type_name: String,
+        primary_key_ordinal: Option<u32>,
+        is_hidden: bool,
+        generated_always_type: i32,
+        is_sparse: bool,
+        is_column_set: bool,
+        is_filestream: bool,
+        is_rowguidcol: bool,
+        is_masked: bool,
+        encryption_type: Option<i32>,
     },
     #[allow(dead_code, reason = "将在后续 ClickHouse 同步方言中使用")]
     ClickHouse {
@@ -68,6 +83,11 @@ pub(crate) enum TableSyncMetadata {
     SqlServer {
         table_comment: String,
         primary_key_constraint: Option<String>,
+        temporal_type: i32,
+        is_memory_optimized: bool,
+        is_node: bool,
+        is_edge: bool,
+        is_filetable: bool,
         columns: BTreeMap<String, ColumnSyncMetadata>,
     },
     #[allow(dead_code, reason = "将在后续 ClickHouse 同步方言中使用")]

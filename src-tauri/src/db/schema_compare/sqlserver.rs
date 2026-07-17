@@ -145,4 +145,16 @@ mod tests {
             "[crm].[Phone]"
         );
     }
+
+    #[test]
+    fn sqlserver_float_precision_is_preserved_in_snapshot_type() {
+        assert_eq!(
+            format_comparison_column_type("float", "sys", false, None, Some(24), None),
+            "float(24)"
+        );
+        assert_eq!(
+            format_comparison_column_type("float", "sys", false, None, Some(53), None),
+            "float(53)"
+        );
+    }
 }

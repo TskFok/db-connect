@@ -10,6 +10,7 @@
 use crate::db::sql_utils::{sqlserver_id, sqlserver_str, validate_column_type};
 use crate::db::sqlserver::{normalize_sqlserver_error, SqlServerPool};
 use crate::models::types::{AddColumnRequest, AlterColumnRequest, ColumnInfo, CreateTableRequest};
+use sha2::{Digest, Sha256};
 
 const SYSTEM_SCHEMAS: &[&str] = &[
     "sys",
@@ -295,8 +296,9 @@ pub fn build_rename_schema_sqls(
     Ok(sqls)
 }
 
-fn primary_key_constraint_name(table: &str) -> String {
-    let safe = table
+fn stable_constraint_name(prefix: &str, parts: &[&str]) -> String {
+    let raw = format!("{}_{}", prefix, parts.join("_"));
+    let safe = raw
         .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '_' {
@@ -306,21 +308,25 @@ fn primary_key_constraint_name(table: &str) -> String {
             }
         })
         .collect::<String>();
-    format!("PK_{}", safe)
+    if parts.len() == 1 && safe == raw && safe.chars().count() <= 128 {
+        return safe;
+    }
+    let identity = format!("{}\0{}", prefix, parts.join("\0"));
+    let digest = format!("{:x}", Sha256::digest(identity.as_bytes()));
+    let suffix = format!("_{}", &digest[..12]);
+    let base = safe
+        .chars()
+        .take(128 - suffix.chars().count())
+        .collect::<String>();
+    format!("{base}{suffix}")
 }
 
-fn default_constraint_name(table: &str, column: &str) -> String {
-    let raw = format!("DF_{}_{}", table, column);
-    raw.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .take(120)
-        .collect()
+pub(crate) fn primary_key_constraint_name(table: &str) -> String {
+    stable_constraint_name("PK", &[table])
+}
+
+pub(crate) fn default_constraint_name(table: &str, column: &str) -> String {
+    stable_constraint_name("DF", &[table, column])
 }
 
 pub fn build_create_table_sqls(
@@ -459,7 +465,17 @@ pub fn build_add_column_sqls(
 
 pub fn build_drop_column_sql(schema: &str, table: &str, column: &str) -> String {
     format!(
-        "{}\nALTER TABLE {}.{} DROP COLUMN {}",
+        "SET XACT_ABORT ON;\n\
+         BEGIN TRY\n\
+           BEGIN TRANSACTION;\n\
+         {}\n\
+         ALTER TABLE {}.{} DROP COLUMN {};\n\
+           COMMIT TRANSACTION;\n\
+         END TRY\n\
+         BEGIN CATCH\n\
+           IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;\n\
+           THROW;\n\
+         END CATCH",
         build_drop_default_constraint_sql(schema, table, column),
         sqlserver_id(schema),
         sqlserver_id(table),
@@ -490,18 +506,51 @@ fn build_add_default_constraint_sql(
     table: &str,
     column: &str,
     default_value: &Option<String>,
+    constraint_name: Option<&str>,
 ) -> Result<Option<String>, String> {
     let Some(default) = default_sql(default_value)? else {
         return Ok(None);
+    };
+    let generated_name;
+    let constraint_name = match constraint_name {
+        Some(name) => name,
+        None => {
+            generated_name = default_constraint_name(table, column);
+            &generated_name
+        }
     };
     Ok(Some(format!(
         "ALTER TABLE {}.{} ADD CONSTRAINT {} DEFAULT {} FOR {}",
         sqlserver_id(schema),
         sqlserver_id(table),
-        sqlserver_id(&default_constraint_name(table, column)),
+        sqlserver_id(constraint_name),
         default,
         sqlserver_id(column)
     )))
+}
+
+fn build_replace_default_constraint_sql(
+    schema: &str,
+    table: &str,
+    column: &str,
+    add_default: Option<String>,
+) -> String {
+    let add_default = add_default.map(|sql| format!("{sql};")).unwrap_or_default();
+    format!(
+        "SET XACT_ABORT ON;\n\
+         BEGIN TRY\n\
+           BEGIN TRANSACTION;\n\
+         {}\n\
+         {}\n\
+           COMMIT TRANSACTION;\n\
+         END TRY\n\
+         BEGIN CATCH\n\
+           IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;\n\
+           THROW;\n\
+         END CATCH",
+        build_drop_default_constraint_sql(schema, table, column),
+        add_default
+    )
 }
 
 pub fn build_alter_column_sqls(
@@ -509,6 +558,16 @@ pub fn build_alter_column_sqls(
     table: &str,
     current: &ColumnInfo,
     request: &AlterColumnRequest,
+) -> Result<Vec<String>, String> {
+    build_alter_column_sqls_with_default_constraint_name(schema, table, current, request, None)
+}
+
+pub(crate) fn build_alter_column_sqls_with_default_constraint_name(
+    schema: &str,
+    table: &str,
+    current: &ColumnInfo,
+    request: &AlterColumnRequest,
+    default_constraint_name: Option<&str>,
 ) -> Result<Vec<String>, String> {
     if request.is_primary.is_some() {
         return Err(
@@ -556,16 +615,19 @@ pub fn build_alter_column_sqls(
     let new_default = normalize_default(request.default_value.as_deref());
     let cur_default = normalize_default(current.default_value.as_deref());
     if new_default != cur_default {
-        sqls.push(build_drop_default_constraint_sql(
+        let add_default = build_add_default_constraint_sql(
             schema,
             table,
             &target_name,
+            &request.default_value,
+            default_constraint_name,
+        )?;
+        sqls.push(build_replace_default_constraint_sql(
+            schema,
+            table,
+            &target_name,
+            add_default,
         ));
-        if let Some(add_default) =
-            build_add_default_constraint_sql(schema, table, &target_name, &request.default_value)?
-        {
-            sqls.push(add_default);
-        }
     }
 
     if request.comment != current.comment {
@@ -1024,5 +1086,71 @@ mod tests {
                 .expect_err("SQL Server should reject primary key changes in alter column"),
             "SQL Server 暂不支持通过修改列入口调整主键，请使用专门的索引/约束管理功能"
         );
+    }
+
+    #[test]
+    fn generated_constraint_names_are_bounded_and_collision_resistant() {
+        let plain_pk = primary_key_constraint_name("a_b");
+        let escaped_pk = primary_key_constraint_name("a-b");
+        assert_eq!(plain_pk, "PK_a_b");
+        assert_ne!(plain_pk, escaped_pk);
+        assert!(escaped_pk.starts_with("PK_a_b_"));
+
+        let long_pk = primary_key_constraint_name(&"a".repeat(128));
+        assert!(long_pk.chars().count() <= 128);
+        assert_ne!(long_pk, primary_key_constraint_name(&"a".repeat(127)));
+
+        let plain_default = default_constraint_name("a_b", "value");
+        let escaped_default = default_constraint_name("a-b", "value");
+        assert_ne!(plain_default, escaped_default);
+        assert!(escaped_default.starts_with("DF_a_b_value_"));
+        assert_ne!(
+            default_constraint_name("a_b", "c"),
+            default_constraint_name("a", "b_c")
+        );
+        assert!(
+            default_constraint_name(&"t".repeat(128), &"c".repeat(128))
+                .chars()
+                .count()
+                <= 128
+        );
+    }
+
+    #[test]
+    fn default_constraint_replacement_is_one_atomic_batch() {
+        let current = col("value", "bigint", false, Some("1"), "", "");
+        let request = AlterColumnRequest {
+            old_name: "value".to_string(),
+            new_name: "value".to_string(),
+            column_type: "bigint".to_string(),
+            nullable: false,
+            default_value: Some("2".to_string()),
+            extra: String::new(),
+            comment: String::new(),
+            is_primary: None,
+            column_placement: None,
+        };
+
+        let sql = build_alter_column_sqls("dbo", "users", &current, &request)
+            .expect("默认约束替换应可生成 SQL");
+        assert_eq!(sql.len(), 1);
+        assert!(sql[0].contains("SET XACT_ABORT ON"));
+        assert!(sql[0].contains("BEGIN TRANSACTION"));
+        assert!(sql[0].contains("DROP CONSTRAINT"));
+        assert!(sql[0].contains("ADD CONSTRAINT"));
+        assert!(sql[0].contains("COMMIT TRANSACTION"));
+        assert!(sql[0].contains("ROLLBACK TRANSACTION"));
+    }
+
+    #[test]
+    fn drop_column_rolls_back_default_constraint_drop_when_column_drop_fails() {
+        let sql = build_drop_column_sql("dbo", "users", "email");
+        let begin = sql.find("BEGIN TRANSACTION").expect("事务开始");
+        let drop_default = sql.find("DROP CONSTRAINT").expect("删除默认约束");
+        let drop_column = sql.find("DROP COLUMN").expect("删除字段");
+        let commit = sql.find("COMMIT TRANSACTION").expect("提交事务");
+        assert!(begin < drop_default && drop_default < drop_column && drop_column < commit);
+        assert!(sql.contains("IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION"));
+        assert!(sql.contains("THROW;"));
     }
 }

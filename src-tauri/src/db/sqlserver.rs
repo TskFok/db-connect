@@ -374,6 +374,10 @@ pub(crate) fn format_sqlserver_column_type(
             (Some(p), Some(s)) => format!("{}({},{})", type_name, p, s),
             _ => type_name.to_string(),
         },
+        "float" => match precision {
+            Some(p) => format!("{}({})", type_name, p),
+            None => type_name.to_string(),
+        },
         "datetime2" | "datetimeoffset" | "time" => match scale {
             Some(s) => format!("{}({})", type_name, s),
             _ => type_name.to_string(),
