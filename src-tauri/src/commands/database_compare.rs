@@ -1,124 +1,18 @@
 use super::connection::load_saved_connections_internal;
-use crate::db::connection::{ActiveConnection, ConnectionManager, DatabasePoolHandle};
+use super::temporary_database::{
+    find_saved_connection, merge_operation_and_cleanup, merge_single_operation_and_cleanup,
+    redact_error_text, temporary_connection_error, validate_endpoint_configs,
+    TemporaryDatabaseConnection,
+};
+use crate::db::connection::DatabasePoolHandle;
 use crate::db::schema_compare::{
     compare_schema_snapshots, list_databases_for_compare, load_schema_snapshot, TableSnapshot,
 };
 use crate::models::types::{
     CompareEndpointInfo, ConnectionConfig, DatabaseCompareEndpointRequest, DatabaseCompareResult,
-    PASSWORD_REDACTED,
 };
-use std::future::Future;
-use std::time::Duration;
 use tauri::AppHandle;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
-
-const TEMPORARY_CONNECTION_CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
-
-struct TemporaryConnection {
-    active: ActiveConnection,
-}
-
-impl TemporaryConnection {
-    async fn open(config: ConnectionConfig) -> Result<Self, String> {
-        let (_, active) = ConnectionManager::prepare_connection(config).await?;
-        Ok(Self { active })
-    }
-
-    fn pool_handle(&self) -> DatabasePoolHandle {
-        self.active.database.pool_handle()
-    }
-
-    async fn close(self) -> Result<(), String> {
-        run_cleanup_with_timeout(
-            self.active.database.disconnect(),
-            TEMPORARY_CONNECTION_CLOSE_TIMEOUT,
-        )
-        .await
-    }
-}
-
-async fn run_cleanup_with_timeout<F>(cleanup: F, timeout: Duration) -> Result<(), String>
-where
-    F: Future<Output = Result<(), String>>,
-{
-    tokio::time::timeout(timeout, cleanup)
-        .await
-        .unwrap_or_else(|_| Err("释放数据库对比临时连接超时".to_string()))
-}
-
-fn find_saved_connection(
-    saved: &[ConnectionConfig],
-    connection_id: &str,
-    side: &str,
-) -> Result<ConnectionConfig, String> {
-    saved
-        .iter()
-        .find(|config| config.id.as_deref() == Some(connection_id))
-        .cloned()
-        .ok_or_else(|| format!("{}保存连接不存在或已删除", side))
-}
-
-fn validate_endpoint_configs(
-    source: &ConnectionConfig,
-    target: &ConnectionConfig,
-) -> Result<(), String> {
-    if source.id == target.id {
-        return Err("源端和目标端不能使用同一个保存连接".to_string());
-    }
-    if source.database_type != target.database_type {
-        return Err("源端和目标端的数据库类型必须一致".to_string());
-    }
-    Ok(())
-}
-
-fn merge_operation_and_cleanup<T>(
-    operation: Result<T, String>,
-    source_cleanup: Result<(), String>,
-    target_cleanup: Result<(), String>,
-) -> Result<T, String> {
-    let cleanup_errors = [
-        source_cleanup.err().map(|error| format!("源端: {}", error)),
-        target_cleanup
-            .err()
-            .map(|error| format!("目标端: {}", error)),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>();
-    merge_operation_with_cleanup_errors(operation, cleanup_errors)
-}
-
-fn merge_operation_with_cleanup_errors<T>(
-    operation: Result<T, String>,
-    cleanup_errors: Vec<String>,
-) -> Result<T, String> {
-    match (operation, cleanup_errors.is_empty()) {
-        (Ok(value), true) => Ok(value),
-        (Ok(_), false) => Err(format!(
-            "释放数据库对比临时连接失败: {}",
-            cleanup_errors.join("；")
-        )),
-        (Err(error), true) => Err(error),
-        (Err(error), false) => Err(format!(
-            "{}；清理临时连接失败: {}",
-            error,
-            cleanup_errors.join("；")
-        )),
-    }
-}
-
-fn merge_single_operation_and_cleanup<T>(
-    operation: Result<T, String>,
-    cleanup_side: &str,
-    cleanup: Result<(), String>,
-) -> Result<T, String> {
-    let cleanup_errors = cleanup
-        .err()
-        .map(|error| format!("{}: {}", cleanup_side, error))
-        .into_iter()
-        .collect();
-    merge_operation_with_cleanup_errors(operation, cleanup_errors)
-}
 
 fn format_compared_at(value: OffsetDateTime) -> Result<String, String> {
     value
@@ -130,34 +24,11 @@ fn generate_compared_at() -> Result<String, String> {
     format_compared_at(OffsetDateTime::now_utc())
 }
 
-fn temporary_connection_error(side: &str, name: &str, error: String) -> String {
-    format!("{}连接「{}」建立临时连接失败: {}", side, name, error)
-}
-
 fn redact_command_result<T>(
     result: Result<T, String>,
     saved: &[ConnectionConfig],
 ) -> Result<T, String> {
-    result.map_err(|mut error| {
-        let mut secrets = saved
-            .iter()
-            .flat_map(|config| {
-                [
-                    config.password.as_deref(),
-                    config.ssh.as_ref().and_then(|ssh| ssh.password.as_deref()),
-                    config.ssl_pkcs12_password.as_deref(),
-                ]
-            })
-            .flatten()
-            .filter(|secret| !secret.is_empty() && *secret != PASSWORD_REDACTED)
-            .collect::<Vec<_>>();
-        secrets.sort_unstable_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
-        secrets.dedup();
-        for secret in secrets {
-            error = error.replace(secret, PASSWORD_REDACTED);
-        }
-        error
-    })
+    result.map_err(|error| redact_error_text(error, saved))
 }
 
 async fn load_selected_snapshot(
@@ -207,7 +78,7 @@ async fn list_compare_databases_with_saved(
 ) -> Result<Vec<String>, String> {
     let config = find_saved_connection(saved, saved_connection_id, "待对比")?;
     let connection_name = config.name.clone();
-    let temporary = TemporaryConnection::open(config)
+    let temporary = TemporaryDatabaseConnection::open(config)
         .await
         .map_err(|error| temporary_connection_error("待对比", &connection_name, error))?;
     let operation = list_databases_for_compare(temporary.pool_handle())
@@ -260,8 +131,8 @@ async fn compare_databases_with_saved(
     };
 
     let (source_open, target_open) = tokio::join!(
-        TemporaryConnection::open(source_config),
-        TemporaryConnection::open(target_config)
+        TemporaryDatabaseConnection::open(source_config),
+        TemporaryDatabaseConnection::open(target_config)
     );
     let (source_connection, target_connection) = match (source_open, target_open) {
         (Ok(source_connection), Ok(target_connection)) => (source_connection, target_connection),
@@ -332,7 +203,6 @@ async fn compare_databases_with_saved(
 mod tests {
     use super::*;
     use crate::models::types::{ConnectionConfig, DatabaseType, SshConfig, PASSWORD_REDACTED};
-    use std::time::Duration;
     use time::OffsetDateTime;
 
     fn config(id: &str, database_type: DatabaseType) -> ConnectionConfig {
@@ -439,22 +309,6 @@ mod tests {
             format_compared_at(OffsetDateTime::UNIX_EPOCH).unwrap(),
             "1970-01-01T00:00:00Z"
         );
-    }
-
-    #[tokio::test]
-    async fn cleanup_timeout_returns_completed_result() {
-        let result = run_cleanup_with_timeout(async { Ok(()) }, Duration::from_millis(50)).await;
-        assert_eq!(result, Ok(()));
-    }
-
-    #[tokio::test]
-    async fn cleanup_timeout_returns_clear_error_when_deadline_expires() {
-        let result = run_cleanup_with_timeout(
-            std::future::pending::<Result<(), String>>(),
-            Duration::from_millis(1),
-        )
-        .await;
-        assert_eq!(result.unwrap_err(), "释放数据库对比临时连接超时");
     }
 
     #[test]

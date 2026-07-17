@@ -10,4 +10,5 @@ pub mod preferences;
 pub mod routine_event;
 pub mod runtime;
 pub mod sql_file;
+pub mod temporary_database;
 pub mod trigger;
