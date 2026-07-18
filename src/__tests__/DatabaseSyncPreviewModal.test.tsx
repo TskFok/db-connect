@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseSyncPreviewModal } from "../components/databaseCompare/DatabaseSyncPreviewModal";
 import type {
@@ -18,6 +19,11 @@ const target: CompareEndpointInfo = {
   connection_name: "测试环境",
   database: "target_db",
 };
+
+const databaseCompareModalStyles = readFileSync(
+  "src/components/databaseCompare/DatabaseCompareModal.css",
+  "utf8"
+);
 
 const safePreview: DatabaseSyncPreview = {
   plan_fingerprint:
@@ -421,6 +427,9 @@ describe("DatabaseSyncPreviewModal", () => {
       "正在执行数据库结构同步"
     );
     expect(screen.getByText("正在执行数据库结构同步")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).not.toHaveAttribute(
+      "aria-valuenow"
+    );
     expect(
       screen.queryByRole("button", { name: "关闭同步预览" })
     ).not.toBeInTheDocument();
@@ -444,7 +453,7 @@ describe("DatabaseSyncPreviewModal", () => {
     expect(screen.getByText("正在校验源端与目标端结构")).toBeInTheDocument();
     expect(
       screen.getByRole("progressbar", { name: "数据库结构同步进度" })
-    ).toBeInTheDocument();
+    ).not.toHaveAttribute("aria-valuenow");
 
     rerender(
       <DatabaseSyncPreviewModal
@@ -482,6 +491,15 @@ describe("DatabaseSyncPreviewModal", () => {
       screen.getByText("DDL 已执行完成，正在刷新结构对比")
     ).toBeInTheDocument();
     expect(screen.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
+  });
+
+  it("减少动画下保留静态不确定进度并关闭所有进度动画", () => {
+    expect(databaseCompareModalStyles).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.database-sync-progress--indeterminate \.ant-progress-bg \{[\s\S]*?width: 35% !important;[\s\S]*?animation: none;/
+    );
+    expect(databaseCompareModalStyles).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.database-sync-progress \.ant-progress-bg::before \{[\s\S]*?animation: none;/
+    );
   });
 
   it("部分失败时同时展示成功、失败和未执行项", () => {

@@ -470,7 +470,6 @@ export function DatabaseSyncPreviewModal({
     null
   );
   const recompareButtonRef = useRef<HTMLButtonElement>(null);
-  const progressBarRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
     if (!open || executionResult) {
@@ -514,12 +513,6 @@ export function DatabaseSyncPreviewModal({
   const confirmLabel = destructive ? "确认并执行删除同步" : "确认执行";
   const progressPercent = databaseSyncProgressPercent(progress);
   const progressMessage = formatDatabaseSyncProgress(progress);
-
-  useEffect(() => {
-    if (progressPercent === undefined) {
-      progressBarRef.current?.removeAttribute("aria-valuenow");
-    }
-  }, [progressPercent]);
   const handleCancel = () => {
     if (executing) return;
     if (executionResult) {
@@ -647,8 +640,8 @@ export function DatabaseSyncPreviewModal({
             aria-atomic="true"
           >
             <Progress
-              ref={progressBarRef}
               aria-label="数据库结构同步进度"
+              aria-valuenow={progressPercent}
               percent={progressPercent}
               showInfo={progressPercent !== undefined}
               status="active"
