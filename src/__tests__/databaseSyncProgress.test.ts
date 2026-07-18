@@ -21,12 +21,10 @@ function progress(
 describe("databaseSyncProgress", () => {
   it("校验和无事件状态使用不确定进度文案", () => {
     expect(databaseSyncProgressPercent(null)).toBeUndefined();
-    expect(formatDatabaseSyncProgress(null)).toBe(
-      "正在执行数据库结构同步"
+    expect(formatDatabaseSyncProgress(null)).toBe("正在执行数据库结构同步");
+    expect(formatDatabaseSyncProgress(progress("validating", 0, 0))).toBe(
+      "正在校验源端与目标端结构"
     );
-    expect(
-      formatDatabaseSyncProgress(progress("validating", 0, 0))
-    ).toBe("正在校验源端与目标端结构");
   });
 
   it("执行阶段按真实语句数计算并限制百分比", () => {
