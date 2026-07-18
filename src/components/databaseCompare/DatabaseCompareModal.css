@@ -120,6 +120,43 @@
   white-space: nowrap;
 }
 
+.database-sync-progress {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+
+.database-sync-progress > span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.database-sync-progress--indeterminate .ant-progress-bg {
+  width: 35% !important;
+  animation: database-sync-progress-indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes database-sync-progress-indeterminate {
+  from {
+    transform: translateX(-120%);
+  }
+
+  to {
+    transform: translateX(290%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .database-sync-progress--indeterminate .ant-progress-bg {
+    width: 100% !important;
+    animation: none;
+    opacity: 0.45;
+  }
+}
+
 .database-sync-preview-modal .ant-modal {
   top: 24px;
   max-height: calc(100dvh - 48px);

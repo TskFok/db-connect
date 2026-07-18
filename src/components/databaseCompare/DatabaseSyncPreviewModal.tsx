@@ -14,6 +14,7 @@ import {
   Checkbox,
   List,
   Modal,
+  Progress,
   Result,
   Statistic,
   Tag,
@@ -24,10 +25,15 @@ import type {
   DatabaseSyncExecutionResult,
   DatabaseSyncOperation,
   DatabaseSyncOperationKind,
+  DatabaseSyncProgress,
   DatabaseSyncPreview,
   DatabaseSyncRisk,
 } from "../../types";
 import { formatSyncRisk } from "../../utils/databaseSync";
+import {
+  databaseSyncProgressPercent,
+  formatDatabaseSyncProgress,
+} from "../../utils/databaseSyncProgress";
 
 export interface DatabaseSyncPreviewModalProps {
   open: boolean;
@@ -36,6 +42,7 @@ export interface DatabaseSyncPreviewModalProps {
   preview: DatabaseSyncPreview | null;
   executionResult: DatabaseSyncExecutionResult | null;
   executing: boolean;
+  progress: DatabaseSyncProgress | null;
   executionLocked: boolean;
   onBack: () => void;
   onConfirm: () => void;
@@ -443,6 +450,7 @@ export function DatabaseSyncPreviewModal({
   preview,
   executionResult,
   executing,
+  progress,
   executionLocked,
   onBack,
   onConfirm,
@@ -462,6 +470,7 @@ export function DatabaseSyncPreviewModal({
     null
   );
   const recompareButtonRef = useRef<HTMLButtonElement>(null);
+  const progressBarRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
     if (!open || executionResult) {
@@ -503,6 +512,14 @@ export function DatabaseSyncPreviewModal({
     !executionResult &&
     Boolean(preview?.can_execute && preview.operations.length > 0);
   const confirmLabel = destructive ? "确认并执行删除同步" : "确认执行";
+  const progressPercent = databaseSyncProgressPercent(progress);
+  const progressMessage = formatDatabaseSyncProgress(progress);
+
+  useEffect(() => {
+    if (progressPercent === undefined) {
+      progressBarRef.current?.removeAttribute("aria-valuenow");
+    }
+  }, [progressPercent]);
   const handleCancel = () => {
     if (executing) return;
     if (executionResult) {
@@ -516,12 +533,6 @@ export function DatabaseSyncPreviewModal({
     setConfirmRequestedKey(confirmationKey);
     onConfirm();
   };
-  const liveStatus = executing
-    ? "正在执行数据库结构同步，请勿关闭窗口"
-    : executionResult
-      ? executionStatusMessage(executionResult)
-      : "";
-
   return (
     <Modal
       title={executionResult ? "同步执行结果" : "同步 SQL 预览"}
@@ -605,14 +616,16 @@ export function DatabaseSyncPreviewModal({
       }
     >
       <div className="database-sync-preview-body">
-        <div
-          className="database-sync-live-status"
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-        >
-          {liveStatus}
-        </div>
+        {!executing && (
+          <div
+            className="database-sync-live-status"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            {executionResult ? executionStatusMessage(executionResult) : ""}
+          </div>
+        )}
         <header className="database-sync-direction">
           <strong>
             {source.connection_name} / {source.database} →{" "}
@@ -620,6 +633,29 @@ export function DatabaseSyncPreviewModal({
           </strong>
           <span>目标数据库：{target.database}</span>
         </header>
+
+        {executing && (
+          <section
+            className={`database-sync-progress ${
+              progressPercent === undefined
+                ? "database-sync-progress--indeterminate"
+                : ""
+            }`}
+            aria-label="同步执行进度"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            <Progress
+              ref={progressBarRef}
+              aria-label="数据库结构同步进度"
+              percent={progressPercent}
+              showInfo={progressPercent !== undefined}
+              status="active"
+            />
+            <span>{progressMessage}</span>
+          </section>
+        )}
 
         {executionResult ? (
           <ExecutionResultContent preview={preview} result={executionResult} />

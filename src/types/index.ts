@@ -167,6 +167,18 @@ export interface DatabaseSyncExecutionResult {
   latest_compare_result: DatabaseCompareResult | null;
 }
 
+export type DatabaseSyncProgressPhase =
+  | "validating"
+  | "executing"
+  | "refreshing";
+
+export interface DatabaseSyncProgress {
+  plan_fingerprint: string;
+  phase: DatabaseSyncProgressPhase;
+  current: number;
+  total: number;
+}
+
 /** 数据库连接配置 */
 export interface ConnectionConfig {
   /** 唯一标识 (保存时自动生成) */

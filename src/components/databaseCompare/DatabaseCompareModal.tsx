@@ -805,6 +805,7 @@ export function DatabaseCompareModal({
           preview={syncPreview}
           executionResult={executionResult}
           executing={executing}
+          progress={null}
           executionLocked={executionLocked}
           onBack={handlePreviewBack}
           onConfirm={() => void handleExecuteSync()}

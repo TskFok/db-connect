@@ -112,6 +112,7 @@ const baseProps = {
   onConfirm: vi.fn(),
   onRecompare: vi.fn(),
   open: true,
+  progress: null,
   preview: safePreview,
   source,
   target,
@@ -417,8 +418,9 @@ describe("DatabaseSyncPreviewModal", () => {
     expect(confirm).toBeDisabled();
     expect(confirm).toHaveAttribute("aria-busy", "true");
     expect(screen.getByRole("status")).toHaveTextContent(
-      "正在执行数据库结构同步，请勿关闭窗口"
+      "正在执行数据库结构同步"
     );
+    expect(screen.getByText("正在执行数据库结构同步")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "关闭同步预览" })
     ).not.toBeInTheDocument();
@@ -427,6 +429,59 @@ describe("DatabaseSyncPreviewModal", () => {
     fireEvent.click(confirm);
     expect(onBack).not.toHaveBeenCalled();
     expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("执行中展示校验、真实语句进度和刷新阶段", () => {
+    const { rerender } = renderPreview({
+      executing: true,
+      progress: {
+        plan_fingerprint: safePreview.plan_fingerprint,
+        phase: "validating",
+        current: 0,
+        total: 0,
+      },
+    });
+    expect(screen.getByText("正在校验源端与目标端结构")).toBeInTheDocument();
+    expect(
+      screen.getByRole("progressbar", { name: "数据库结构同步进度" })
+    ).toBeInTheDocument();
+
+    rerender(
+      <DatabaseSyncPreviewModal
+        {...baseProps}
+        executing
+        progress={{
+          plan_fingerprint: safePreview.plan_fingerprint,
+          phase: "executing",
+          current: 1,
+          total: 4,
+        }}
+      />
+    );
+    expect(
+      screen.getByText("正在执行 DDL，已完成 1 / 4 条语句")
+    ).toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).toHaveAttribute(
+      "aria-valuenow",
+      "25"
+    );
+
+    rerender(
+      <DatabaseSyncPreviewModal
+        {...baseProps}
+        executing
+        progress={{
+          plan_fingerprint: safePreview.plan_fingerprint,
+          phase: "refreshing",
+          current: 4,
+          total: 4,
+        }}
+      />
+    );
+    expect(
+      screen.getByText("DDL 已执行完成，正在刷新结构对比")
+    ).toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
   });
 
   it("部分失败时同时展示成功、失败和未执行项", () => {
