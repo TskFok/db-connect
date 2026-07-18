@@ -1087,7 +1087,9 @@ describe("DatabaseCompareModal", () => {
       expect(await screen.findByText("同步部分完成")).toBeInTheDocument();
 
       if (dismissMethod === "右上角 X") {
-        fireEvent.click(screen.getByRole("button", { name: "关闭同步预览" }));
+        fireEvent.click(
+          screen.getByRole("button", { name: "关闭结果并重新对比" })
+        );
       } else if (dismissMethod === "遮罩") {
         const modalWrap = document.querySelector(
           ".database-sync-preview-modal .ant-modal-wrap"

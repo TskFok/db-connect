@@ -178,6 +178,26 @@ describe("DatabaseSyncPreviewModal", () => {
     ).toBeInTheDocument();
   });
 
+  it("关闭按钮名称准确说明预览态和结果态的不同副作用", () => {
+    const { rerender } = renderPreview();
+    expect(
+      screen.getByRole("button", { name: "关闭同步预览" })
+    ).toBeInTheDocument();
+
+    rerender(
+      <DatabaseSyncPreviewModal
+        {...baseProps}
+        executionResult={partialFailure}
+      />
+    );
+    expect(
+      screen.getByRole("button", { name: "关闭结果并重新对比" })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "关闭同步预览" })
+    ).not.toBeInTheDocument();
+  });
+
   it("分区展示跳过项及恢复路径", () => {
     renderPreview();
 

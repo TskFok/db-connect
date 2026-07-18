@@ -527,7 +527,9 @@ export function DatabaseSyncPreviewModal({
         executing
           ? false
           : {
-              "aria-label": "关闭同步预览",
+              "aria-label": executionResult
+                ? "关闭结果并重新对比"
+                : "关闭同步预览",
             }
       }
       maskClosable={!executing}
