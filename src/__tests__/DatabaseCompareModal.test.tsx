@@ -10,12 +10,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseCompareModal } from "../components/databaseCompare/DatabaseCompareModal";
 import * as api from "../services/tauriCommands";
 import { useConnectionStore } from "../stores/connectionStore";
-import type { ConnectionConfig, DatabaseCompareResult } from "../types";
+import type {
+  ConnectionConfig,
+  DatabaseCompareResult,
+  DatabaseSyncPreview,
+} from "../types";
 import { saveDatabaseCompareWorkbook } from "../utils/databaseCompareExport";
 
 vi.mock("../services/tauriCommands", () => ({
   listCompareDatabases: vi.fn(),
   compareDatabases: vi.fn(),
+  previewDatabaseSync: vi.fn(),
 }));
 
 vi.mock("../utils/databaseCompareExport", () => ({
@@ -121,6 +126,33 @@ function sampleAllStatusesResult(): DatabaseCompareResult {
   };
 }
 
+function sampleSyncPreview(): DatabaseSyncPreview {
+  return {
+    plan_fingerprint: "preview-fingerprint",
+    summary: {
+      selected_tables: 1,
+      executable_operations: 1,
+      high_risk_operations: 1,
+      destructive_operations: 0,
+      skipped_items: 0,
+      blockers: 0,
+    },
+    operations: [
+      {
+        id: "users:alter_column:0",
+        table_name: "users",
+        kind: "alter_column",
+        summary: "修改字段 email",
+        risk: "high",
+        sql: ["ALTER TABLE `users` MODIFY `email` varchar(255) NOT NULL"],
+      },
+    ],
+    skipped_items: [],
+    blockers: [],
+    can_execute: true,
+  };
+}
+
 async function selectAntOption(label: string, option: string): Promise<void> {
   const combobox = screen.getByLabelText(label);
   fireEvent.mouseDown(combobox);
@@ -154,6 +186,7 @@ describe("DatabaseCompareModal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(api.listCompareDatabases).mockResolvedValue(["app", "audit"]);
+    vi.mocked(api.previewDatabaseSync).mockResolvedValue(sampleSyncPreview());
     vi.mocked(saveDatabaseCompareWorkbook).mockResolvedValue(true);
     useConnectionStore.setState({ savedConnections: SAVED_CONNECTIONS });
     Object.defineProperty(window, "matchMedia", {
@@ -591,5 +624,227 @@ describe("DatabaseCompareModal", () => {
     await waitFor(() => expect(compareButton).toBeEnabled());
     fireEvent.click(compareButton);
     await waitFor(() => expect(api.compareDatabases).toHaveBeenCalledTimes(2));
+  });
+
+  it("用当前合法选择和端点请求同步预览", async () => {
+    const successSpy = vi.spyOn(message, "success");
+    vi.mocked(api.compareDatabases).mockResolvedValue(
+      sampleAllStatusesResult()
+    );
+    render(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await configureEndpoints();
+    fireEvent.click(screen.getByRole("button", { name: "开始对比" }));
+    expect(await screen.findByText("users")).toBeInTheDocument();
+
+    const previewButton = screen.getByRole("button", {
+      name: "预览同步（0）",
+    });
+    expect(previewButton).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 users" }));
+    fireEvent.click(screen.getByRole("button", { name: "预览同步（1）" }));
+
+    await waitFor(() => {
+      expect(api.previewDatabaseSync).toHaveBeenCalledWith({
+        source: { saved_connection_id: "mysql-a", database: "app" },
+        target: { saved_connection_id: "mysql-b", database: "audit" },
+        selected_tables: ["users"],
+        include_drops: false,
+      });
+    });
+    expect(successSpy).toHaveBeenCalledWith(
+      "同步预览已生成；执行前仍需检查并确认 SQL"
+    );
+    expect(screen.queryByText("同步 SQL 预览")).not.toBeInTheDocument();
+    successSpy.mockRestore();
+  });
+
+  it("开启删除后同步全部差异表", async () => {
+    vi.mocked(api.compareDatabases).mockResolvedValue(
+      sampleAllStatusesResult()
+    );
+    render(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await configureEndpoints();
+    fireEvent.click(screen.getByRole("button", { name: "开始对比" }));
+    expect(await screen.findByText("users")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("switch", { name: "允许删除目标端结构" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择全部可同步表" }));
+    fireEvent.click(screen.getByRole("button", { name: "预览同步（3）" }));
+
+    await waitFor(() => {
+      expect(api.previewDatabaseSync).toHaveBeenCalledWith({
+        source: { saved_connection_id: "mysql-a", database: "app" },
+        target: { saved_connection_id: "mysql-b", database: "audit" },
+        selected_tables: ["audit_logs", "events", "users"],
+        include_drops: true,
+      });
+    });
+  });
+
+  it("生成预览时禁用冲突操作并同时显示文字和加载图标", async () => {
+    const preview = deferred<DatabaseSyncPreview>();
+    vi.mocked(api.compareDatabases).mockResolvedValue(sampleCompareResult());
+    vi.mocked(api.previewDatabaseSync).mockReturnValue(preview.promise);
+    render(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await configureEndpoints();
+    fireEvent.click(screen.getByRole("button", { name: "开始对比" }));
+    expect(await screen.findByText("users")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 users" }));
+    fireEvent.click(screen.getByRole("button", { name: "预览同步（1）" }));
+
+    const loadingButton = screen.getByRole("button", {
+      name: "正在生成同步预览",
+    });
+    expect(loadingButton).toBeDisabled();
+    expect(
+      screen.getByTestId("database-sync-preview-loading-icon")
+    ).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "选择 users" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "开始对比" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "导出 Excel" })).toBeDisabled();
+
+    await act(async () => {
+      preview.resolve(sampleSyncPreview());
+      await preview.promise;
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "预览同步（1）" })
+      ).toBeEnabled();
+    });
+  });
+
+  it("当前预览失败时反馈错误并允许重试", async () => {
+    const errorSpy = vi.spyOn(message, "error");
+    vi.mocked(api.compareDatabases).mockResolvedValue(sampleCompareResult());
+    vi.mocked(api.previewDatabaseSync).mockRejectedValue("目标端只读");
+    render(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await configureEndpoints();
+    fireEvent.click(screen.getByRole("button", { name: "开始对比" }));
+    expect(await screen.findByText("users")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 users" }));
+    fireEvent.click(screen.getByRole("button", { name: "预览同步（1）" }));
+
+    await waitFor(() => {
+      expect(errorSpy).toHaveBeenCalledWith("生成同步预览失败：目标端只读");
+    });
+    expect(screen.getByRole("button", { name: "预览同步（1）" })).toBeEnabled();
+    errorSpy.mockRestore();
+  });
+
+  it("端点变化后忽略尚未完成的旧预览错误", async () => {
+    const preview = deferred<DatabaseSyncPreview>();
+    const errorSpy = vi.spyOn(message, "error");
+    vi.mocked(api.compareDatabases).mockResolvedValue(sampleCompareResult());
+    vi.mocked(api.previewDatabaseSync).mockReturnValue(preview.promise);
+    render(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await configureEndpoints();
+    fireEvent.click(screen.getByRole("button", { name: "开始对比" }));
+    expect(await screen.findByText("users")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 users" }));
+    fireEvent.click(screen.getByRole("button", { name: "预览同步（1）" }));
+
+    await selectAntOption("源数据库/schema", "audit");
+    await act(async () => {
+      preview.reject("旧预览失败");
+      await preview.promise.catch(() => undefined);
+    });
+
+    expect(errorSpy).not.toHaveBeenCalledWith("生成同步预览失败：旧预览失败");
+    expect(screen.queryByText("users")).not.toBeInTheDocument();
+    errorSpy.mockRestore();
+  });
+
+  it("端点变化后忽略旧预览成功并重置同步状态", async () => {
+    const preview = deferred<DatabaseSyncPreview>();
+    const successSpy = vi.spyOn(message, "success");
+    vi.mocked(api.compareDatabases).mockResolvedValue(
+      sampleAllStatusesResult()
+    );
+    vi.mocked(api.previewDatabaseSync).mockReturnValue(preview.promise);
+    render(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await configureEndpoints();
+    fireEvent.click(screen.getByRole("button", { name: "开始对比" }));
+    expect(await screen.findByText("users")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: "允许删除目标端结构" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择全部可同步表" }));
+    fireEvent.click(screen.getByRole("button", { name: "预览同步（3）" }));
+
+    await selectAntOption("源数据库/schema", "audit");
+    await act(async () => {
+      preview.resolve(sampleSyncPreview());
+      await preview.promise;
+    });
+    expect(successSpy).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "开始对比" }));
+    await waitFor(() => {
+      expect(screen.getByText("已选择 0 / 2 张表")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole("switch", { name: "允许删除目标端结构" })
+    ).not.toBeChecked();
+    successSpy.mockRestore();
+  });
+
+  it("关闭期间忽略旧预览成功并在重开后清空同步状态", async () => {
+    const preview = deferred<DatabaseSyncPreview>();
+    const successSpy = vi.spyOn(message, "success");
+    const onClose = vi.fn();
+    vi.mocked(api.compareDatabases).mockResolvedValue(
+      sampleAllStatusesResult()
+    );
+    vi.mocked(api.previewDatabaseSync).mockReturnValue(preview.promise);
+    const { rerender } = render(
+      <DatabaseCompareModal open onClose={onClose} />
+    );
+    await configureEndpoints();
+    fireEvent.click(screen.getByRole("button", { name: "开始对比" }));
+    expect(await screen.findByText("users")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: "允许删除目标端结构" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择全部可同步表" }));
+    fireEvent.click(screen.getByRole("button", { name: "预览同步（3）" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    rerender(<DatabaseCompareModal open={false} onClose={onClose} />);
+    await act(async () => {
+      preview.resolve(sampleSyncPreview());
+      await preview.promise;
+    });
+    expect(successSpy).not.toHaveBeenCalled();
+
+    rerender(<DatabaseCompareModal open onClose={onClose} />);
+    await configureEndpoints();
+    fireEvent.click(screen.getByRole("button", { name: "开始对比" }));
+    await waitFor(() => {
+      expect(screen.getByText("已选择 0 / 2 张表")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole("switch", { name: "允许删除目标端结构" })
+    ).not.toBeChecked();
+    successSpy.mockRestore();
+  });
+
+  it("重新对比会清空同步选择并恢复删除默认关闭", async () => {
+    vi.mocked(api.compareDatabases).mockResolvedValue(
+      sampleAllStatusesResult()
+    );
+    render(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await configureEndpoints();
+    const compareButton = screen.getByRole("button", { name: "开始对比" });
+    fireEvent.click(compareButton);
+    expect(await screen.findByText("users")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: "允许删除目标端结构" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择全部可同步表" }));
+    expect(screen.getByText("已选择 3 / 3 张表")).toBeInTheDocument();
+
+    fireEvent.click(compareButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("已选择 0 / 2 张表")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole("switch", { name: "允许删除目标端结构" })
+    ).not.toBeChecked();
   });
 });

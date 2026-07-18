@@ -1,37 +1,17 @@
-import { SwapOutlined } from "@ant-design/icons";
-import {
-  Alert,
-  Button,
-  Card,
-  Form,
-  Input,
-  Modal,
-  Result,
-  Segmented,
-  Select,
-  Statistic,
-  Table,
-  Tag,
-  message,
-} from "antd";
+import { EyeOutlined, LoadingOutlined, SwapOutlined } from "@ant-design/icons";
+import { Alert, Button, Card, Form, Modal, Select, message } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ColumnsType } from "antd/es/table";
 import * as api from "../../services/tauriCommands";
 import { useConnectionStore } from "../../stores/connectionStore";
 import type {
-  ColumnDiff,
   DatabaseCompareResult,
-  SchemaDiffStatus,
-  TableDiff,
+  DatabaseSyncPreview,
+  DatabaseSyncRequest,
 } from "../../types";
 import { normalizeDatabaseType } from "../../utils/connectionConfig";
-import {
-  filterTableDiffs,
-  formatChangedFields,
-  formatColumnSideValues,
-  formatSchemaDiffStatus,
-} from "../../utils/databaseCompare";
 import { saveDatabaseCompareWorkbook } from "../../utils/databaseCompareExport";
+import { normalizeSyncSelection } from "../../utils/databaseSync";
+import { DatabaseCompareResults } from "./DatabaseCompareResults";
 import "./DatabaseCompareModal.css";
 
 export interface DatabaseCompareModalProps {
@@ -40,25 +20,10 @@ export interface DatabaseCompareModalProps {
 }
 
 type LoadingSide = "source" | "target" | null;
-type StatusFilter = "all" | SchemaDiffStatus;
-
-const STATUS_TAG_COLORS: Record<SchemaDiffStatus, string> = {
-  source_only: "gold",
-  target_only: "blue",
-  changed: "purple",
-};
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
-}
-
-function DiffStatusTag({ status }: { status: SchemaDiffStatus }) {
-  return (
-    <Tag color={STATUS_TAG_COLORS[status]}>
-      {formatSchemaDiffStatus(status)}
-    </Tag>
-  );
 }
 
 export function DatabaseCompareModal({
@@ -78,19 +43,34 @@ export function DatabaseCompareModal({
   const [comparing, setComparing] = useState(false);
   const [comparePending, setComparePending] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
   const [result, setResult] = useState<DatabaseCompareResult | null>(null);
+  const [selectedTableNames, setSelectedTableNames] = useState<string[]>([]);
+  const [includeDrops, setIncludeDrops] = useState(false);
   const [loadErrors, setLoadErrors] = useState<
     Record<Exclude<LoadingSide, null>, string | null>
   >({ source: null, target: null });
   const [compareError, setCompareError] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [search, setSearch] = useState("");
 
   const sourceLoadId = useRef(0);
   const targetLoadId = useRef(0);
   const compareId = useRef(0);
   const comparePendingRef = useRef(false);
   const exportId = useRef(0);
+  const previewRequestId = useRef(0);
+  const syncPreviewRef = useRef<DatabaseSyncPreview | null>(null);
+
+  const clearSyncPreview = useCallback(() => {
+    previewRequestId.current += 1;
+    syncPreviewRef.current = null;
+    setPreviewing(false);
+  }, []);
+
+  const resetSyncState = useCallback(() => {
+    clearSyncPreview();
+    setSelectedTableNames([]);
+    setIncludeDrops(false);
+  }, [clearSyncPreview]);
 
   const resetResult = useCallback(() => {
     compareId.current += 1;
@@ -99,9 +79,8 @@ export function DatabaseCompareModal({
     setExporting(false);
     setResult(null);
     setCompareError(null);
-    setStatusFilter("all");
-    setSearch("");
-  }, []);
+    resetSyncState();
+  }, [resetSyncState]);
 
   const resetState = useCallback(() => {
     sourceLoadId.current += 1;
@@ -120,9 +99,8 @@ export function DatabaseCompareModal({
     setResult(null);
     setLoadErrors({ source: null, target: null });
     setCompareError(null);
-    setStatusFilter("all");
-    setSearch("");
-  }, []);
+    resetSyncState();
+  }, [resetSyncState]);
 
   useEffect(() => {
     if (!open) resetState();
@@ -229,6 +207,7 @@ export function DatabaseCompareModal({
       return;
     }
     const requestId = ++compareId.current;
+    resetSyncState();
     comparePendingRef.current = true;
     setComparePending(true);
     setComparing(true);
@@ -255,7 +234,13 @@ export function DatabaseCompareModal({
       setComparePending(false);
       if (compareId.current === requestId) setComparing(false);
     }
-  }, [sourceConnectionId, sourceDatabase, targetConnectionId, targetDatabase]);
+  }, [
+    resetSyncState,
+    sourceConnectionId,
+    sourceDatabase,
+    targetConnectionId,
+    targetDatabase,
+  ]);
 
   const handleExport = useCallback(async () => {
     if (!result) return;
@@ -283,7 +268,8 @@ export function DatabaseCompareModal({
       loadErrors.source !== null ||
       loadErrors.target !== null ||
       comparePendingRef.current ||
-      exporting
+      exporting ||
+      previewing
     ) {
       return;
     }
@@ -302,6 +288,7 @@ export function DatabaseCompareModal({
     loadErrors.source,
     loadErrors.target,
     loadingSide,
+    previewing,
     sourceConnectionId,
     sourceDatabase,
     sourceDatabases,
@@ -315,58 +302,98 @@ export function DatabaseCompareModal({
     onClose();
   }, [onClose, resetState]);
 
-  const filteredTables = useMemo(
-    () => (result ? filterTableDiffs(result.tables, statusFilter, search) : []),
-    [result, search, statusFilter]
+  const validSelectedTableNames = useMemo(
+    () =>
+      result
+        ? normalizeSyncSelection(
+            selectedTableNames,
+            result.tables,
+            includeDrops
+          )
+        : [],
+    [includeDrops, result, selectedTableNames]
   );
 
-  const columnColumns = useMemo<ColumnsType<ColumnDiff>>(
-    () => [
-      { title: "字段名", dataIndex: "name", key: "name", width: 160 },
-      {
-        title: "差异状态",
-        dataIndex: "status",
-        key: "status",
-        width: 120,
-        render: (status: SchemaDiffStatus) => <DiffStatusTag status={status} />,
-      },
-      {
-        title: "变化属性",
-        dataIndex: "changed_fields",
-        key: "changed_fields",
-        width: 180,
-        render: (fields: ColumnDiff["changed_fields"]) =>
-          formatChangedFields(fields),
-      },
-      {
-        title: "源端值",
-        key: "source",
-        width: 300,
-        render: (_value, column) => formatColumnSideValues(column, "source"),
-      },
-      {
-        title: "目标端值",
-        key: "target",
-        width: 300,
-        render: (_value, column) => formatColumnSideValues(column, "target"),
-      },
-    ],
-    []
+  const handleSelectionChange = useCallback(
+    (tableNames: string[]) => {
+      clearSyncPreview();
+      setSelectedTableNames(tableNames);
+    },
+    [clearSyncPreview]
   );
 
-  const tableColumns = useMemo<ColumnsType<TableDiff>>(
-    () => [
-      { title: "表名", dataIndex: "name", key: "name" },
-      {
-        title: "差异状态",
-        dataIndex: "status",
-        key: "status",
-        width: 140,
-        render: (status: SchemaDiffStatus) => <DiffStatusTag status={status} />,
-      },
-    ],
-    []
+  const handleIncludeDropsChange = useCallback(
+    (checked: boolean) => {
+      clearSyncPreview();
+      setIncludeDrops(checked);
+    },
+    [clearSyncPreview]
   );
+
+  const handlePreviewSync = useCallback(async () => {
+    if (
+      !result ||
+      !sourceConnectionId ||
+      !sourceDatabase ||
+      !targetConnectionId ||
+      !targetDatabase ||
+      previewing
+    ) {
+      return;
+    }
+    const normalizedSelection = normalizeSyncSelection(
+      selectedTableNames,
+      result.tables,
+      includeDrops
+    );
+    if (normalizedSelection.length === 0) {
+      message.warning("请至少选择一张可同步的差异表");
+      return;
+    }
+    if (normalizedSelection.length !== new Set(selectedTableNames).size) {
+      setSelectedTableNames(normalizedSelection);
+      message.warning("选择中包含不可同步的表，请重新确认");
+      return;
+    }
+
+    const request: DatabaseSyncRequest = {
+      source: {
+        saved_connection_id: sourceConnectionId,
+        database: sourceDatabase,
+      },
+      target: {
+        saved_connection_id: targetConnectionId,
+        database: targetDatabase,
+      },
+      selected_tables: normalizedSelection,
+      include_drops: includeDrops,
+    };
+    const requestId = ++previewRequestId.current;
+    syncPreviewRef.current = null;
+    setPreviewing(true);
+    try {
+      const preview = await api.previewDatabaseSync(request);
+      if (previewRequestId.current === requestId) {
+        syncPreviewRef.current = preview;
+        message.success("同步预览已生成；执行前仍需检查并确认 SQL");
+      }
+    } catch (previewError) {
+      if (previewRequestId.current === requestId) {
+        message.error(`生成同步预览失败：${errorMessage(previewError)}`);
+      }
+    } finally {
+      if (previewRequestId.current === requestId) setPreviewing(false);
+    }
+  }, [
+    includeDrops,
+    previewing,
+    result,
+    selectedTableNames,
+    sourceConnectionId,
+    sourceDatabase,
+    targetConnectionId,
+    targetDatabase,
+  ]);
 
   const startDisabled =
     !sourceConnectionId ||
@@ -375,8 +402,15 @@ export function DatabaseCompareModal({
     !targetDatabase ||
     loadingSide !== null ||
     comparePending ||
-    exporting;
-  const exportDisabled = !result || comparePending || exporting;
+    exporting ||
+    previewing;
+  const exportDisabled = !result || comparePending || exporting || previewing;
+  const previewDisabled =
+    !result ||
+    validSelectedTableNames.length === 0 ||
+    comparePending ||
+    exporting ||
+    previewing;
 
   return (
     <Modal
@@ -384,6 +418,7 @@ export function DatabaseCompareModal({
       open={open}
       onCancel={handleClose}
       width={1120}
+      rootClassName="database-compare-modal"
       destroyOnHidden
       footer={[
         <Button key="close" aria-label="关闭" onClick={handleClose}>
@@ -397,9 +432,43 @@ export function DatabaseCompareModal({
         >
           导出 Excel
         </Button>,
+        ...(result && result.tables.length > 0
+          ? [
+              <Button
+                key="preview-sync"
+                className="database-sync-preview-button"
+                type="primary"
+                icon={previewing ? undefined : <EyeOutlined aria-hidden />}
+                aria-label={
+                  previewing
+                    ? "正在生成同步预览"
+                    : `预览同步（${validSelectedTableNames.length}）`
+                }
+                aria-busy={previewing}
+                onClick={() => void handlePreviewSync()}
+                disabled={previewDisabled}
+                loading={
+                  previewing
+                    ? {
+                        icon: (
+                          <LoadingOutlined
+                            data-testid="database-sync-preview-loading-icon"
+                            aria-hidden
+                          />
+                        ),
+                      }
+                    : false
+                }
+              >
+                {previewing
+                  ? "正在生成同步预览"
+                  : `预览同步（${validSelectedTableNames.length}）`}
+              </Button>,
+            ]
+          : []),
         <Button
           key="compare"
-          type="primary"
+          type={result && result.tables.length > 0 ? "default" : "primary"}
           onClick={() => void handleCompare()}
           disabled={startDisabled}
           loading={comparing}
@@ -462,7 +531,8 @@ export function DatabaseCompareModal({
               loadErrors.source !== null ||
               loadErrors.target !== null ||
               comparePending ||
-              exporting
+              exporting ||
+              previewing
             }
             onClick={handleSwap}
           />
@@ -559,78 +629,14 @@ export function DatabaseCompareModal({
         )}
 
         {result && (
-          <div className="database-compare-results">
-            <div className="database-compare-summary">
-              <Statistic
-                title="仅源端表"
-                value={result.summary.source_only_tables}
-              />
-              <Statistic
-                title="仅目标端表"
-                value={result.summary.target_only_tables}
-              />
-              <Statistic
-                title="结构变化表"
-                value={result.summary.changed_tables}
-              />
-              <Statistic
-                title="差异字段"
-                value={result.summary.different_columns}
-              />
-            </div>
-
-            {result.tables.length === 0 ? (
-              <Result status="success" title="两个数据库结构一致" />
-            ) : (
-              <>
-                <div className="database-compare-toolbar">
-                  <Input.Search
-                    aria-label="搜索表名"
-                    allowClear
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    placeholder="搜索表名"
-                  />
-                  <Segmented<StatusFilter>
-                    aria-label="差异状态筛选"
-                    value={statusFilter}
-                    onChange={setStatusFilter}
-                    options={[
-                      { label: "全部", value: "all" },
-                      { label: "仅源端", value: "source_only" },
-                      { label: "仅目标端", value: "target_only" },
-                      { label: "结构变化", value: "changed" },
-                    ]}
-                  />
-                </div>
-                <div className="database-compare-table-wrap">
-                  <Table<TableDiff>
-                    rowKey="name"
-                    size="small"
-                    pagination={false}
-                    columns={tableColumns}
-                    dataSource={filteredTables}
-                    scroll={{ x: 520 }}
-                    expandable={{
-                      rowExpandable: (table) => table.status === "changed",
-                      expandedRowRender: (table) => (
-                        <div className="database-compare-expanded-table">
-                          <Table<ColumnDiff>
-                            rowKey="name"
-                            size="small"
-                            pagination={false}
-                            columns={columnColumns}
-                            dataSource={table.columns}
-                            scroll={{ x: 1060 }}
-                          />
-                        </div>
-                      ),
-                    }}
-                  />
-                </div>
-              </>
-            )}
-          </div>
+          <DatabaseCompareResults
+            result={result}
+            disabled={comparePending || exporting || previewing}
+            selectedTableNames={selectedTableNames}
+            includeDrops={includeDrops}
+            onSelectionChange={handleSelectionChange}
+            onIncludeDropsChange={handleIncludeDropsChange}
+          />
         )}
       </div>
     </Modal>
