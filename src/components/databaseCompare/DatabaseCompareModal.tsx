@@ -5,6 +5,7 @@ import * as api from "../../services/tauriCommands";
 import { useConnectionStore } from "../../stores/connectionStore";
 import type {
   DatabaseCompareResult,
+  DatabaseSyncExecutionResult,
   DatabaseSyncPreview,
   DatabaseSyncRequest,
 } from "../../types";
@@ -12,6 +13,7 @@ import { normalizeDatabaseType } from "../../utils/connectionConfig";
 import { saveDatabaseCompareWorkbook } from "../../utils/databaseCompareExport";
 import { normalizeSyncSelection } from "../../utils/databaseSync";
 import { DatabaseCompareResults } from "./DatabaseCompareResults";
+import { DatabaseSyncPreviewModal } from "./DatabaseSyncPreviewModal";
 import "./DatabaseCompareModal.css";
 
 export interface DatabaseCompareModalProps {
@@ -23,7 +25,23 @@ type LoadingSide = "source" | "target" | null;
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
-  return String(error);
+  if (typeof error === "string") return error;
+  if (
+    error &&
+    typeof error === "object" &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
+  }
+  return "请求失败，请稍后重试";
+}
+
+function syncPlanIdentity(
+  request: DatabaseSyncRequest,
+  planFingerprint: string
+): string {
+  return JSON.stringify([request, planFingerprint]);
 }
 
 export function DatabaseCompareModal({
@@ -44,9 +62,19 @@ export function DatabaseCompareModal({
   const [comparePending, setComparePending] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [previewing, setPreviewing] = useState(false);
+  const [executing, setExecuting] = useState(false);
   const [result, setResult] = useState<DatabaseCompareResult | null>(null);
   const [selectedTableNames, setSelectedTableNames] = useState<string[]>([]);
   const [includeDrops, setIncludeDrops] = useState(false);
+  const [syncPreview, setSyncPreview] = useState<DatabaseSyncPreview | null>(
+    null
+  );
+  const [syncRequest, setSyncRequest] = useState<DatabaseSyncRequest | null>(
+    null
+  );
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [executionResult, setExecutionResult] =
+    useState<DatabaseSyncExecutionResult | null>(null);
   const [loadErrors, setLoadErrors] = useState<
     Record<Exclude<LoadingSide, null>, string | null>
   >({ source: null, target: null });
@@ -58,12 +86,21 @@ export function DatabaseCompareModal({
   const comparePendingRef = useRef(false);
   const exportId = useRef(0);
   const previewRequestId = useRef(0);
-  const syncPreviewRef = useRef<DatabaseSyncPreview | null>(null);
+  const executionRequestId = useRef(0);
+  const activeSyncPlanIdentity = useRef<string | null>(null);
+  const executingRef = useRef(false);
 
   const clearSyncPreview = useCallback(() => {
     previewRequestId.current += 1;
-    syncPreviewRef.current = null;
+    executionRequestId.current += 1;
+    activeSyncPlanIdentity.current = null;
+    executingRef.current = false;
     setPreviewing(false);
+    setExecuting(false);
+    setSyncPreview(null);
+    setSyncRequest(null);
+    setExecutionResult(null);
+    setPreviewOpen(false);
   }, []);
 
   const resetSyncState = useCallback(() => {
@@ -202,6 +239,7 @@ export function DatabaseCompareModal({
       !sourceDatabase ||
       !targetConnectionId ||
       !targetDatabase ||
+      executingRef.current ||
       comparePendingRef.current
     ) {
       return;
@@ -269,7 +307,8 @@ export function DatabaseCompareModal({
       loadErrors.target !== null ||
       comparePendingRef.current ||
       exporting ||
-      previewing
+      previewing ||
+      executingRef.current
     ) {
       return;
     }
@@ -298,6 +337,7 @@ export function DatabaseCompareModal({
   ]);
 
   const handleClose = useCallback(() => {
+    if (executingRef.current) return;
     resetState();
     onClose();
   }, [onClose, resetState]);
@@ -337,7 +377,8 @@ export function DatabaseCompareModal({
       !sourceDatabase ||
       !targetConnectionId ||
       !targetDatabase ||
-      previewing
+      previewing ||
+      executingRef.current
     ) {
       return;
     }
@@ -369,12 +410,23 @@ export function DatabaseCompareModal({
       include_drops: includeDrops,
     };
     const requestId = ++previewRequestId.current;
-    syncPreviewRef.current = null;
+    executionRequestId.current += 1;
+    activeSyncPlanIdentity.current = null;
+    setSyncPreview(null);
+    setSyncRequest(null);
+    setExecutionResult(null);
+    setPreviewOpen(false);
     setPreviewing(true);
     try {
       const preview = await api.previewDatabaseSync(request);
       if (previewRequestId.current === requestId) {
-        syncPreviewRef.current = preview;
+        setSyncRequest(request);
+        setSyncPreview(preview);
+        activeSyncPlanIdentity.current = syncPlanIdentity(
+          request,
+          preview.plan_fingerprint
+        );
+        setPreviewOpen(true);
         message.success("同步预览已生成；执行前仍需检查并确认 SQL");
       }
     } catch (previewError) {
@@ -395,6 +447,77 @@ export function DatabaseCompareModal({
     targetDatabase,
   ]);
 
+  const handleExecuteSync = useCallback(async () => {
+    if (!syncPreview || !syncRequest || executingRef.current) return;
+    const planFingerprint = syncPreview.plan_fingerprint;
+    const identity = syncPlanIdentity(syncRequest, planFingerprint);
+    if (activeSyncPlanIdentity.current !== identity) return;
+
+    const requestId = ++executionRequestId.current;
+    executingRef.current = true;
+    setExecuting(true);
+    setExecutionResult(null);
+    try {
+      const execution = await api.executeDatabaseSync({
+        request: syncRequest,
+        plan_fingerprint: planFingerprint,
+      });
+      if (
+        executionRequestId.current !== requestId ||
+        activeSyncPlanIdentity.current !== identity
+      ) {
+        return;
+      }
+
+      setExecutionResult(execution);
+      setSelectedTableNames([]);
+      setIncludeDrops(false);
+      setSyncRequest(null);
+      activeSyncPlanIdentity.current = null;
+      if (execution.latest_compare_result) {
+        setResult(execution.latest_compare_result);
+      }
+      if (execution.status === "succeeded") {
+        message.success("数据库结构已同步");
+      }
+    } catch (executionError) {
+      if (
+        executionRequestId.current !== requestId ||
+        activeSyncPlanIdentity.current !== identity
+      ) {
+        return;
+      }
+      activeSyncPlanIdentity.current = null;
+      setSyncPreview(null);
+      setSyncRequest(null);
+      setExecutionResult(null);
+      setPreviewOpen(false);
+      message.error(errorMessage(executionError));
+    } finally {
+      if (executionRequestId.current === requestId) {
+        executingRef.current = false;
+        setExecuting(false);
+      }
+    }
+  }, [syncPreview, syncRequest]);
+
+  const handlePreviewBack = useCallback(() => {
+    if (executingRef.current) return;
+    clearSyncPreview();
+  }, [clearSyncPreview]);
+
+  const handleRecompare = useCallback(() => {
+    if (executingRef.current) return;
+    const latestCompareResult = executionResult?.latest_compare_result ?? null;
+    resetSyncState();
+    if (latestCompareResult) {
+      setResult(latestCompareResult);
+      setCompareError(null);
+      return;
+    }
+    void handleCompare();
+  }, [executionResult, handleCompare, resetSyncState]);
+
   const startDisabled =
     !sourceConnectionId ||
     !sourceDatabase ||
@@ -403,14 +526,17 @@ export function DatabaseCompareModal({
     loadingSide !== null ||
     comparePending ||
     exporting ||
-    previewing;
-  const exportDisabled = !result || comparePending || exporting || previewing;
+    previewing ||
+    executing;
+  const exportDisabled =
+    !result || comparePending || exporting || previewing || executing;
   const previewDisabled =
     !result ||
     validSelectedTableNames.length === 0 ||
     comparePending ||
     exporting ||
-    previewing;
+    previewing ||
+    executing;
 
   return (
     <Modal
@@ -420,8 +546,16 @@ export function DatabaseCompareModal({
       width={1120}
       rootClassName="database-compare-modal"
       destroyOnHidden
+      closable={!executing}
+      maskClosable={!executing}
+      keyboard={!executing}
       footer={[
-        <Button key="close" aria-label="关闭" onClick={handleClose}>
+        <Button
+          key="close"
+          aria-label="关闭"
+          onClick={handleClose}
+          disabled={executing}
+        >
           关闭
         </Button>,
         <Button
@@ -487,6 +621,7 @@ export function DatabaseCompareModal({
                   value={sourceConnectionId}
                   options={sourceConnectionOptions}
                   onChange={handleSourceConnectionChange}
+                  disabled={executing}
                   placeholder="请选择已保存连接"
                   showSearch
                   optionFilterProp="label"
@@ -508,7 +643,7 @@ export function DatabaseCompareModal({
                     setSourceDatabase(database);
                     resetResult();
                   }}
-                  disabled={!sourceConnectionId}
+                  disabled={!sourceConnectionId || executing}
                   loading={loadingSide === "source"}
                   placeholder="请选择数据库/schema"
                   showSearch
@@ -532,7 +667,8 @@ export function DatabaseCompareModal({
               loadErrors.target !== null ||
               comparePending ||
               exporting ||
-              previewing
+              previewing ||
+              executing
             }
             onClick={handleSwap}
           />
@@ -545,7 +681,9 @@ export function DatabaseCompareModal({
                   value={targetConnectionId}
                   options={targetConnectionOptions}
                   onChange={handleTargetConnectionChange}
-                  disabled={!sourceConnectionId || loadingSide === "source"}
+                  disabled={
+                    !sourceConnectionId || loadingSide === "source" || executing
+                  }
                   placeholder="请选择同类型连接"
                   showSearch
                   optionFilterProp="label"
@@ -567,7 +705,7 @@ export function DatabaseCompareModal({
                     setTargetDatabase(database);
                     resetResult();
                   }}
-                  disabled={!targetConnectionId}
+                  disabled={!targetConnectionId || executing}
                   loading={loadingSide === "target"}
                   placeholder="请选择数据库/schema"
                   showSearch
@@ -595,7 +733,7 @@ export function DatabaseCompareModal({
                   size="small"
                   aria-label={`重试${sideLabel}列表`}
                   onClick={() => void loadDatabases(side, connectionId)}
-                  disabled={loadingSide !== null}
+                  disabled={loadingSide !== null || executing}
                   loading={loadingSide === side}
                 >
                   重试
@@ -620,6 +758,7 @@ export function DatabaseCompareModal({
                   aria-label="重试"
                   onClick={() => void handleCompare()}
                   loading={comparing}
+                  disabled={executing}
                 >
                   重试
                 </Button>
@@ -631,7 +770,7 @@ export function DatabaseCompareModal({
         {result && (
           <DatabaseCompareResults
             result={result}
-            disabled={comparePending || exporting || previewing}
+            disabled={comparePending || exporting || previewing || executing}
             selectedTableNames={selectedTableNames}
             includeDrops={includeDrops}
             onSelectionChange={handleSelectionChange}
@@ -639,6 +778,20 @@ export function DatabaseCompareModal({
           />
         )}
       </div>
+
+      {result && (
+        <DatabaseSyncPreviewModal
+          open={previewOpen}
+          source={result.source}
+          target={result.target}
+          preview={syncPreview}
+          executionResult={executionResult}
+          executing={executing}
+          onBack={handlePreviewBack}
+          onConfirm={() => void handleExecuteSync()}
+          onRecompare={handleRecompare}
+        />
+      )}
     </Modal>
   );
 }

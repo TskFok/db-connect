@@ -13,6 +13,7 @@ import { useConnectionStore } from "../stores/connectionStore";
 import type {
   ConnectionConfig,
   DatabaseCompareResult,
+  DatabaseSyncExecutionResult,
   DatabaseSyncPreview,
 } from "../types";
 import { saveDatabaseCompareWorkbook } from "../utils/databaseCompareExport";
@@ -21,6 +22,7 @@ vi.mock("../services/tauriCommands", () => ({
   listCompareDatabases: vi.fn(),
   compareDatabases: vi.fn(),
   previewDatabaseSync: vi.fn(),
+  executeDatabaseSync: vi.fn(),
 }));
 
 vi.mock("../utils/databaseCompareExport", () => ({
@@ -153,6 +155,65 @@ function sampleSyncPreview(): DatabaseSyncPreview {
   };
 }
 
+function sampleNoDiffResult(): DatabaseCompareResult {
+  return {
+    ...sampleCompareResult(),
+    compared_at: "2026-07-18T08:00:00Z",
+    summary: {
+      source_only_tables: 0,
+      target_only_tables: 0,
+      changed_tables: 0,
+      different_columns: 0,
+    },
+    tables: [],
+  };
+}
+
+function sampleSucceededExecution(): DatabaseSyncExecutionResult {
+  return {
+    status: "succeeded",
+    completed_statements: [
+      { operation_id: "users:alter_column:0", statement_index: 0 },
+    ],
+    failed: null,
+    pending_operation_ids: [],
+    cleanup_errors: [],
+    latest_compare_result: sampleNoDiffResult(),
+  };
+}
+
+function samplePartialExecution(): DatabaseSyncExecutionResult {
+  return {
+    status: "partially_succeeded",
+    completed_statements: [
+      { operation_id: "users:alter_column:0", statement_index: 0 },
+    ],
+    failed: {
+      operation_id: "users:alter_column:0",
+      statement_index: 1,
+      error: "目标字段仍被视图引用",
+    },
+    pending_operation_ids: ["users:alter_column:0"],
+    cleanup_errors: ["目标端临时连接清理失败"],
+    latest_compare_result: null,
+  };
+}
+
+function sampleFailedExecution(): DatabaseSyncExecutionResult {
+  return {
+    status: "failed",
+    completed_statements: [],
+    failed: {
+      operation_id: "users:alter_column:0",
+      statement_index: 0,
+      error: "目标端拒绝执行 DDL",
+    },
+    pending_operation_ids: ["users:alter_column:0"],
+    cleanup_errors: [],
+    latest_compare_result: null,
+  };
+}
+
 async function selectAntOption(label: string, option: string): Promise<void> {
   const combobox = screen.getByLabelText(label);
   fireEvent.mouseDown(combobox);
@@ -172,6 +233,30 @@ async function configureEndpoints(): Promise<void> {
   await selectAntOption("目标数据库/schema", "audit");
 }
 
+async function finishCompare(
+  result: DatabaseCompareResult = sampleCompareResult()
+): Promise<void> {
+  vi.mocked(api.compareDatabases).mockResolvedValue(result);
+  await configureEndpoints();
+  fireEvent.click(screen.getByRole("button", { name: "开始对比" }));
+  await screen.findByText(result.tables[0]?.name ?? "两个数据库结构一致");
+}
+
+async function openSafePreview(): Promise<void> {
+  await finishCompare();
+  fireEvent.click(screen.getByRole("checkbox", { name: "选择 users" }));
+  fireEvent.click(screen.getByRole("button", { name: "预览同步（1）" }));
+  await screen.findByText("同步 SQL 预览");
+}
+
+function acknowledgeSyncPlan(): void {
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: "我已检查以上 SQL，并理解已成功执行的 DDL 可能无法自动回滚",
+    })
+  );
+}
+
 function deferred<T>() {
   let resolve: (value: T) => void = () => {};
   let reject: (reason?: unknown) => void = () => {};
@@ -187,6 +272,9 @@ describe("DatabaseCompareModal", () => {
     vi.clearAllMocks();
     vi.mocked(api.listCompareDatabases).mockResolvedValue(["app", "audit"]);
     vi.mocked(api.previewDatabaseSync).mockResolvedValue(sampleSyncPreview());
+    vi.mocked(api.executeDatabaseSync).mockResolvedValue(
+      sampleSucceededExecution()
+    );
     vi.mocked(saveDatabaseCompareWorkbook).mockResolvedValue(true);
     useConnectionStore.setState({ savedConnections: SAVED_CONNECTIONS });
     Object.defineProperty(window, "matchMedia", {
@@ -626,7 +714,7 @@ describe("DatabaseCompareModal", () => {
     await waitFor(() => expect(api.compareDatabases).toHaveBeenCalledTimes(2));
   });
 
-  it("用当前合法选择和端点请求同步预览", async () => {
+  it("用当前合法选择和端点请求同步预览并打开确认弹窗", async () => {
     const successSpy = vi.spyOn(message, "success");
     vi.mocked(api.compareDatabases).mockResolvedValue(
       sampleAllStatusesResult()
@@ -654,7 +742,12 @@ describe("DatabaseCompareModal", () => {
     expect(successSpy).toHaveBeenCalledWith(
       "同步预览已生成；执行前仍需检查并确认 SQL"
     );
-    expect(screen.queryByText("同步 SQL 预览")).not.toBeInTheDocument();
+    expect(screen.getByText("同步 SQL 预览")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "ALTER TABLE `users` MODIFY `email` varchar(255) NOT NULL"
+      )
+    ).toBeInTheDocument();
     successSpy.mockRestore();
   });
 
@@ -846,5 +939,212 @@ describe("DatabaseCompareModal", () => {
     expect(
       screen.getByRole("switch", { name: "允许删除目标端结构" })
     ).not.toBeChecked();
+  });
+
+  it("确认执行只提交原请求和计划指纹，并结构化展示成功结果", async () => {
+    const successSpy = vi.spyOn(message, "success");
+    render(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await openSafePreview();
+    acknowledgeSyncPlan();
+
+    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+
+    await waitFor(() => {
+      expect(api.executeDatabaseSync).toHaveBeenCalledWith({
+        request: {
+          source: { saved_connection_id: "mysql-a", database: "app" },
+          target: { saved_connection_id: "mysql-b", database: "audit" },
+          selected_tables: ["users"],
+          include_drops: false,
+        },
+        plan_fingerprint: "preview-fingerprint",
+      });
+    });
+    const executeInput = vi.mocked(api.executeDatabaseSync).mock.calls[0][0];
+    expect(Object.keys(executeInput).sort()).toEqual([
+      "plan_fingerprint",
+      "request",
+    ]);
+    expect(Object.keys(executeInput.request).sort()).toEqual([
+      "include_drops",
+      "selected_tables",
+      "source",
+      "target",
+    ]);
+    expect(await screen.findByText("同步执行结果")).toBeInTheDocument();
+    expect(screen.getAllByText("数据库结构已同步")).not.toHaveLength(0);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "数据库结构同步成功，已完成 1 个操作，共 1 条语句"
+    );
+    expect(successSpy).toHaveBeenCalledWith("数据库结构已同步");
+    successSpy.mockRestore();
+  });
+
+  it("成功后重新对比采用后端最新结果并清空旧同步计划", async () => {
+    render(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await openSafePreview();
+    acknowledgeSyncPlan();
+    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+    expect(await screen.findByText("数据库结构已同步")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "重新对比" }));
+
+    expect(screen.queryByText("同步执行结果")).not.toBeInTheDocument();
+    expect(screen.getByText("两个数据库结构一致")).toBeInTheDocument();
+    expect(api.compareDatabases).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByRole("button", { name: /预览同步/ })
+    ).not.toBeInTheDocument();
+  });
+
+  it("部分失败时展示结构化结果和清理警告，重新对比真实目标结构", async () => {
+    vi.mocked(api.executeDatabaseSync).mockResolvedValue(
+      samplePartialExecution()
+    );
+    render(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await openSafePreview();
+    vi.mocked(api.compareDatabases).mockResolvedValue(sampleNoDiffResult());
+    acknowledgeSyncPlan();
+    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+
+    expect(await screen.findByText("同步部分完成")).toBeInTheDocument();
+    expect(screen.getByText("目标字段仍被视图引用")).toBeInTheDocument();
+    expect(screen.getByText("连接清理警告")).toBeInTheDocument();
+    expect(screen.getByText("目标端临时连接清理失败")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "重新对比" }));
+    expect(await screen.findByText("两个数据库结构一致")).toBeInTheDocument();
+    expect(api.compareDatabases).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText("同步执行结果")).not.toBeInTheDocument();
+  });
+
+  it("失败执行结果保持结构化展示且旧计划不能重复执行", async () => {
+    vi.mocked(api.executeDatabaseSync).mockResolvedValue(
+      sampleFailedExecution()
+    );
+    render(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await openSafePreview();
+    acknowledgeSyncPlan();
+    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+
+    expect(await screen.findByText("同步执行失败")).toBeInTheDocument();
+    expect(screen.getByText("目标端拒绝执行 DDL")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "确认执行" })
+    ).not.toBeInTheDocument();
+    expect(api.executeDatabaseSync).toHaveBeenCalledTimes(1);
+  });
+
+  it("执行中锁定关闭、交换、新对比和重复确认", async () => {
+    const execution = deferred<DatabaseSyncExecutionResult>();
+    const onClose = vi.fn();
+    vi.mocked(api.executeDatabaseSync).mockReturnValue(execution.promise);
+    render(<DatabaseCompareModal open onClose={onClose} />);
+    await openSafePreview();
+    acknowledgeSyncPlan();
+    const confirm = screen.getByRole("button", { name: "确认执行" });
+
+    fireEvent.click(confirm);
+
+    expect(screen.getByRole("button", { name: "正在执行同步" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "交换源端和目标端" })
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "开始对比" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "导出 Excel" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "关闭" })).toBeDisabled();
+    expect(screen.getByLabelText("源连接")).toBeDisabled();
+    expect(screen.getByLabelText("源数据库/schema")).toBeDisabled();
+    expect(screen.getByLabelText("目标连接")).toBeDisabled();
+    expect(screen.getByLabelText("目标数据库/schema")).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "正在执行同步" }));
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    expect(api.executeDatabaseSync).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+
+    await act(async () => {
+      execution.resolve(sampleSucceededExecution());
+      await execution.promise;
+    });
+  });
+
+  it("程序关闭使尚未返回的执行成功失效并完全重置状态", async () => {
+    const execution = deferred<DatabaseSyncExecutionResult>();
+    const successSpy = vi.spyOn(message, "success");
+    vi.mocked(api.executeDatabaseSync).mockReturnValue(execution.promise);
+    const { rerender } = render(
+      <DatabaseCompareModal open onClose={vi.fn()} />
+    );
+    await openSafePreview();
+    acknowledgeSyncPlan();
+    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+
+    rerender(<DatabaseCompareModal open={false} onClose={vi.fn()} />);
+    await act(async () => {
+      execution.resolve(sampleSucceededExecution());
+      await execution.promise;
+    });
+    expect(successSpy).not.toHaveBeenCalledWith("数据库结构已同步");
+
+    rerender(<DatabaseCompareModal open onClose={vi.fn()} />);
+    expect(screen.queryByText("同步执行结果")).not.toBeInTheDocument();
+    expect(screen.queryByText("users")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("目标连接")).toBeDisabled();
+    expect(
+      screen.getByLabelText("源连接").parentElement?.parentElement
+    ).not.toHaveTextContent("MySQL A");
+    successSpy.mockRestore();
+  });
+
+  it("关闭后生成的新预览不受旧执行错误影响", async () => {
+    const execution = deferred<DatabaseSyncExecutionResult>();
+    const errorSpy = vi.spyOn(message, "error");
+    vi.mocked(api.executeDatabaseSync).mockReturnValue(execution.promise);
+    const { rerender } = render(
+      <DatabaseCompareModal open onClose={vi.fn()} />
+    );
+    await openSafePreview();
+    acknowledgeSyncPlan();
+    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+
+    rerender(<DatabaseCompareModal open={false} onClose={vi.fn()} />);
+    rerender(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await openSafePreview();
+    await act(async () => {
+      execution.reject("旧执行失败：不应显示");
+      await execution.promise.catch(() => undefined);
+    });
+
+    expect(errorSpy).not.toHaveBeenCalledWith("旧执行失败：不应显示");
+    expect(screen.getByText("同步 SQL 预览")).toBeInTheDocument();
+    expect(screen.getByText(/计划 preview-/)).toBeInTheDocument();
+    errorSpy.mockRestore();
+  });
+
+  it("结构漂移错误关闭旧计划、保留合法选择并允许重新预览", async () => {
+    const errorSpy = vi.spyOn(message, "error");
+    vi.mocked(api.executeDatabaseSync).mockRejectedValue(
+      new Error("数据库结构已变化，请重新对比并预览同步计划")
+    );
+    render(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await openSafePreview();
+    acknowledgeSyncPlan();
+    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+
+    await waitFor(() => {
+      expect(errorSpy).toHaveBeenCalledWith(
+        "数据库结构已变化，请重新对比并预览同步计划"
+      );
+    });
+    expect(screen.queryByText("同步 SQL 预览")).not.toBeInTheDocument();
+    expect(screen.getByText("已选择 1 / 1 张表")).toBeInTheDocument();
+    const previewAgain = screen.getByRole("button", {
+      name: "预览同步（1）",
+    });
+    expect(previewAgain).toBeEnabled();
+    fireEvent.click(previewAgain);
+    expect(await screen.findByText("同步 SQL 预览")).toBeInTheDocument();
+    expect(api.previewDatabaseSync).toHaveBeenCalledTimes(2);
+    errorSpy.mockRestore();
   });
 });
