@@ -78,8 +78,9 @@ export function DatabaseCompareModal({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [executionResult, setExecutionResult] =
     useState<DatabaseSyncExecutionResult | null>(null);
-  const [syncProgress, setSyncProgress] =
-    useState<DatabaseSyncProgress | null>(null);
+  const [syncProgress, setSyncProgress] = useState<DatabaseSyncProgress | null>(
+    null
+  );
   const [loadErrors, setLoadErrors] = useState<
     Record<Exclude<LoadingSide, null>, string | null>
   >({ source: null, target: null });
@@ -566,14 +567,14 @@ export function DatabaseCompareModal({
       if (!isMountedRef.current) {
         stopSyncProgressListener();
         executionInFlightRef.current = false;
-        return;
-      }
-      clearSyncProgress();
-      executionInFlightRef.current = false;
-      setExecutionLocked(false);
-      if (executionRequestId.current === requestId) {
-        executingRef.current = false;
-        setExecuting(false);
+      } else {
+        clearSyncProgress();
+        executionInFlightRef.current = false;
+        setExecutionLocked(false);
+        if (executionRequestId.current === requestId) {
+          executingRef.current = false;
+          setExecuting(false);
+        }
       }
     }
   }, [clearSyncProgress, stopSyncProgressListener, syncPreview, syncRequest]);

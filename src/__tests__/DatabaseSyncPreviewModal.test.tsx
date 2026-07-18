@@ -490,7 +490,9 @@ describe("DatabaseSyncPreviewModal", () => {
     expect(
       screen.getByText("DDL 已执行完成，正在刷新结构对比")
     ).toBeInTheDocument();
-    expect(screen.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
+    expect(screen.getByRole("progressbar")).not.toHaveAttribute(
+      "aria-valuenow"
+    );
   });
 
   it("减少动画下保留静态不确定进度并关闭所有进度动画", () => {
