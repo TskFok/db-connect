@@ -11,14 +11,15 @@ use crate::models::types::{
 };
 
 use super::{
-    primary_key_columns, ColumnSyncMetadata, OperationPhase, PlanFragments, TablePlanContext,
+    add_column_risk, ColumnSyncMetadata, OperationPhase, PlanFragments, TablePlanContext,
     TableSyncMetadata,
 };
 
 pub(crate) fn metadata_sql(schema: &str) -> String {
     format!(
         "SELECT objects.name AS table_name, COALESCE(objects.sql, '') AS create_sql, \
-                columns.name AS column_name, columns.hidden \
+                columns.name AS column_name, columns.hidden, \
+                columns.pk AS primary_key_ordinal \
          FROM {}.sqlite_schema objects \
          JOIN pragma_table_list table_list \
            ON table_list.schema = {} \
@@ -39,6 +40,7 @@ struct MetadataRow {
     create_sql: String,
     column_name: String,
     hidden: i64,
+    primary_key_ordinal: Option<u32>,
 }
 
 fn aggregate_metadata_rows(rows: Vec<MetadataRow>) -> BTreeMap<String, TableSyncMetadata> {
@@ -55,7 +57,10 @@ fn aggregate_metadata_rows(rows: Vec<MetadataRow>) -> BTreeMap<String, TableSync
         };
         columns.insert(
             row.column_name,
-            ColumnSyncMetadata::Sqlite { hidden: row.hidden },
+            ColumnSyncMetadata::Sqlite {
+                hidden: row.hidden,
+                primary_key_ordinal: row.primary_key_ordinal,
+            },
         );
     }
     metadata
@@ -82,6 +87,11 @@ pub(crate) async fn load_metadata(
                     create_sql: row.get("create_sql")?,
                     column_name: row.get("column_name")?,
                     hidden: row.get("hidden")?,
+                    primary_key_ordinal: row
+                        .get::<_, i64>("primary_key_ordinal")
+                        .ok()
+                        .and_then(|value| u32::try_from(value).ok())
+                        .filter(|value| *value > 0),
                 })
             })
             .map_err(|error| format!("查询 SQLite 同步表元数据失败: {error}"))?;
@@ -176,12 +186,65 @@ fn column_hidden(
     table_name: &str,
     column_name: &str,
 ) -> Result<i64, String> {
-    let Some(ColumnSyncMetadata::Sqlite { hidden }) = metadata.columns.get(column_name) else {
+    let Some(ColumnSyncMetadata::Sqlite { hidden, .. }) = metadata.columns.get(column_name) else {
         return Err(format!(
             "字段 {table_name}.{column_name} 缺少 SQLite 原生 hidden 元数据"
         ));
     };
     Ok(*hidden)
+}
+
+fn sqlite_primary_key_columns(
+    table: &TableSnapshot,
+    metadata: SqliteTableMetadataRef<'_>,
+) -> Result<Vec<String>, String> {
+    let mut ordered = Vec::new();
+    let mut ordinals = std::collections::BTreeSet::new();
+    for (name, column) in &table.columns {
+        let Some(ColumnSyncMetadata::Sqlite {
+            primary_key_ordinal,
+            ..
+        }) = metadata.columns.get(name)
+        else {
+            return Err(format!(
+                "字段 {}.{} 缺少 SQLite 原生主键序号元数据",
+                table.name, name
+            ));
+        };
+        match (column.primary_key, primary_key_ordinal) {
+            (true, Some(ordinal)) => {
+                if !ordinals.insert(*ordinal) {
+                    return Err(format!(
+                        "复合主键表 {} 包含重复的 SQLite 原生主键序号",
+                        table.name
+                    ));
+                }
+                ordered.push((*ordinal, name.clone()));
+            }
+            (true, None) => {
+                return Err(format!(
+                    "主键字段 {}.{} 缺少 SQLite 原生主键序号",
+                    table.name, name
+                ));
+            }
+            (false, Some(_)) => {
+                return Err(format!(
+                    "字段 {}.{} 的主键标志与 SQLite 原生主键序号不一致",
+                    table.name, name
+                ));
+            }
+            (false, None) => {}
+        }
+    }
+    ordered.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    if ordered
+        .iter()
+        .enumerate()
+        .any(|(index, (ordinal, _))| *ordinal as usize != index + 1)
+    {
+        return Err(format!("表 {} 的 SQLite 原生主键序号不连续", table.name));
+    }
+    Ok(ordered.into_iter().map(|(_, name)| name).collect())
 }
 
 fn validate_plain_table(metadata: SqliteTableMetadataRef<'_>) -> Result<(), String> {
@@ -267,6 +330,26 @@ fn contains_unquoted_keyword(sql: &str, keyword: &str) -> bool {
         }
     }
     false
+}
+
+pub(super) fn native_table_signature(create_sql: &str) -> (bool, String) {
+    let suffix = create_sql
+        .trim()
+        .trim_end_matches(';')
+        .trim()
+        .rsplit_once(')')
+        .map(|(_, suffix)| {
+            suffix
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_ascii_uppercase()
+        })
+        .unwrap_or_default();
+    (
+        contains_unquoted_keyword(create_sql, "AUTOINCREMENT"),
+        suffix,
+    )
 }
 
 fn validate_physical_table(metadata: SqliteTableMetadataRef<'_>) -> Result<(), String> {
@@ -369,8 +452,17 @@ fn plan_create_table(
         return;
     }
 
-    let mut primary_keys = primary_key_columns(source);
-    primary_keys.sort_by_key(|name| column_sort_key(source, name));
+    let primary_keys = match sqlite_primary_key_columns(source, metadata) {
+        Ok(primary_keys) => primary_keys,
+        Err(reason) => {
+            plan.block(
+                &source.name,
+                &format!("无法创建表 {}", source.name),
+                &reason,
+            );
+            return;
+        }
+    };
     let request = CreateTableRequest {
         table_name: source.name.clone(),
         columns: definitions,
@@ -394,15 +486,6 @@ fn plan_create_table(
             &reason,
         ),
     }
-}
-
-fn column_sort_key(table: &TableSnapshot, column_name: &str) -> (u32, String) {
-    table
-        .columns
-        .iter()
-        .find(|(name, _)| name == column_name)
-        .map(|(name, column)| (column.ordinal_position, name.clone()))
-        .unwrap_or((u32::MAX, column_name.to_string()))
 }
 
 fn plan_changed_table(
@@ -453,6 +536,7 @@ fn plan_changed_table(
         .max()
         .unwrap_or_default();
     let mut add_columns = Vec::new();
+    let mut add_risk = DatabaseSyncRisk::Normal;
     let mut drop_columns = Vec::new();
 
     for difference in differences {
@@ -539,7 +623,14 @@ fn plan_changed_table(
                     after_column: None,
                 };
                 match build_add_column_sql(context.target_database, &source.name, &request) {
-                    Ok(sql) => add_columns.push((column.ordinal_position, difference.name, sql)),
+                    Ok(sql) => {
+                        if add_column_risk(column, source_metadata.columns.get(&difference.name))
+                            == DatabaseSyncRisk::High
+                        {
+                            add_risk = DatabaseSyncRisk::High;
+                        }
+                        add_columns.push((column.ordinal_position, difference.name, sql));
+                    }
                     Err(reason) => plan.block(
                         &source.name,
                         &format!("无法新增字段 {}.{}", source.name, difference.name),
@@ -580,7 +671,7 @@ fn plan_changed_table(
             OperationPhase::AddColumn,
             &source.name,
             DatabaseSyncOperationKind::AddColumn,
-            DatabaseSyncRisk::Normal,
+            add_risk,
             &format!("新增表 {} 的 {} 个字段", source.name, add_count),
             add_sql,
         );
@@ -810,7 +901,36 @@ mod tests {
             create_sql: create_sql.to_string(),
             columns: columns
                 .into_iter()
-                .map(|(name, hidden)| (name.to_string(), ColumnSyncMetadata::Sqlite { hidden }))
+                .map(|(name, hidden)| {
+                    (
+                        name.to_string(),
+                        ColumnSyncMetadata::Sqlite {
+                            hidden,
+                            primary_key_ordinal: None,
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    fn metadata_with_primary_key(
+        create_sql: &str,
+        columns: Vec<(&str, i64, Option<u32>)>,
+    ) -> TableSyncMetadata {
+        TableSyncMetadata::Sqlite {
+            create_sql: create_sql.to_string(),
+            columns: columns
+                .into_iter()
+                .map(|(name, hidden, primary_key_ordinal)| {
+                    (
+                        name.to_string(),
+                        ColumnSyncMetadata::Sqlite {
+                            hidden,
+                            primary_key_ordinal,
+                        },
+                    )
+                })
                 .collect(),
         }
     }
@@ -831,6 +951,7 @@ mod tests {
         assert!(sql.contains("objects.type = 'table'"));
         assert!(sql.contains("lower(objects.name) NOT GLOB 'sqlite_*'"));
         assert!(sql.contains("pragma_table_xinfo(objects.name"));
+        assert!(sql.contains("columns.pk AS primary_key_ordinal"));
         assert!(sql.contains("'ma\"in'"));
         assert!(!sql.contains(';'));
     }
@@ -843,12 +964,14 @@ mod tests {
                 create_sql: "CREATE TABLE users (name TEXT, upper_name TEXT GENERATED ALWAYS AS (upper(name)))".to_string(),
                 column_name: "name".to_string(),
                 hidden: 0,
+                primary_key_ordinal: None,
             },
             MetadataRow {
                 table_name: "users".to_string(),
                 create_sql: "CREATE TABLE users (name TEXT, upper_name TEXT GENERATED ALWAYS AS (upper(name)))".to_string(),
                 column_name: "upper_name".to_string(),
                 hidden: 2,
+                primary_key_ordinal: None,
             },
         ]);
 
@@ -862,7 +985,7 @@ mod tests {
         assert!(create_sql.contains("GENERATED ALWAYS"));
         assert!(matches!(
             columns.get("upper_name"),
-            Some(ColumnSyncMetadata::Sqlite { hidden: 2 })
+            Some(ColumnSyncMetadata::Sqlite { hidden: 2, .. })
         ));
     }
 
@@ -907,7 +1030,7 @@ mod tests {
         assert!(create_sql.contains("GENERATED ALWAYS"));
         assert!(matches!(
             columns.get("upper_name"),
-            Some(ColumnSyncMetadata::Sqlite { hidden: 2 })
+            Some(ColumnSyncMetadata::Sqlite { hidden: 2, .. })
         ));
 
         pool.close();
@@ -1113,9 +1236,9 @@ mod tests {
                 ),
             ],
         );
-        let native = metadata(
+        let native = metadata_with_primary_key(
             "CREATE TABLE users (id INTEGER PRIMARY KEY, display_name TEXT DEFAULT 'anon', FOREIGN KEY (id) REFERENCES tenants(id))",
-            vec![("id", 0), ("display_name", 0)],
+            vec![("id", 0, Some(1)), ("display_name", 0, None)],
         );
 
         let plan = plan_table(TablePlanContext {
@@ -1139,6 +1262,68 @@ mod tests {
         assert!(sql.contains("DEFAULT 'anon'"));
         assert!(!sql.contains("DEFAULT '''anon'''"));
         assert!(!sql.contains("FOREIGN KEY"));
+    }
+
+    #[test]
+    fn creates_composite_primary_key_in_native_sqlite_ordinal_order() {
+        let source = table(
+            "memberships",
+            vec![
+                ("a", column(1, "INTEGER", false, None, true, "")),
+                ("b", column(2, "INTEGER", false, None, true, "")),
+            ],
+        );
+        let native = metadata_with_primary_key(
+            "CREATE TABLE memberships (a INTEGER, b INTEGER, PRIMARY KEY (b, a))",
+            vec![("a", 0, Some(2)), ("b", 0, Some(1))],
+        );
+
+        let plan = plan_table(TablePlanContext {
+            target_database: "main",
+            source: Some(&source),
+            target: None,
+            source_metadata: Some(&native),
+            target_metadata: None,
+            include_drops: false,
+        });
+
+        assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+        assert_eq!(plan.operations.len(), 1);
+        assert!(plan.operations[0].sql[0].contains("PRIMARY KEY (\"b\", \"a\")"));
+    }
+
+    #[test]
+    fn missing_duplicate_or_inconsistent_sqlite_primary_key_ordinals_block_creation() {
+        let source = table(
+            "memberships",
+            vec![
+                ("a", column(1, "INTEGER", false, None, true, "")),
+                ("b", column(2, "INTEGER", false, None, true, "")),
+                ("note", column(3, "TEXT", true, None, false, "")),
+            ],
+        );
+        let cases = [
+            vec![("a", 0, Some(1)), ("b", 0, None), ("note", 0, None)],
+            vec![("a", 0, Some(1)), ("b", 0, Some(1)), ("note", 0, None)],
+            vec![("a", 0, Some(1)), ("b", 0, Some(2)), ("note", 0, Some(3))],
+        ];
+
+        for columns in cases {
+            let native = metadata_with_primary_key(
+                "CREATE TABLE memberships (a INTEGER, b INTEGER, note TEXT, PRIMARY KEY (a, b))",
+                columns,
+            );
+            let plan = plan_table(TablePlanContext {
+                target_database: "main",
+                source: Some(&source),
+                target: None,
+                source_metadata: Some(&native),
+                target_metadata: None,
+                include_drops: false,
+            });
+            assert!(plan.operations.is_empty());
+            assert_eq!(plan.blockers.len(), 1);
+        }
     }
 
     #[test]
@@ -1279,6 +1464,39 @@ mod tests {
             plan.operations[0].sql,
             vec!["ALTER TABLE \"ma\"\"in\".\"us\"\"ers\" ADD COLUMN \"na\"\"me\" TEXT DEFAULT 'anon'"]
         );
+    }
+
+    #[test]
+    fn non_null_sqlite_add_column_with_constant_default_is_high_risk() {
+        let source = table(
+            "users",
+            vec![
+                ("id", column(1, "INTEGER", false, None, false, "")),
+                ("value", column(2, "TEXT", false, Some("'seed'"), false, "")),
+            ],
+        );
+        let target = table(
+            "users",
+            vec![("id", column(1, "INTEGER", false, None, false, ""))],
+        );
+        let source_native = metadata(
+            "CREATE TABLE users (id INTEGER, value TEXT NOT NULL DEFAULT 'seed')",
+            vec![("id", 0), ("value", 0)],
+        );
+        let target_native = metadata("CREATE TABLE users (id INTEGER)", vec![("id", 0)]);
+
+        let plan = plan_table(TablePlanContext {
+            target_database: "main",
+            source: Some(&source),
+            target: Some(&target),
+            source_metadata: Some(&source_native),
+            target_metadata: Some(&target_native),
+            include_drops: false,
+        });
+
+        assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+        assert_eq!(plan.operations.len(), 1);
+        assert_eq!(plan.operations[0].risk, DatabaseSyncRisk::High);
     }
 
     #[test]

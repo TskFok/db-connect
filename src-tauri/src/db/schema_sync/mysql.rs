@@ -13,13 +13,15 @@ use crate::models::types::{
 };
 
 use super::{
-    primary_key_columns, ColumnSyncMetadata, OperationPhase, PlanFragments, TablePlanContext,
-    TableSyncMetadata,
+    add_column_risk, primary_key_columns, ColumnSyncMetadata, OperationPhase, PlanFragments,
+    TablePlanContext, TableSyncMetadata,
 };
 
 #[allow(dead_code, reason = "将在后续统一同步元数据分发中调用")]
 pub(crate) fn metadata_sql() -> &'static str {
     "SELECT tables.TABLE_NAME AS table_name, COALESCE(tables.ENGINE, '') AS engine, \
+            tables.CREATE_OPTIONS AS create_options, \
+            COALESCE(partition_info.is_partitioned, 0) AS is_partitioned, \
             tables.TABLE_COMMENT AS comment, columns.COLUMN_NAME AS column_name, \
             COALESCE(columns.GENERATION_EXPRESSION, '') AS generation_expression, \
             statistics.SEQ_IN_INDEX AS primary_key_ordinal \
@@ -32,6 +34,15 @@ pub(crate) fn metadata_sql() -> &'static str {
       AND statistics.TABLE_NAME = columns.TABLE_NAME \
       AND statistics.COLUMN_NAME = columns.COLUMN_NAME \
       AND statistics.INDEX_NAME = 'PRIMARY' \
+     LEFT JOIN ( \
+       SELECT TABLE_SCHEMA, TABLE_NAME, \
+              MAX(CASE WHEN PARTITION_NAME IS NOT NULL THEN 1 ELSE 0 END) AS is_partitioned \
+       FROM information_schema.PARTITIONS \
+       WHERE TABLE_SCHEMA = :schema \
+       GROUP BY TABLE_SCHEMA, TABLE_NAME \
+     ) partition_info \
+       ON partition_info.TABLE_SCHEMA = tables.TABLE_SCHEMA \
+      AND partition_info.TABLE_NAME = tables.TABLE_NAME \
      WHERE tables.TABLE_SCHEMA = :schema AND tables.TABLE_TYPE = 'BASE TABLE' \
      ORDER BY tables.TABLE_NAME, columns.ORDINAL_POSITION"
 }
@@ -40,6 +51,8 @@ pub(crate) fn metadata_sql() -> &'static str {
 struct MetadataRow {
     table_name: String,
     engine: String,
+    create_options: String,
+    partitioned: bool,
     comment: String,
     column_name: String,
     generation_expression: String,
@@ -53,6 +66,8 @@ fn aggregate_metadata_rows(rows: Vec<MetadataRow>) -> BTreeMap<String, TableSync
             .entry(row.table_name)
             .or_insert_with(|| TableSyncMetadata::MySql {
                 engine: row.engine,
+                create_options: row.create_options,
+                partitioned: row.partitioned,
                 comment: row.comment,
                 columns: BTreeMap::new(),
             });
@@ -124,6 +139,8 @@ pub(crate) async fn load_metadata(
         .map(|row| MetadataRow {
             table_name: row.get::<String, _>("table_name").unwrap_or_default(),
             engine: row.get::<String, _>("engine").unwrap_or_default(),
+            create_options: row.get::<String, _>("create_options").unwrap_or_default(),
+            partitioned: row.get::<u64, _>("is_partitioned").unwrap_or_default() != 0,
             comment: row.get::<String, _>("comment").unwrap_or_default(),
             column_name: row.get::<String, _>("column_name").unwrap_or_default(),
             generation_expression: row
@@ -135,9 +152,50 @@ pub(crate) async fn load_metadata(
     Ok(aggregate_metadata_rows(mapped))
 }
 
+fn validate_supported_table_shape(metadata: &TableSyncMetadata) -> Result<(), String> {
+    let TableSyncMetadata::MySql {
+        engine,
+        create_options,
+        partitioned,
+        ..
+    } = metadata
+    else {
+        return Err("缺少 MySQL 原生表元数据".to_string());
+    };
+    if *partitioned {
+        return Err("MySQL 分区表无法由首期结构化同步无损表达".to_string());
+    }
+    if !create_options.trim().is_empty() {
+        return Err("MySQL 表包含系统版本或其他无法由首期结构化同步无损表达的建表选项".to_string());
+    }
+    if !["InnoDB", "MyISAM", "MEMORY"]
+        .iter()
+        .any(|allowed| engine.eq_ignore_ascii_case(allowed))
+    {
+        return Err("MySQL 表使用首期本地安全 allowlist 之外的特殊或外部存储引擎".to_string());
+    }
+    Ok(())
+}
+
 #[allow(dead_code, reason = "将在后续统一同步计划分发中调用")]
 pub(crate) fn plan_table(context: TablePlanContext<'_>) -> PlanFragments {
     let mut plan = PlanFragments::default();
+    for (table, metadata) in [
+        (context.source, context.source_metadata),
+        (context.target, context.target_metadata),
+    ] {
+        let (Some(table), Some(metadata)) = (table, metadata) else {
+            continue;
+        };
+        if let Err(reason) = validate_supported_table_shape(metadata) {
+            plan.block(
+                &table.name,
+                &format!("无法同步 MySQL 表 {}", table.name),
+                &reason,
+            );
+            return plan;
+        }
+    }
     match (context.source, context.target) {
         (Some(source), None) => plan_create_table(&mut plan, &context, source),
         (None, Some(target)) => {
@@ -278,6 +336,7 @@ fn plan_changed_table(
     target: &TableSnapshot,
 ) {
     let mut add_column_sql = Vec::new();
+    let mut add_risk = DatabaseSyncRisk::Normal;
     let mut alter_column_sql = Vec::new();
     let mut publicly_changed_columns = BTreeSet::new();
     let mut blocked_generated_columns = BTreeSet::new();
@@ -370,6 +429,15 @@ fn plan_changed_table(
                 };
                 match source_column_definition(context, &source.name, &difference.name, column) {
                     Ok(definition) => {
+                        let native = context.source_metadata.and_then(|metadata| {
+                            let TableSyncMetadata::MySql { columns, .. } = metadata else {
+                                return None;
+                            };
+                            columns.get(&difference.name)
+                        });
+                        if add_column_risk(column, native) == DatabaseSyncRisk::High {
+                            add_risk = DatabaseSyncRisk::High;
+                        }
                         add_column_sql.push(format!(
                             "ALTER TABLE {}.{} ADD COLUMN {} {}{}",
                             esc_id(context.target_database),
@@ -493,7 +561,7 @@ fn plan_changed_table(
             OperationPhase::AddColumn,
             &source.name,
             DatabaseSyncOperationKind::AddColumn,
-            DatabaseSyncRisk::Normal,
+            add_risk,
             &format!("新增表 {} 的 {} 个字段", source.name, add_column_sql.len()),
             add_column_sql,
         );
@@ -802,7 +870,7 @@ mod tests {
     };
     use crate::models::types::{
         ColumnSnapshot, DatabaseCompareEndpointRequest, DatabaseSyncOperationKind,
-        DatabaseSyncRequest,
+        DatabaseSyncRequest, DatabaseSyncRisk,
     };
 
     fn table(name: &str, columns: Vec<(&str, u32, &str, bool)>) -> TableSnapshot {
@@ -844,6 +912,10 @@ mod tests {
         assert!(sql.contains("INDEX_NAME = 'PRIMARY'"));
         assert!(sql.contains("SEQ_IN_INDEX"));
         assert!(sql.contains("GENERATION_EXPRESSION"));
+        assert!(sql.contains("tables.CREATE_OPTIONS AS create_options"));
+        assert!(sql.contains("information_schema.PARTITIONS"));
+        assert!(sql.contains("PARTITION_NAME IS NOT NULL"));
+        assert!(!sql.to_ascii_uppercase().contains("SHOW CREATE"));
         assert!(sql.contains("TABLE_SCHEMA = :schema"));
         assert!(sql.contains("TABLE_TYPE = 'BASE TABLE'"));
         assert!(!sql.contains(":table"));
@@ -855,6 +927,8 @@ mod tests {
             MetadataRow {
                 table_name: "orders".to_string(),
                 engine: "InnoDB".to_string(),
+                create_options: "SYSTEM VERSIONING".to_string(),
+                partitioned: true,
                 comment: "订单".to_string(),
                 column_name: "a".to_string(),
                 generation_expression: String::new(),
@@ -863,6 +937,8 @@ mod tests {
             MetadataRow {
                 table_name: "orders".to_string(),
                 engine: "InnoDB".to_string(),
+                create_options: "SYSTEM VERSIONING".to_string(),
+                partitioned: true,
                 comment: "订单".to_string(),
                 column_name: "b".to_string(),
                 generation_expression: String::new(),
@@ -871,6 +947,8 @@ mod tests {
             MetadataRow {
                 table_name: "users".to_string(),
                 engine: "MyISAM".to_string(),
+                create_options: String::new(),
+                partitioned: false,
                 comment: String::new(),
                 column_name: "id".to_string(),
                 generation_expression: String::new(),
@@ -881,6 +959,8 @@ mod tests {
         assert_eq!(metadata.len(), 2);
         let TableSyncMetadata::MySql {
             engine,
+            create_options,
+            partitioned,
             comment,
             columns,
         } = &metadata["orders"]
@@ -888,6 +968,8 @@ mod tests {
             panic!("应聚合为 MySQL 表元数据");
         };
         assert_eq!(engine, "InnoDB");
+        assert_eq!(create_options, "SYSTEM VERSIONING");
+        assert!(*partitioned);
         assert_eq!(comment, "订单");
         assert!(matches!(
             &columns["a"],
@@ -906,6 +988,47 @@ mod tests {
     }
 
     #[test]
+    fn partitioned_versioned_and_special_engine_tables_block_all_planning_paths() {
+        let source = table("events", vec![("id", 1, "bigint", false)]);
+        let target = table("events", vec![("id", 1, "int", false)]);
+        let secret = "never-show-mysql-special-option";
+        let cases = [
+            ("FEDERATED", String::new(), false),
+            ("MRG_MYISAM", String::new(), false),
+            ("InnoDB", format!("SYSTEM VERSIONING {secret}"), false),
+            ("InnoDB", String::new(), true),
+        ];
+
+        for (engine, create_options, partitioned) in cases {
+            let native = TableSyncMetadata::MySql {
+                engine: engine.to_string(),
+                create_options,
+                partitioned,
+                comment: String::new(),
+                columns: BTreeMap::new(),
+            };
+            for (source_table, target_table, include_drops) in [
+                (Some(&source), None, false),
+                (Some(&source), Some(&target), true),
+                (None, Some(&target), true),
+            ] {
+                let plan = plan_table(TablePlanContext {
+                    target_database: "copy",
+                    source: source_table,
+                    target: target_table,
+                    source_metadata: source_table.map(|_| &native),
+                    target_metadata: target_table.map(|_| &native),
+                    include_drops,
+                });
+                assert!(plan.operations.is_empty(), "engine={engine}");
+                assert_eq!(plan.blockers.len(), 1, "engine={engine}");
+                let visible = format!("{} {}", plan.blockers[0].summary, plan.blockers[0].reason);
+                assert!(!visible.contains(secret), "{visible}");
+            }
+        }
+    }
+
+    #[test]
     fn creates_composite_primary_key_in_native_sequence() {
         let source = table(
             "orders",
@@ -913,6 +1036,8 @@ mod tests {
         );
         let metadata = TableSyncMetadata::MySql {
             engine: "InnoDB".to_string(),
+            create_options: String::new(),
+            partitioned: false,
             comment: String::new(),
             columns: BTreeMap::from([
                 (
@@ -952,6 +1077,8 @@ mod tests {
         let target = source.clone();
         let source_metadata = TableSyncMetadata::MySql {
             engine: "InnoDB".to_string(),
+            create_options: String::new(),
+            partitioned: false,
             comment: String::new(),
             columns: BTreeMap::from([
                 (
@@ -972,6 +1099,8 @@ mod tests {
         };
         let target_metadata = TableSyncMetadata::MySql {
             engine: "InnoDB".to_string(),
+            create_options: String::new(),
+            partitioned: false,
             comment: String::new(),
             columns: BTreeMap::from([
                 (
@@ -1087,6 +1216,8 @@ mod tests {
         );
         let metadata = TableSyncMetadata::MySql {
             engine: "InnoDB".to_string(),
+            create_options: String::new(),
+            partitioned: false,
             comment: "用户".to_string(),
             columns: BTreeMap::new(),
         };
@@ -1129,6 +1260,8 @@ mod tests {
         );
         let metadata = TableSyncMetadata::MySql {
             engine: "InnoDB".to_string(),
+            create_options: String::new(),
+            partitioned: false,
             comment: "用户表".to_string(),
             columns: BTreeMap::new(),
         };
@@ -1184,6 +1317,14 @@ mod tests {
         assert!(sql.iter().any(|sql| sql.contains(
             "ALTER TABLE `copy`.`users` MODIFY COLUMN `email` varchar(255) NOT NULL AFTER `id`"
         )));
+        assert_eq!(
+            plan.operations
+                .iter()
+                .find(|operation| operation.kind == DatabaseSyncOperationKind::AddColumn)
+                .unwrap()
+                .risk,
+            DatabaseSyncRisk::High
+        );
     }
 
     #[test]
@@ -1234,6 +1375,8 @@ mod tests {
         source.columns[0].1.extra = "STORED GENERATED".to_string();
         let with_expression = TableSyncMetadata::MySql {
             engine: "InnoDB".to_string(),
+            create_options: String::new(),
+            partitioned: false,
             comment: String::new(),
             columns: BTreeMap::from([(
                 "total".to_string(),
@@ -1257,6 +1400,8 @@ mod tests {
 
         let missing_expression = TableSyncMetadata::MySql {
             engine: "InnoDB".to_string(),
+            create_options: String::new(),
+            partitioned: false,
             comment: String::new(),
             columns: BTreeMap::new(),
         };
@@ -1279,6 +1424,8 @@ mod tests {
         source.columns[0].1.extra = "PERSISTENT".to_string();
         let metadata = TableSyncMetadata::MySql {
             engine: "InnoDB".to_string(),
+            create_options: String::new(),
+            partitioned: false,
             comment: String::new(),
             columns: BTreeMap::from([(
                 "total".to_string(),
@@ -1309,6 +1456,8 @@ mod tests {
         let target = source.clone();
         let source_metadata = TableSyncMetadata::MySql {
             engine: "InnoDB".to_string(),
+            create_options: String::new(),
+            partitioned: false,
             comment: String::new(),
             columns: BTreeMap::from([(
                 "total".to_string(),
@@ -1320,6 +1469,8 @@ mod tests {
         };
         let target_metadata = TableSyncMetadata::MySql {
             engine: "InnoDB".to_string(),
+            create_options: String::new(),
+            partitioned: false,
             comment: String::new(),
             columns: BTreeMap::from([(
                 "total".to_string(),
@@ -1352,6 +1503,8 @@ mod tests {
         let target = source.clone();
         let metadata = TableSyncMetadata::MySql {
             engine: "InnoDB".to_string(),
+            create_options: String::new(),
+            partitioned: false,
             comment: String::new(),
             columns: BTreeMap::from([(
                 "total".to_string(),
@@ -1403,6 +1556,8 @@ mod tests {
         target.columns[0].1.nullable = true;
         let source_metadata = TableSyncMetadata::MySql {
             engine: "InnoDB".to_string(),
+            create_options: String::new(),
+            partitioned: false,
             comment: String::new(),
             columns: BTreeMap::from([(
                 "total".to_string(),
@@ -1455,6 +1610,8 @@ mod tests {
         let target = source.clone();
         let source_metadata = TableSyncMetadata::MySql {
             engine: "InnoDB".to_string(),
+            create_options: String::new(),
+            partitioned: false,
             comment: String::new(),
             columns: BTreeMap::from([(
                 "total".to_string(),
@@ -1466,6 +1623,8 @@ mod tests {
         };
         let target_metadata = TableSyncMetadata::MySql {
             engine: "InnoDB".to_string(),
+            create_options: String::new(),
+            partitioned: false,
             comment: String::new(),
             columns: BTreeMap::from([(
                 "total".to_string(),
@@ -1493,6 +1652,8 @@ mod tests {
         let source = table("users", vec![("id", 1, "bigint; DROP TABLE users", false)]);
         let metadata = TableSyncMetadata::MySql {
             engine: "InnoDB".to_string(),
+            create_options: String::new(),
+            partitioned: false,
             comment: String::new(),
             columns: BTreeMap::new(),
         };
@@ -1529,6 +1690,8 @@ mod tests {
         source.columns[3].1.extra = "auto_increment".to_string();
         let metadata = TableSyncMetadata::MySql {
             engine: "InnoDB".to_string(),
+            create_options: String::new(),
+            partitioned: false,
             comment: String::new(),
             columns: BTreeMap::new(),
         };
@@ -1558,6 +1721,8 @@ mod tests {
         source.columns[0].1.extra = "DEFAULT_GENERATED SOMETHING".to_string();
         let metadata = TableSyncMetadata::MySql {
             engine: "InnoDB".to_string(),
+            create_options: String::new(),
+            partitioned: false,
             comment: String::new(),
             columns: BTreeMap::new(),
         };
@@ -1580,6 +1745,8 @@ mod tests {
         source.columns[0].1.extra = "DEFAULT_GENERATED".to_string();
         let metadata = TableSyncMetadata::MySql {
             engine: "InnoDB".to_string(),
+            create_options: String::new(),
+            partitioned: false,
             comment: String::new(),
             columns: BTreeMap::new(),
         };

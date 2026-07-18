@@ -132,7 +132,7 @@ where
                         statement_index,
                         error,
                     }),
-                    pending_operation_ids: operations[operation_index..]
+                    pending_operation_ids: operations[operation_index + 1..]
                         .iter()
                         .map(|item| item.id.clone())
                         .collect(),
@@ -854,7 +854,7 @@ mod tests {
         );
         assert_eq!(result.completed_statements.len(), 2);
         assert_eq!(result.failed.unwrap().operation_id, "op-0002");
-        assert_eq!(result.pending_operation_ids, vec!["op-0002", "op-0003"]);
+        assert_eq!(result.pending_operation_ids, vec!["op-0003"]);
     }
 
     #[tokio::test]
@@ -879,7 +879,7 @@ mod tests {
         assert_eq!(*seen.lock().await, vec!["FAIL"]);
         assert_eq!(result.status, DatabaseSyncExecutionStatus::Failed);
         assert!(result.completed_statements.is_empty());
-        assert_eq!(result.pending_operation_ids, vec!["op-0001", "op-0002"]);
+        assert_eq!(result.pending_operation_ids, vec!["op-0002"]);
     }
 
     #[test]
@@ -1045,6 +1045,123 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sqlite_sync_preserves_exact_selected_table_name_with_spaces() {
+        let (source_path, target_path) = sqlite_fixture_paths();
+        rusqlite::Connection::open(&source_path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE users (id INTEGER PRIMARY KEY);\
+                 CREATE TABLE \" users \" (id INTEGER PRIMARY KEY, exact_only TEXT);",
+            )
+            .unwrap();
+        rusqlite::Connection::open(&target_path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE users (id INTEGER PRIMARY KEY);\
+                 CREATE TABLE \" users \" (id INTEGER PRIMARY KEY);",
+            )
+            .unwrap();
+        let saved = vec![
+            sqlite_config("source", &source_path),
+            sqlite_config("target", &target_path),
+        ];
+        let request = sqlite_request(vec![" users "], false);
+
+        let preview = preview_database_sync_with_saved(&saved, &request)
+            .await
+            .expect("preview exact table");
+        assert_eq!(preview.operations.len(), 1);
+        assert_eq!(preview.operations[0].table_name, " users ");
+        assert!(preview.operations[0]
+            .sql
+            .iter()
+            .all(|sql| sql.contains("\" users \"") && !sql.contains(".\"users\"")));
+
+        let result = execute_database_sync_with_saved(
+            &saved,
+            ExecuteDatabaseSyncRequest {
+                request,
+                plan_fingerprint: preview.plan_fingerprint,
+            },
+        )
+        .await
+        .expect("execute exact table");
+        assert_eq!(result.status, DatabaseSyncExecutionStatus::Succeeded);
+        assert_eq!(
+            sqlite_column_names(&target_path, " users "),
+            vec!["id", "exact_only"]
+        );
+        assert_eq!(sqlite_column_names(&target_path, "users"), vec!["id"]);
+        remove_sqlite_fixture(source_path, target_path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_composite_primary_key_round_trip_keeps_native_ordinal_order() {
+        let (source_path, target_path) = sqlite_fixture_paths();
+        rusqlite::Connection::open(&source_path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE memberships (\
+                   a INTEGER NOT NULL,\
+                   b INTEGER NOT NULL,\
+                   PRIMARY KEY (b, a)\
+                 );",
+            )
+            .unwrap();
+        rusqlite::Connection::open(&target_path).unwrap();
+        let saved = vec![
+            sqlite_config("source", &source_path),
+            sqlite_config("target", &target_path),
+        ];
+        let request = sqlite_request(vec!["memberships"], false);
+
+        let preview = preview_database_sync_with_saved(&saved, &request)
+            .await
+            .expect("preview composite primary key");
+        assert_eq!(preview.operations.len(), 1);
+        assert!(preview.operations[0].sql[0].contains("PRIMARY KEY (\"b\", \"a\")"));
+        let result = execute_database_sync_with_saved(
+            &saved,
+            ExecuteDatabaseSyncRequest {
+                request: request.clone(),
+                plan_fingerprint: preview.plan_fingerprint,
+            },
+        )
+        .await
+        .expect("execute composite primary key");
+        assert_eq!(result.status, DatabaseSyncExecutionStatus::Succeeded);
+        assert!(result
+            .latest_compare_result
+            .as_ref()
+            .expect("latest compare")
+            .tables
+            .is_empty());
+
+        let target = rusqlite::Connection::open(&target_path).unwrap();
+        let mut statement = target
+            .prepare(
+                "SELECT name FROM pragma_table_xinfo('memberships', 'main') \
+                 WHERE pk > 0 ORDER BY pk",
+            )
+            .unwrap();
+        let primary_keys = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(primary_keys, vec!["b", "a"]);
+        drop(statement);
+        drop(target);
+        assert_eq!(
+            preview_database_sync_with_saved(&saved, &request)
+                .await
+                .unwrap_err(),
+            "所选表 memberships 已不存在差异，请重新对比"
+        );
+        remove_sqlite_fixture(source_path, target_path);
+    }
+
+    #[tokio::test]
     async fn sqlite_drift_rejects_execution_before_any_planned_ddl() {
         let (saved, request, source_path, target_path) = sqlite_add_column_fixture();
         let preview = preview_database_sync_with_saved(&saved, &request)
@@ -1150,11 +1267,17 @@ mod tests {
     }
 
     #[test]
-    fn sync_request_preflight_normalizes_tables_and_preserves_drop_guard() {
-        let normalized =
-            normalize_sync_request(&request(vec![" users ", "orders", "users"], true)).unwrap();
+    fn sync_request_preflight_preserves_exact_table_names_and_drop_guard() {
+        let normalized = normalize_sync_request(&request(
+            vec![" users ", "orders", "users", " users "],
+            true,
+        ))
+        .unwrap();
 
-        assert_eq!(normalized.selected_tables, vec!["orders", "users"]);
+        assert_eq!(
+            normalized.selected_tables,
+            vec![" users ", "orders", "users"]
+        );
         assert!(normalized.include_drops);
     }
 

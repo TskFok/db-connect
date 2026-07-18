@@ -12,7 +12,8 @@ use crate::models::types::{
 };
 
 use super::{
-    ColumnSyncMetadata, OperationPhase, PlanFragments, TablePlanContext, TableSyncMetadata,
+    add_column_risk, ColumnSyncMetadata, OperationPhase, PlanFragments, TablePlanContext,
+    TableSyncMetadata,
 };
 
 pub(crate) fn metadata_sql() -> &'static str {
@@ -497,6 +498,125 @@ struct TableMetadataRef<'a> {
     columns: &'a BTreeMap<String, ColumnSyncMetadata>,
 }
 
+const SAFE_PARAMETERLESS_MERGE_TREE_ENGINES: &[&str] = &[
+    "MergeTree",
+    "ReplacingMergeTree",
+    "SummingMergeTree",
+    "AggregatingMergeTree",
+];
+const SAFE_PARAMETERLESS_LOCAL_ENGINES: &[&str] = &["Memory", "Log", "TinyLog", "StripeLog"];
+
+fn safe_engine_clause(metadata: TableMetadataRef<'_>) -> Result<String, String> {
+    let engine = metadata.engine.trim();
+    let merge_tree = SAFE_PARAMETERLESS_MERGE_TREE_ENGINES
+        .iter()
+        .any(|allowed| engine.eq_ignore_ascii_case(allowed));
+    let local = SAFE_PARAMETERLESS_LOCAL_ENGINES
+        .iter()
+        .any(|allowed| engine.eq_ignore_ascii_case(allowed));
+    if !merge_tree && !local {
+        return Err(
+            "ClickHouse 首期仅支持无需参数的本地安全引擎，远程、复制及外部引擎均被阻止".to_string(),
+        );
+    }
+
+    let mut engine_full = metadata.engine_full.trim().trim_end_matches(';').trim();
+    if engine_full
+        .get(.."ENGINE".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("ENGINE"))
+    {
+        let remainder = engine_full["ENGINE".len()..].trim_start();
+        let Some(remainder) = remainder.strip_prefix('=') else {
+            return Err("ClickHouse 引擎定义无法通过安全结构校验".to_string());
+        };
+        engine_full = remainder.trim_start();
+    }
+    let Some(prefix) = engine_full.get(..engine.len()) else {
+        return Err("ClickHouse 引擎定义无法通过安全结构校验".to_string());
+    };
+    if !prefix.eq_ignore_ascii_case(engine) {
+        return Err("ClickHouse 引擎定义无法通过安全结构校验".to_string());
+    }
+    let remainder = &engine_full[engine.len()..];
+    if !remainder.is_empty() && !remainder.chars().next().is_some_and(char::is_whitespace) {
+        return Err("ClickHouse 首期不接受未经结构化验证的引擎参数".to_string());
+    }
+    let remainder = remainder.trim_start();
+    if merge_tree
+        && !remainder.is_empty()
+        && !["PARTITION", "PRIMARY", "ORDER", "SAMPLE", "TTL", "SETTINGS"]
+            .iter()
+            .any(|keyword| {
+                remainder
+                    .get(..keyword.len())
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(keyword))
+                    && remainder
+                        .get(keyword.len()..)
+                        .and_then(|suffix| suffix.chars().next())
+                        .is_none_or(char::is_whitespace)
+            })
+    {
+        return Err("ClickHouse 首期不接受未经结构化验证的引擎参数".to_string());
+    }
+
+    let expressions = [
+        metadata.sorting_key,
+        metadata.partition_key,
+        metadata.primary_key,
+        metadata.sampling_key,
+        metadata.table_ttl,
+        metadata.settings,
+    ];
+    if expressions.iter().any(|value| {
+        let value = value.to_ascii_lowercase();
+        value.contains(';')
+            || value.contains("--")
+            || value.contains("/*")
+            || value.contains("*/")
+            || value.contains('\0')
+    }) {
+        return Err("ClickHouse 引擎结构化子句包含不安全语句边界".to_string());
+    }
+
+    if local {
+        if expressions.iter().any(|value| !value.trim().is_empty()) || !remainder.trim().is_empty()
+        {
+            return Err("ClickHouse 本地简单引擎包含无法安全表达的额外子句".to_string());
+        }
+        return Ok(engine.to_string());
+    }
+
+    if metadata.sorting_key.trim().is_empty() {
+        return Err("ClickHouse MergeTree 安全引擎缺少排序键".to_string());
+    }
+    let mut clause = engine.to_string();
+    if !metadata.partition_key.trim().is_empty() {
+        clause.push_str(" PARTITION BY ");
+        clause.push_str(metadata.partition_key.trim());
+    }
+    if !metadata.primary_key.trim().is_empty()
+        && metadata.primary_key.trim() != metadata.sorting_key.trim()
+    {
+        clause.push_str(" PRIMARY KEY ");
+        clause.push_str(metadata.primary_key.trim());
+    }
+    clause.push_str(" ORDER BY ");
+    clause.push_str(metadata.sorting_key.trim());
+    if !metadata.sampling_key.trim().is_empty() {
+        clause.push_str(" SAMPLE BY ");
+        clause.push_str(metadata.sampling_key.trim());
+    }
+    if !metadata.table_ttl.trim().is_empty() {
+        clause.push_str(" TTL ");
+        clause.push_str(metadata.table_ttl.trim());
+    }
+    if !metadata.settings.trim().is_empty() {
+        clause.push_str(" SETTINGS ");
+        clause.push_str(metadata.settings.trim());
+    }
+    Ok(clause)
+}
+
 fn table_metadata<'a>(
     metadata: Option<&'a TableSyncMetadata>,
     table_name: &str,
@@ -628,6 +748,17 @@ fn plan_create_table(
         );
         return;
     }
+    let engine_clause = match safe_engine_clause(metadata) {
+        Ok(engine_clause) => engine_clause,
+        Err(reason) => {
+            plan.block(
+                &source.name,
+                &format!("无法创建表 {}", source.name),
+                &reason,
+            );
+            return;
+        }
+    };
     if source.columns.is_empty() {
         plan.block(
             &source.name,
@@ -670,10 +801,6 @@ fn plan_create_table(
     if !plan.blockers.is_empty() {
         return;
     }
-    let mut engine_full = metadata.engine_full.trim().trim_end_matches(';').trim();
-    if let Some(without_engine) = engine_full.strip_prefix("ENGINE =") {
-        engine_full = without_engine.trim();
-    }
     let comment = if metadata.comment.is_empty() {
         String::new()
     } else {
@@ -689,7 +816,7 @@ fn plan_create_table(
             "CREATE TABLE {} (\n{}\n) ENGINE = {}{}",
             clickhouse_table_ref(context.target_database, &source.name),
             definitions.join(",\n"),
-            engine_full,
+            engine_clause,
             comment
         )],
     );
@@ -700,7 +827,18 @@ fn plan_target_only_table(
     context: &TablePlanContext<'_>,
     target: &TableSnapshot,
 ) {
-    if let Err(reason) = table_metadata(context.target_metadata, &target.name) {
+    let metadata = match table_metadata(context.target_metadata, &target.name) {
+        Ok(metadata) => metadata,
+        Err(reason) => {
+            plan.block(
+                &target.name,
+                &format!("无法删除表 {}", target.name),
+                &reason,
+            );
+            return;
+        }
+    };
+    if let Err(reason) = safe_engine_clause(metadata) {
         plan.block(
             &target.name,
             &format!("无法删除表 {}", target.name),
@@ -752,6 +890,9 @@ fn plan_changed_table(
         if let Err(reason) = validate_supported_native_definitions(metadata, table_name) {
             plan.block(&source.name, "无法规划 ClickHouse 表同步", &reason);
         }
+        if let Err(reason) = safe_engine_clause(metadata) {
+            plan.block(&source.name, "无法规划 ClickHouse 表同步", &reason);
+        }
     }
     if !plan.blockers.is_empty() {
         return;
@@ -784,6 +925,7 @@ fn plan_changed_table(
 
     let differences = compare_table_columns(source, target);
     let mut add_columns = Vec::new();
+    let mut add_risk = DatabaseSyncRisk::Normal;
     let mut alter_columns = Vec::new();
     let mut comment_columns = Vec::new();
     let mut drop_columns = Vec::new();
@@ -809,20 +951,27 @@ fn plan_changed_table(
                     }
                 };
                 match column_definition(column, native, &source.name, &difference.name) {
-                    Ok(definition) => add_columns.push((
-                        column.ordinal_position,
-                        difference.name.clone(),
-                        add_column_sql(
-                            context.target_database,
-                            &source.name,
-                            &difference.name,
-                            &format!(
-                                "{}{}",
-                                definition,
-                                source_position_clause(source, &difference.name)
+                    Ok(definition) => {
+                        if add_column_risk(column, source_metadata.columns.get(&difference.name))
+                            == DatabaseSyncRisk::High
+                        {
+                            add_risk = DatabaseSyncRisk::High;
+                        }
+                        add_columns.push((
+                            column.ordinal_position,
+                            difference.name.clone(),
+                            add_column_sql(
+                                context.target_database,
+                                &source.name,
+                                &difference.name,
+                                &format!(
+                                    "{}{}",
+                                    definition,
+                                    source_position_clause(source, &difference.name)
+                                ),
                             ),
-                        ),
-                    )),
+                        ));
+                    }
                     Err(reason) => plan.block(
                         &source.name,
                         &format!("无法新增字段 {}.{}", source.name, difference.name),
@@ -948,7 +1097,7 @@ fn plan_changed_table(
         OperationPhase::AddColumn,
         &source.name,
         DatabaseSyncOperationKind::AddColumn,
-        DatabaseSyncRisk::Normal,
+        add_risk,
         "新增字段",
         &mut add_columns,
     );
@@ -1450,6 +1599,20 @@ mod tests {
         }
     }
 
+    fn plain_column_metadata() -> ColumnSyncMetadata {
+        ColumnSyncMetadata::ClickHouse {
+            default_kind: String::new(),
+            default_expression: String::new(),
+            compression_codec: String::new(),
+            ttl_expression: String::new(),
+            unsupported_clauses: Vec::new(),
+            is_in_partition_key: false,
+            is_in_sorting_key: false,
+            is_in_primary_key: false,
+            is_in_sampling_key: false,
+        }
+    }
+
     #[test]
     fn metadata_query_loads_engine_keys_and_column_native_clauses_once() {
         let sql = metadata_sql();
@@ -1501,6 +1664,110 @@ mod tests {
             plan.blockers[0].reason,
             "ClickHouse 首期不修改主键或排序键表达式"
         );
+    }
+
+    #[test]
+    fn remote_replication_and_external_engines_are_blocked_without_leaking_parameters() {
+        let source = test_table("events", false, "");
+        let secret = "never-show-engine-secret";
+        let engines = [
+            (
+                "ReplicatedMergeTree",
+                format!("ReplicatedMergeTree('/clickhouse/{secret}', '{{replica}}') ORDER BY id"),
+            ),
+            (
+                "Distributed",
+                format!("Distributed('{secret}', 'analytics', 'events', cityHash64(id))"),
+            ),
+            ("Merge", format!("Merge('analytics', '{secret}')")),
+            (
+                "Buffer",
+                format!("Buffer('analytics', 'events', 16, 10, 100, 1, 10, 1, 10 /* {secret} */)"),
+            ),
+            ("Kafka", format!("Kafka SETTINGS kafka_password='{secret}'")),
+            (
+                "RabbitMQ",
+                format!("RabbitMQ SETTINGS rabbitmq_password='{secret}'"),
+            ),
+            (
+                "MySQL",
+                format!("MySQL('db:3306', 'app', 'events', 'user', '{secret}')"),
+            ),
+            (
+                "PostgreSQL",
+                format!("PostgreSQL('db:5432', 'app', 'events', 'user', '{secret}')"),
+            ),
+            (
+                "S3",
+                format!("S3('https://example.invalid/{secret}', 'CSV')"),
+            ),
+            (
+                "URL",
+                format!("URL('https://example.invalid/{secret}', 'CSV')"),
+            ),
+        ];
+
+        for (engine, engine_full) in engines {
+            let native = metadata(
+                engine,
+                &engine_full,
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                vec![("id", plain_column_metadata())],
+            );
+            let plan = plan_table(TablePlanContext {
+                target_database: "analytics_copy",
+                source: Some(&source),
+                target: None,
+                source_metadata: Some(&native),
+                target_metadata: None,
+                include_drops: false,
+            });
+
+            assert!(plan.operations.is_empty(), "engine={engine}");
+            assert_eq!(plan.blockers.len(), 1, "engine={engine}");
+            let visible = format!("{} {}", plan.blockers[0].summary, plan.blockers[0].reason);
+            assert!(!visible.contains(secret), "engine={engine}: {visible}");
+        }
+    }
+
+    #[test]
+    fn safe_engine_with_unvalidated_arguments_is_blocked_without_parameter_leakage() {
+        let source = test_table("events", false, "");
+        for argument_prefix in ["", " "] {
+            let secret = "never-show-merge-tree-argument";
+            let native = metadata(
+                "MergeTree",
+                &format!("MergeTree{argument_prefix}('{secret}') ORDER BY id"),
+                "id",
+                "",
+                "id",
+                "",
+                "",
+                "",
+                "",
+                vec![("id", plain_column_metadata())],
+            );
+
+            let plan = plan_table(TablePlanContext {
+                target_database: "analytics_copy",
+                source: Some(&source),
+                target: None,
+                source_metadata: Some(&native),
+                target_metadata: None,
+                include_drops: false,
+            });
+
+            assert!(plan.operations.is_empty());
+            assert_eq!(plan.blockers.len(), 1);
+            let visible = format!("{} {}", plan.blockers[0].summary, plan.blockers[0].reason);
+            assert!(!visible.contains(secret));
+        }
     }
 
     #[test]
@@ -1742,6 +2009,14 @@ mod tests {
         assert!(sql.iter().any(|sql| {
             sql.contains("MODIFY COLUMN `id` UInt64") && sql.ends_with("AFTER `created_at`")
         }));
+        assert_eq!(
+            plan.operations
+                .iter()
+                .find(|operation| operation.kind == DatabaseSyncOperationKind::AddColumn)
+                .unwrap()
+                .risk,
+            DatabaseSyncRisk::High
+        );
     }
 
     #[test]

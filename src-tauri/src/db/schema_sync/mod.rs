@@ -35,6 +35,7 @@ pub(crate) enum ColumnSyncMetadata {
     },
     Sqlite {
         hidden: i64,
+        primary_key_ordinal: Option<u32>,
     },
     #[allow(dead_code, reason = "将在后续 SQL Server 同步方言中使用")]
     SqlServer {
@@ -75,6 +76,8 @@ pub(crate) enum ColumnSyncMetadata {
 pub(crate) enum TableSyncMetadata {
     MySql {
         engine: String,
+        create_options: String,
+        partitioned: bool,
         comment: String,
         columns: BTreeMap<String, ColumnSyncMetadata>,
     },
@@ -223,6 +226,31 @@ fn database_type_name(database_type: DatabaseType) -> &'static str {
         DatabaseType::Sqlite => "SQLite",
         DatabaseType::SqlServer => "SQL Server",
         DatabaseType::ClickHouse => "ClickHouse",
+    }
+}
+
+fn native_metadata_differs(
+    database_type: DatabaseType,
+    source: Option<&TableSyncMetadata>,
+    target: Option<&TableSyncMetadata>,
+) -> bool {
+    match (database_type, source, target) {
+        (
+            DatabaseType::Sqlite,
+            Some(TableSyncMetadata::Sqlite {
+                create_sql: source_sql,
+                columns: source_columns,
+            }),
+            Some(TableSyncMetadata::Sqlite {
+                create_sql: target_sql,
+                columns: target_columns,
+            }),
+        ) => {
+            source_columns != target_columns
+                || sqlite::native_table_signature(source_sql)
+                    != sqlite::native_table_signature(target_sql)
+        }
+        (_, source, target) => source != target,
     }
 }
 
@@ -390,7 +418,8 @@ pub(crate) fn build_database_sync_preview(
             }
             _ => true,
         };
-        let native_difference = source_metadata != target_metadata;
+        let native_difference =
+            native_metadata_differs(database_type, source_metadata, target_metadata);
         if !public_difference && !native_difference {
             return Err(format!("所选表 {table_name} 已不存在差异，请重新对比"));
         }
@@ -445,12 +474,11 @@ pub(crate) fn build_database_sync_preview(
 pub(crate) fn normalize_selected_tables(values: &[String]) -> Result<Vec<String>, String> {
     let tables = values
         .iter()
-        .map(|value| value.trim())
         .map(|value| {
-            if value.is_empty() {
+            if value.trim().is_empty() {
                 Err("同步表名不能为空".to_string())
             } else {
-                Ok(value.to_string())
+                Ok(value.clone())
             }
         })
         .collect::<Result<BTreeSet<_>, _>>()?
@@ -641,6 +669,62 @@ pub(crate) fn primary_key_columns(table: &TableSnapshot) -> Vec<String> {
         .collect()
 }
 
+pub(crate) fn add_column_risk(
+    column: &crate::models::types::ColumnSnapshot,
+    metadata: Option<&ColumnSyncMetadata>,
+) -> DatabaseSyncRisk {
+    let snapshot_is_high_risk =
+        !column.nullable || column.default_value.is_some() || !column.extra.trim().is_empty();
+    let native_is_high_risk = match metadata {
+        Some(ColumnSyncMetadata::MySql {
+            generation_expression,
+            ..
+        }) => !generation_expression.trim().is_empty(),
+        Some(ColumnSyncMetadata::Postgres {
+            identity_generation,
+            generated_kind,
+            generation_expression,
+            default_expression,
+            ..
+        }) => {
+            !identity_generation.trim().is_empty()
+                || (!generated_kind.trim().is_empty()
+                    && !generated_kind.eq_ignore_ascii_case("NEVER"))
+                || generation_expression.is_some()
+                || default_expression.is_some()
+        }
+        Some(ColumnSyncMetadata::Sqlite { hidden, .. }) => *hidden != 0,
+        Some(ColumnSyncMetadata::SqlServer {
+            is_identity,
+            computed_definition,
+            default_expression,
+            generated_always_type,
+            ..
+        }) => {
+            *is_identity
+                || computed_definition.is_some()
+                || default_expression.is_some()
+                || *generated_always_type != 0
+        }
+        Some(ColumnSyncMetadata::ClickHouse {
+            default_kind,
+            default_expression,
+            ttl_expression,
+            ..
+        }) => {
+            !default_kind.trim().is_empty()
+                || !default_expression.trim().is_empty()
+                || !ttl_expression.trim().is_empty()
+        }
+        None => false,
+    };
+    if snapshot_is_high_risk || native_is_high_risk {
+        DatabaseSyncRisk::High
+    } else {
+        DatabaseSyncRisk::Normal
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -697,6 +781,8 @@ mod tests {
             "users".to_string(),
             TableSyncMetadata::MySql {
                 engine: engine.to_string(),
+                create_options: String::new(),
+                partitioned: false,
                 comment: String::new(),
                 columns: BTreeMap::from([(
                     "id".to_string(),
@@ -736,7 +822,10 @@ mod tests {
                 create_sql: "CREATE TABLE users (id bigint PRIMARY KEY)".to_string(),
                 columns: BTreeMap::from([(
                     "id".to_string(),
-                    ColumnSyncMetadata::Sqlite { hidden: 0 },
+                    ColumnSyncMetadata::Sqlite {
+                        hidden: 0,
+                        primary_key_ordinal: Some(1),
+                    },
                 )]),
             },
             DatabaseType::SqlServer => TableSyncMetadata::SqlServer {
@@ -822,6 +911,157 @@ mod tests {
 
             assert_eq!(error, "所选表 users 已不存在差异，请重新对比");
         }
+    }
+
+    #[test]
+    fn add_column_risk_covers_native_special_shapes_and_plain_nullable_columns() {
+        let plain_nullable = ColumnSnapshot {
+            ordinal_position: 2,
+            column_type: "text".to_string(),
+            nullable: true,
+            default_value: None,
+            primary_key: false,
+            extra: String::new(),
+            comment: String::new(),
+        };
+        assert_eq!(
+            add_column_risk(&plain_nullable, None),
+            DatabaseSyncRisk::Normal
+        );
+        let mut with_default = plain_nullable.clone();
+        with_default.default_value = Some("42".to_string());
+        assert_eq!(add_column_risk(&with_default, None), DatabaseSyncRisk::High);
+
+        for database_type in [
+            DatabaseType::MySql,
+            DatabaseType::Postgres,
+            DatabaseType::Sqlite,
+            DatabaseType::SqlServer,
+            DatabaseType::ClickHouse,
+        ] {
+            let mut table_metadata = native_metadata(database_type);
+            let metadata = match &mut table_metadata {
+                TableSyncMetadata::MySql { columns, .. } => {
+                    let ColumnSyncMetadata::MySql {
+                        generation_expression,
+                        ..
+                    } = columns.get_mut("id").unwrap()
+                    else {
+                        unreachable!()
+                    };
+                    *generation_expression = "id + 1".to_string();
+                    columns.get("id").unwrap()
+                }
+                TableSyncMetadata::Postgres { columns, .. } => {
+                    let ColumnSyncMetadata::Postgres {
+                        identity_generation,
+                        ..
+                    } = columns.get_mut("id").unwrap()
+                    else {
+                        unreachable!()
+                    };
+                    *identity_generation = "ALWAYS".to_string();
+                    columns.get("id").unwrap()
+                }
+                TableSyncMetadata::Sqlite { columns, .. } => {
+                    let ColumnSyncMetadata::Sqlite { hidden, .. } = columns.get_mut("id").unwrap()
+                    else {
+                        unreachable!()
+                    };
+                    *hidden = 2;
+                    columns.get("id").unwrap()
+                }
+                TableSyncMetadata::SqlServer { columns, .. } => {
+                    let ColumnSyncMetadata::SqlServer {
+                        computed_definition,
+                        ..
+                    } = columns.get_mut("id").unwrap()
+                    else {
+                        unreachable!()
+                    };
+                    *computed_definition = Some("([id]+1)".to_string());
+                    columns.get("id").unwrap()
+                }
+                TableSyncMetadata::ClickHouse { columns, .. } => {
+                    let ColumnSyncMetadata::ClickHouse {
+                        default_kind,
+                        default_expression,
+                        ..
+                    } = columns.get_mut("id").unwrap()
+                    else {
+                        unreachable!()
+                    };
+                    *default_kind = "ALIAS".to_string();
+                    *default_expression = "id + 1".to_string();
+                    columns.get("id").unwrap()
+                }
+            };
+            assert_eq!(
+                add_column_risk(&plain_nullable, Some(metadata)),
+                DatabaseSyncRisk::High,
+                "{database_type:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn preview_summary_uses_highest_add_column_risk() {
+        let target_table = table("users", "bigint");
+        let mut source_table = target_table.clone();
+        source_table.columns.push((
+            "backfill_value".to_string(),
+            ColumnSnapshot {
+                ordinal_position: 2,
+                column_type: "varchar(32)".to_string(),
+                nullable: false,
+                default_value: None,
+                primary_key: false,
+                extra: String::new(),
+                comment: String::new(),
+            },
+        ));
+        let mut source_metadata = mysql_metadata("", "InnoDB");
+        let TableSyncMetadata::MySql { columns, .. } = source_metadata.get_mut("users").unwrap()
+        else {
+            unreachable!()
+        };
+        columns.insert(
+            "backfill_value".to_string(),
+            ColumnSyncMetadata::MySql {
+                generation_expression: String::new(),
+                primary_key_ordinal: None,
+            },
+        );
+        let source = SyncSchemaSnapshot {
+            tables: vec![source_table.clone()],
+            metadata: source_metadata,
+        };
+        let target = SyncSchemaSnapshot {
+            tables: vec![target_table.clone()],
+            metadata: mysql_metadata("", "InnoDB"),
+        };
+
+        let high = build_database_sync_preview(
+            DatabaseType::MySql,
+            &request(vec!["users"], false),
+            &source,
+            &target,
+        )
+        .unwrap();
+        assert_eq!(high.operations[0].risk, DatabaseSyncRisk::High);
+        assert_eq!(high.summary.high_risk_operations, 1);
+
+        let mut nullable_source = source;
+        nullable_source.tables[0].columns[1].1.nullable = true;
+        let normal = build_database_sync_preview(
+            DatabaseType::MySql,
+            &request(vec!["users"], false),
+            &nullable_source,
+            &target,
+        )
+        .unwrap();
+        assert_eq!(normal.operations[0].risk, DatabaseSyncRisk::Normal);
+        assert_eq!(normal.summary.high_risk_operations, 0);
     }
 
     #[test]
@@ -1032,6 +1272,8 @@ mod tests {
                     "users".to_string(),
                     TableSyncMetadata::MySql {
                         engine: "InnoDB".to_string(),
+                        create_options: String::new(),
+                        partitioned: false,
                         comment: String::new(),
                         columns: BTreeMap::from([(
                             "id".to_string(),
@@ -1212,6 +1454,8 @@ mod tests {
             "users".to_string(),
             TableSyncMetadata::MySql {
                 engine: "InnoDB".to_string(),
+                create_options: String::new(),
+                partitioned: false,
                 comment: String::new(),
                 columns: BTreeMap::from([(
                     "id".to_string(),
@@ -1227,6 +1471,8 @@ mod tests {
             "users".to_string(),
             TableSyncMetadata::MySql {
                 engine: "InnoDB".to_string(),
+                create_options: String::new(),
+                partitioned: false,
                 comment: String::new(),
                 columns: BTreeMap::from([(
                     "id".to_string(),
@@ -1286,6 +1532,19 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error, "同步表名不能为空");
+    }
+
+    #[test]
+    fn selected_table_normalization_preserves_distinct_exact_names() {
+        assert_eq!(
+            normalize_selected_tables(&[
+                "users".to_string(),
+                " users ".to_string(),
+                "users".to_string(),
+            ])
+            .unwrap(),
+            vec![" users ", "users"]
+        );
     }
 
     #[test]

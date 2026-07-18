@@ -14,7 +14,8 @@ use crate::models::types::{
 };
 
 use super::{
-    ColumnSyncMetadata, OperationPhase, PlanFragments, TablePlanContext, TableSyncMetadata,
+    add_column_risk, ColumnSyncMetadata, OperationPhase, PlanFragments, TablePlanContext,
+    TableSyncMetadata,
 };
 
 pub(crate) fn metadata_sql(schema: &str) -> String {
@@ -996,6 +997,7 @@ fn plan_changed_table(
         .max()
         .unwrap_or_default();
     let mut add_columns = Vec::new();
+    let mut add_risk = DatabaseSyncRisk::Normal;
     let mut alter_columns = Vec::new();
     let mut drop_columns = Vec::new();
     for difference in differences {
@@ -1054,7 +1056,14 @@ fn plan_changed_table(
                     &source.name,
                     &request,
                 ) {
-                    Ok(sql) => add_columns.push((column.ordinal_position, difference.name, sql)),
+                    Ok(sql) => {
+                        if add_column_risk(column, source_metadata.columns.get(&difference.name))
+                            == DatabaseSyncRisk::High
+                        {
+                            add_risk = DatabaseSyncRisk::High;
+                        }
+                        add_columns.push((column.ordinal_position, difference.name, sql));
+                    }
                     Err(reason) => plan.block(
                         &source.name,
                         &format!("无法新增字段 {}.{}", source.name, difference.name),
@@ -1322,24 +1331,24 @@ fn plan_changed_table(
             OperationPhase::AddColumn,
             &source.name,
             DatabaseSyncOperationKind::AddColumn,
-            DatabaseSyncRisk::Normal,
+            add_risk,
             &format!("新增表 {} 的 {} 个字段", source.name, add_count),
             add_sql,
         );
     }
     if replace_primary_key {
-        let mut sql = Vec::new();
+        let mut statements = Vec::new();
         if let Some(constraint) = target_metadata.primary_key_constraint {
-            sql.push(format!(
+            statements.push(format!(
                 "ALTER TABLE {}.{} DROP CONSTRAINT {}",
                 sqlserver_id(context.target_database),
                 sqlserver_id(&source.name),
                 sqlserver_id(constraint)
             ));
         }
-        sql.append(&mut alter_sql);
+        statements.append(&mut alter_sql);
         if !source_primary_keys.is_empty() {
-            sql.push(build_add_primary_key_sql(
+            statements.push(build_add_primary_key_sql(
                 context.target_database,
                 &source.name,
                 &source_primary_keys,
@@ -1351,7 +1360,7 @@ fn plan_changed_table(
             DatabaseSyncOperationKind::ReplacePrimaryKey,
             DatabaseSyncRisk::High,
             &format!("替换表 {} 的主键并同步相关字段", source.name),
-            sql,
+            vec![build_atomic_sqlserver_batch(&statements)],
         );
     } else if !alter_sql.is_empty() {
         plan.operation(
@@ -1391,6 +1400,25 @@ fn plan_changed_table(
             )],
         );
     }
+}
+
+fn build_atomic_sqlserver_batch(statements: &[String]) -> String {
+    let body = statements
+        .iter()
+        .map(|statement| {
+            let statement = statement.trim().trim_end_matches(';');
+            statement
+                .lines()
+                .map(|line| format!("    {line}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+                + ";"
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "SET XACT_ABORT ON;\nBEGIN TRY\n    BEGIN TRANSACTION;\n{body}\n    COMMIT TRANSACTION;\nEND TRY\nBEGIN CATCH\n    IF XACT_STATE() <> 0 ROLLBACK TRANSACTION;\n    THROW;\nEND CATCH"
+    )
 }
 
 fn build_add_primary_key_sql(schema: &str, table: &str, columns: &[String]) -> String {
@@ -1945,7 +1973,7 @@ mod tests {
     }
 
     #[test]
-    fn replaces_primary_key_with_target_constraint_and_escaped_qualifiers() {
+    fn replaces_primary_key_with_one_atomic_batch_and_escaped_qualifiers() {
         let source = table(
             "us]ers",
             vec![
@@ -2003,16 +2031,23 @@ mod tests {
             plan.operations[0].kind,
             DatabaseSyncOperationKind::ReplacePrimaryKey
         );
-        assert_eq!(
-            plan.operations[0].sql,
-            vec![
-                "ALTER TABLE [d]]bo].[us]]ers] DROP CONSTRAINT [target]]pk]".to_string(),
-                format!(
-                    "ALTER TABLE [d]]bo].[us]]ers] ADD CONSTRAINT [{}] PRIMARY KEY ([tenant], [id])",
-                    sqlserver_ddl::primary_key_constraint_name("us]ers")
-                ),
-            ]
-        );
+        assert_eq!(plan.operations[0].sql.len(), 1);
+        let batch = &plan.operations[0].sql[0];
+        assert!(batch.starts_with("SET XACT_ABORT ON;\nBEGIN TRY\n    BEGIN TRANSACTION;"));
+        let drop_position = batch
+            .find("ALTER TABLE [d]]bo].[us]]ers] DROP CONSTRAINT [target]]pk]")
+            .unwrap();
+        let add_position = batch
+            .find(&format!(
+                "ALTER TABLE [d]]bo].[us]]ers] ADD CONSTRAINT [{}] PRIMARY KEY ([tenant], [id])",
+                sqlserver_ddl::primary_key_constraint_name("us]ers")
+            ))
+            .unwrap();
+        assert!(drop_position < add_position);
+        assert!(batch.contains("    COMMIT TRANSACTION;\nEND TRY"));
+        assert!(batch.contains(
+            "BEGIN CATCH\n    IF XACT_STATE() <> 0 ROLLBACK TRANSACTION;\n    THROW;\nEND CATCH"
+        ));
     }
 
     #[test]
@@ -2063,7 +2098,8 @@ mod tests {
 
         assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
         assert_eq!(plan.operations.len(), 1);
-        assert!(plan.operations[0].sql[1].ends_with("PRIMARY KEY ([b], [a])"));
+        assert_eq!(plan.operations[0].sql.len(), 1);
+        assert!(plan.operations[0].sql[0].contains("PRIMARY KEY ([b], [a])"));
     }
 
     #[test]
@@ -2115,10 +2151,14 @@ mod tests {
         assert!(allowed.blockers.is_empty(), "{:?}", allowed.blockers);
         assert_eq!(allowed.operations.len(), 1);
         let sql = &allowed.operations[0].sql;
-        assert!(sql[0].contains("DROP CONSTRAINT [target_pk]"));
-        assert!(sql[1].contains("ALTER COLUMN [id] bigint NOT NULL"));
-        assert!(sql[2].contains("ADD CONSTRAINT"));
-        assert!(sql[2].ends_with("PRIMARY KEY ([id])"));
+        assert_eq!(sql.len(), 1);
+        let batch = &sql[0];
+        let drop_position = batch.find("DROP CONSTRAINT [target_pk]").unwrap();
+        let alter_position = batch.find("ALTER COLUMN [id] bigint NOT NULL").unwrap();
+        let add_position = batch.find("ADD CONSTRAINT").unwrap();
+        assert!(drop_position < alter_position && alter_position < add_position);
+        assert!(batch.contains("PRIMARY KEY ([id])"));
+        assert!(batch.contains("IF XACT_STATE() <> 0 ROLLBACK TRANSACTION"));
     }
 
     #[test]
@@ -2516,7 +2556,7 @@ mod tests {
             "users",
             vec![
                 ("id", column(1, "bigint", false, None, false, "", "")),
-                ("z_first", column(2, "int", true, None, false, "", "")),
+                ("z_first", column(2, "int", false, None, false, "", "")),
                 ("a_second", column(3, "int", true, None, false, "", "")),
             ],
         );
@@ -2560,10 +2600,11 @@ mod tests {
         assert_eq!(
             plan.operations[0].sql,
             vec![
-                "ALTER TABLE [dbo].[users] ADD [z_first] int NULL".to_string(),
+                "ALTER TABLE [dbo].[users] ADD [z_first] int NOT NULL".to_string(),
                 "ALTER TABLE [dbo].[users] ADD [a_second] int NULL".to_string(),
             ]
         );
+        assert_eq!(plan.operations[0].risk, DatabaseSyncRisk::High);
         assert_eq!(
             plan.operations[1].kind,
             DatabaseSyncOperationKind::UpdateComment

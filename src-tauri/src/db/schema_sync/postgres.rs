@@ -11,7 +11,8 @@ use crate::models::types::{
 };
 
 use super::{
-    ColumnSyncMetadata, OperationPhase, PlanFragments, TablePlanContext, TableSyncMetadata,
+    add_column_risk, ColumnSyncMetadata, OperationPhase, PlanFragments, TablePlanContext,
+    TableSyncMetadata,
 };
 
 #[allow(dead_code, reason = "将在后续统一同步元数据分发中调用")]
@@ -641,6 +642,7 @@ fn plan_changed_table(
         .max()
         .unwrap_or_default();
     let mut add_columns = Vec::new();
+    let mut add_risk = DatabaseSyncRisk::Normal;
     let mut alter_columns = Vec::new();
     let mut drop_columns = Vec::new();
     for difference in differences {
@@ -695,13 +697,18 @@ fn plan_changed_table(
                 };
                 add_columns.push((
                     column.ordinal_position,
-                    difference.name,
+                    difference.name.clone(),
                     postgres_ddl::build_add_column_sqls(
                         context.target_database,
                         &source.name,
                         &request,
                     ),
                 ));
+                if add_column_risk(column, source_table_metadata.columns.get(&difference.name))
+                    == DatabaseSyncRisk::High
+                {
+                    add_risk = DatabaseSyncRisk::High;
+                }
             }
             SchemaDiffStatus::Changed => {
                 if blocked_columns.contains(&difference.name) {
@@ -885,7 +892,7 @@ fn plan_changed_table(
             OperationPhase::AddColumn,
             &source.name,
             DatabaseSyncOperationKind::AddColumn,
-            DatabaseSyncRisk::Normal,
+            add_risk,
             &format!("新增表 {} 的 {} 个字段", source.name, add_count),
             add_sql,
         );
@@ -1238,7 +1245,7 @@ mod tests {
             "users",
             vec![
                 ("id", column(1, "bigint", false, None, false, "", "")),
-                ("z_first", column(2, "text", true, None, false, "", "")),
+                ("z_first", column(2, "text", false, None, false, "", "")),
                 ("a_second", column(3, "text", true, None, false, "", "")),
             ],
         );
@@ -1281,6 +1288,7 @@ mod tests {
         assert_eq!(plan.operations.len(), 1);
         assert!(plan.operations[0].sql[0].contains("ADD COLUMN \"z_first\""));
         assert!(plan.operations[0].sql[1].contains("ADD COLUMN \"a_second\""));
+        assert_eq!(plan.operations[0].risk, DatabaseSyncRisk::High);
     }
 
     #[test]
