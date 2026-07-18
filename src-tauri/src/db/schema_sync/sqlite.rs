@@ -339,7 +339,7 @@ pub(super) fn native_table_signature(create_sql: &str) -> (bool, String) {
         .trim()
         .rsplit_once(')')
         .map(|(_, suffix)| {
-            suffix
+            let mut options = suffix
                 .split(',')
                 .map(|option| {
                     option
@@ -348,8 +348,9 @@ pub(super) fn native_table_signature(create_sql: &str) -> (bool, String) {
                         .join(" ")
                         .to_ascii_uppercase()
                 })
-                .collect::<Vec<_>>()
-                .join(",")
+                .collect::<Vec<_>>();
+            options.sort();
+            options.join(",")
         })
         .unwrap_or_default();
     (
@@ -997,6 +998,22 @@ mod tests {
             native_table_signature(
                 " create table \"users\" ( id INTEGER primary key )\nstrict ,without   rowid; "
             )
+        );
+    }
+
+    #[test]
+    fn native_table_signature_treats_reordered_table_options_as_equivalent() {
+        assert_eq!(
+            native_table_signature(
+                "CREATE TABLE users (id INTEGER PRIMARY KEY) STRICT, WITHOUT ROWID"
+            ),
+            native_table_signature(
+                "CREATE TABLE users (id INTEGER PRIMARY KEY) WITHOUT ROWID, STRICT"
+            )
+        );
+        assert_ne!(
+            native_table_signature("CREATE TABLE users (id INTEGER PRIMARY KEY) STRICT"),
+            native_table_signature("CREATE TABLE users (id INTEGER PRIMARY KEY) FUTURE OPTION")
         );
     }
 
