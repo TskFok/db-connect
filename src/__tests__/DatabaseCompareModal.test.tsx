@@ -1361,6 +1361,66 @@ describe("DatabaseCompareModal", () => {
     expect(await screen.findByText("同步执行结果")).toBeInTheDocument();
   });
 
+  it("执行开始后卸载，延迟成功不更新状态、不提示并只清理一次监听", async () => {
+    const execution = deferred<DatabaseSyncExecutionResult>();
+    const unlisten = vi.fn();
+    const successSpy = vi.spyOn(message, "success");
+    const reactErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    eventMocks.listen.mockResolvedValue(unlisten);
+    vi.mocked(api.executeDatabaseSync).mockReturnValue(execution.promise);
+    const { unmount } = render(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await openSafePreview();
+    acknowledgeSyncPlan();
+    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+    await waitFor(() => expect(api.executeDatabaseSync).toHaveBeenCalledOnce());
+    successSpy.mockClear();
+    reactErrorSpy.mockClear();
+
+    unmount();
+    await act(async () => {
+      execution.resolve(sampleSucceededExecution());
+      await execution.promise;
+    });
+
+    expect(successSpy).not.toHaveBeenCalled();
+    expect(reactErrorSpy).not.toHaveBeenCalled();
+    expect(unlisten).toHaveBeenCalledOnce();
+    successSpy.mockRestore();
+    reactErrorSpy.mockRestore();
+  });
+
+  it("执行开始后卸载，延迟失败不更新状态、不提示并只清理一次监听", async () => {
+    const execution = deferred<DatabaseSyncExecutionResult>();
+    const unlisten = vi.fn();
+    const errorSpy = vi.spyOn(message, "error");
+    const reactErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    eventMocks.listen.mockResolvedValue(unlisten);
+    vi.mocked(api.executeDatabaseSync).mockReturnValue(execution.promise);
+    const { unmount } = render(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await openSafePreview();
+    acknowledgeSyncPlan();
+    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+    await waitFor(() => expect(api.executeDatabaseSync).toHaveBeenCalledOnce());
+    errorSpy.mockClear();
+    reactErrorSpy.mockClear();
+
+    unmount();
+    await act(async () => {
+      execution.reject("卸载后的执行失败");
+      await execution.promise.catch(() => undefined);
+    });
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(reactErrorSpy).not.toHaveBeenCalled();
+    expect(unlisten).toHaveBeenCalledOnce();
+    errorSpy.mockRestore();
+    reactErrorSpy.mockRestore();
+  });
+
   it("关闭后延迟监听拒绝时不执行同步", async () => {
     const listener = deferred<UnlistenFn>();
     eventMocks.listen.mockReturnValue(listener.promise);

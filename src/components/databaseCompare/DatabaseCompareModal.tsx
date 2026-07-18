@@ -532,12 +532,7 @@ export function DatabaseCompareModal({
         request: syncRequest,
         plan_fingerprint: planFingerprint,
       });
-      if (
-        executionRequestId.current !== requestId ||
-        activeSyncPlanIdentity.current !== identity
-      ) {
-        return;
-      }
+      if (!isCurrentExecution()) return;
 
       setExecutionResult(execution);
       setSelectedTableNames([]);
@@ -551,12 +546,7 @@ export function DatabaseCompareModal({
         message.success("数据库结构已同步");
       }
     } catch (executionError) {
-      if (
-        executionRequestId.current !== requestId ||
-        activeSyncPlanIdentity.current !== identity
-      ) {
-        return;
-      }
+      if (!isCurrentExecution()) return;
       activeSyncPlanIdentity.current = null;
       setSyncPreview(null);
       setSyncRequest(null);
