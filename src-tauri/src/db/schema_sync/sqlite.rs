@@ -340,10 +340,16 @@ pub(super) fn native_table_signature(create_sql: &str) -> (bool, String) {
         .rsplit_once(')')
         .map(|(_, suffix)| {
             suffix
-                .split_whitespace()
+                .split(',')
+                .map(|option| {
+                    option
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .to_ascii_uppercase()
+                })
                 .collect::<Vec<_>>()
-                .join(" ")
-                .to_ascii_uppercase()
+                .join(",")
         })
         .unwrap_or_default();
     (
@@ -516,15 +522,43 @@ fn plan_changed_table(
         plan.block(&source.name, "无法规划 SQLite 表同步", &reason);
         return;
     }
-    let source_autoincrement =
-        contains_unquoted_keyword(source_metadata.create_sql, "AUTOINCREMENT");
-    let target_autoincrement =
-        contains_unquoted_keyword(target_metadata.create_sql, "AUTOINCREMENT");
-    if source_autoincrement != target_autoincrement {
+    let source_primary_keys = match sqlite_primary_key_columns(source, source_metadata) {
+        Ok(primary_keys) => primary_keys,
+        Err(reason) => {
+            plan.block(&source.name, "无法规划 SQLite 表同步", &reason);
+            return;
+        }
+    };
+    let target_primary_keys = match sqlite_primary_key_columns(target, target_metadata) {
+        Ok(primary_keys) => primary_keys,
+        Err(reason) => {
+            plan.block(&source.name, "无法规划 SQLite 表同步", &reason);
+            return;
+        }
+    };
+    if source_primary_keys != target_primary_keys {
+        plan.block(
+            &source.name,
+            &format!("无法修改表 {} 的主键顺序", source.name),
+            "SQLite 首期不重建表修改已有主键定义或复合主键顺序",
+        );
+        return;
+    }
+    let source_signature = native_table_signature(source_metadata.create_sql);
+    let target_signature = native_table_signature(target_metadata.create_sql);
+    if source_signature.0 != target_signature.0 {
         plan.block(
             &source.name,
             &format!("无法修改表 {} 的 AUTOINCREMENT 声明", source.name),
             "SQLite 首期不重建表修改已有字段的 AUTOINCREMENT 原生声明",
+        );
+        return;
+    }
+    if source_signature.1 != target_signature.1 {
+        plan.block(
+            &source.name,
+            &format!("无法修改表 {} 的原生表后缀", source.name),
+            "SQLite 首期不重建表修改 STRICT、WITHOUT ROWID 或其他原生表后缀",
         );
         return;
     }
@@ -837,8 +871,6 @@ fn is_sqlite_numeric_literal(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use deadpool_sqlite::{Config as SqliteConfig, Runtime};
     use uuid::Uuid;
 
@@ -954,6 +986,18 @@ mod tests {
         assert!(sql.contains("columns.pk AS primary_key_ordinal"));
         assert!(sql.contains("'ma\"in'"));
         assert!(!sql.contains(';'));
+    }
+
+    #[test]
+    fn native_table_signature_ignores_only_formatting_differences() {
+        assert_eq!(
+            native_table_signature(
+                "CREATE TABLE users (id INTEGER PRIMARY KEY) STRICT, WITHOUT ROWID"
+            ),
+            native_table_signature(
+                " create table \"users\" ( id INTEGER primary key )\nstrict ,without   rowid; "
+            )
+        );
     }
 
     #[test]
@@ -1612,10 +1656,7 @@ mod tests {
     fn modifying_existing_column_is_blocked_instead_of_rebuilding() {
         let source = test_table("users", "text", false);
         let target = test_table("users", "integer", false);
-        let native = TableSyncMetadata::Sqlite {
-            create_sql: "CREATE TABLE users (name TEXT NOT NULL)".to_string(),
-            columns: BTreeMap::new(),
-        };
+        let native = metadata("CREATE TABLE users (name TEXT NOT NULL)", vec![("name", 0)]);
         let plan = plan_table(TablePlanContext {
             target_database: "main",
             source: Some(&source),

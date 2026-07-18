@@ -1162,6 +1162,117 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sqlite_primary_key_order_mismatch_blocks_append_preview() {
+        let (source_path, target_path) = sqlite_fixture_paths();
+        rusqlite::Connection::open(&source_path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE memberships (\
+                   a INTEGER NOT NULL,\
+                   b INTEGER NOT NULL,\
+                   note TEXT,\
+                   PRIMARY KEY (b, a)\
+                 );",
+            )
+            .unwrap();
+        rusqlite::Connection::open(&target_path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE memberships (\
+                   a INTEGER NOT NULL,\
+                   b INTEGER NOT NULL,\
+                   PRIMARY KEY (a, b)\
+                 );",
+            )
+            .unwrap();
+        let saved = vec![
+            sqlite_config("source", &source_path),
+            sqlite_config("target", &target_path),
+        ];
+
+        let preview =
+            preview_database_sync_with_saved(&saved, &sqlite_request(vec!["memberships"], false))
+                .await
+                .expect("preview primary key mismatch");
+
+        assert!(!preview.can_execute);
+        assert!(preview.operations.is_empty());
+        assert_eq!(preview.blockers.len(), 1);
+        assert!(preview.blockers[0].reason.contains("主键顺序"));
+        remove_sqlite_fixture(source_path, target_path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_strict_mismatch_blocks_append_preview() {
+        let (source_path, target_path) = sqlite_fixture_paths();
+        rusqlite::Connection::open(&source_path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE strict_users (\
+                   id INTEGER PRIMARY KEY,\
+                   note TEXT\
+                 ) STRICT;",
+            )
+            .unwrap();
+        rusqlite::Connection::open(&target_path)
+            .unwrap()
+            .execute_batch("CREATE TABLE strict_users (id INTEGER PRIMARY KEY);")
+            .unwrap();
+        let saved = vec![
+            sqlite_config("source", &source_path),
+            sqlite_config("target", &target_path),
+        ];
+
+        let preview =
+            preview_database_sync_with_saved(&saved, &sqlite_request(vec!["strict_users"], false))
+                .await
+                .expect("preview strict mismatch");
+
+        assert!(!preview.can_execute);
+        assert!(preview.operations.is_empty());
+        assert_eq!(preview.blockers.len(), 1);
+        assert!(preview.blockers[0].reason.contains("表后缀"));
+        remove_sqlite_fixture(source_path, target_path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_without_rowid_mismatch_blocks_append_preview() {
+        let (source_path, target_path) = sqlite_fixture_paths();
+        rusqlite::Connection::open(&source_path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE compact_users (\
+                   id TEXT NOT NULL PRIMARY KEY,\
+                   note TEXT\
+                 ) WITHOUT ROWID;",
+            )
+            .unwrap();
+        rusqlite::Connection::open(&target_path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE compact_users (\
+                   id TEXT NOT NULL PRIMARY KEY\
+                 );",
+            )
+            .unwrap();
+        let saved = vec![
+            sqlite_config("source", &source_path),
+            sqlite_config("target", &target_path),
+        ];
+
+        let preview =
+            preview_database_sync_with_saved(&saved, &sqlite_request(vec!["compact_users"], false))
+                .await
+                .expect("preview without rowid mismatch");
+
+        assert!(!preview.can_execute);
+        assert!(preview.operations.is_empty());
+        assert_eq!(preview.blockers.len(), 1);
+        assert!(preview.blockers[0].reason.contains("表后缀"));
+        remove_sqlite_fixture(source_path, target_path);
+    }
+
+    #[tokio::test]
     async fn sqlite_drift_rejects_execution_before_any_planned_ddl() {
         let (saved, request, source_path, target_path) = sqlite_add_column_fixture();
         let preview = preview_database_sync_with_saved(&saved, &request)
