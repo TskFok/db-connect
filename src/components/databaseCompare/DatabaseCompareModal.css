@@ -103,6 +103,266 @@
   line-height: 22px;
 }
 
+.database-sync-preview-body {
+  display: grid;
+  gap: 16px;
+  height: 100%;
+  max-height: none;
+  min-width: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding: 4px;
+}
+
+.database-sync-live-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.database-sync-preview-modal .ant-modal {
+  top: 24px;
+  max-height: calc(100dvh - 48px);
+  padding-bottom: 24px;
+}
+
+.database-sync-preview-modal .ant-modal-content {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 48px);
+}
+
+.database-sync-preview-modal .ant-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.database-sync-preview-modal .ant-modal-close {
+  width: 44px;
+  height: 44px;
+}
+
+.database-sync-direction {
+  position: sticky;
+  z-index: 2;
+  top: -4px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+
+.database-sync-direction strong {
+  overflow-wrap: anywhere;
+}
+
+.database-sync-direction span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.database-sync-plan-meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  min-width: 0;
+}
+
+.database-sync-plan-summary {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(88px, 1fr));
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.database-sync-plan-summary .ant-statistic {
+  min-width: 0;
+}
+
+.database-sync-plan-summary .ant-statistic-title {
+  white-space: nowrap;
+}
+
+.database-sync-fingerprint {
+  margin: 0;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.database-sync-plan-section,
+.database-sync-execution-result {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.database-sync-section-heading,
+.database-sync-operation-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.database-sync-section-heading h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.database-sync-section-heading span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.database-sync-operation-list {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.database-sync-operation {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+
+.database-sync-operation-heading strong {
+  overflow-wrap: anywhere;
+}
+
+.database-sync-operation-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.database-sync-operation-tags .ant-tag {
+  margin-inline-end: 0;
+}
+
+.database-sync-operation-summary {
+  margin: 8px 0;
+  color: var(--text-secondary);
+}
+
+.database-sync-sql-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.database-sync-sql-list pre {
+  max-width: 100%;
+  margin: 0;
+  overflow-x: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  scrollbar-gutter: stable;
+  white-space: pre;
+}
+
+.database-sync-sql-list pre:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.database-sync-item-reason,
+.database-sync-recovery-path {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.database-sync-recovery-path {
+  margin: 8px 0 0;
+}
+
+.database-sync-confirmation {
+  display: grid;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.database-sync-confirmation .ant-checkbox-wrapper {
+  min-height: 44px;
+  align-items: center;
+  padding: 8px 4px;
+}
+
+.database-sync-preview-modal .ant-modal-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.database-sync-preview-modal .ant-modal-footer > .ant-btn {
+  min-height: 44px;
+  margin-inline-start: 0;
+}
+
+.database-sync-footer-action {
+  min-width: 136px;
+}
+
+.database-sync-confirm-action {
+  min-width: 224px;
+}
+
+.database-sync-failure-detail {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.database-sync-failure-detail strong,
+.database-sync-failure-detail code {
+  overflow-wrap: anywhere;
+}
+
+.database-sync-failure-detail span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.database-sync-failure-detail code {
+  max-height: 160px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 4px;
+  background: var(--bg-primary);
+  white-space: pre-wrap;
+}
+
+.database-sync-execution-result .ant-result {
+  padding-block: 16px;
+}
+
 .database-compare-table-wrap,
 .database-compare-expanded-table {
   min-width: 0;
@@ -138,6 +398,18 @@
   .database-sync-drop-control {
     justify-content: space-between;
   }
+
+  .database-sync-plan-meta {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .database-sync-plan-summary {
+    grid-template-columns: repeat(3, minmax(88px, 1fr));
+  }
+
+  .database-sync-fingerprint {
+    justify-self: start;
+  }
 }
 
 @media (max-width: 559px) {
@@ -148,10 +420,28 @@
   .database-compare-modal .ant-modal-footer > .ant-btn {
     flex: 1 1 calc(50% - 4px);
   }
+
+  .database-sync-plan-summary {
+    grid-template-columns: repeat(2, minmax(88px, 1fr));
+  }
+
+  .database-sync-direction,
+  .database-sync-operation-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .database-sync-preview-modal .ant-modal-footer > .ant-btn {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .database-compare-swap {
-    transition: none;
+  .database-compare-swap,
+  .database-sync-preview-modal .ant-modal,
+  .database-sync-preview-modal .ant-modal-mask {
+    animation: none !important;
+    transition: none !important;
   }
 }
