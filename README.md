@@ -28,6 +28,7 @@
 
 - **数据库 / schema / SQLite main 列表**：MySQL / ClickHouse 展示数据库，PostgreSQL / SQL Server 展示 schema，SQLite 展示 `main` 等库名；SQL Server 当前浏览的是连接配置所选 database 内的 schema 树，不是 server 级 database 管理工具；树形展示对象及表，支持虚拟滚动，支持按名称排序（A→Z / Z→A）
 - **跨连接数据库对比**：可从两个同类型的已保存连接中选择数据库 / schema，批量对比物理表及字段顺序、类型、可空、默认值、主键、extra 和注释，按表展开字段差异，并将摘要、表差异和字段差异导出为 Excel。首版不比较视图、索引、外键、触发器或表数据
+- **数据库结构同步**：在 MySQL / MariaDB、PostgreSQL、SQLite、SQL Server 与 ClickHouse 的跨连接对比结果中，可按表选择、选择多表或全选全部可同步表，把源端的物理表和字段结构同步到目标端；删除默认关闭，所有写入始终先展示后端生成的 SQL 和计划指纹，再经确认执行
 - **视图与基表**：表列表中对 **VIEW** 与 **BASE TABLE** 区分展示；打开视图后，部分仅适用于物理表的能力（如外键页签）会自动隐藏
 - **数据库 / schema 编辑**：MySQL 支持修改字符集/排序规则（utf8mb4、utf8、latin1、gbk 等）；PostgreSQL / SQL Server 支持 schema 创建、删除与重命名；ClickHouse 支持 database 创建、删除与重命名；SQLite 不展示数据库级编辑、字符集或存储引擎入口
 - **数据库 / schema 重命名**：MySQL 通过创建新库 → 迁移表 → 删除旧库实现；PostgreSQL / SQL Server 走 schema 重命名
@@ -41,6 +42,21 @@
 - **数据库 / schema 级 SQL 导入 / 导出**：在概览工具栏可将 **`.sql` 文件**导入当前数据库 / schema（MySQL / PostgreSQL / SQLite 按语句拆分执行；SQL Server 按 `GO` 批处理分隔符逐批执行；ClickHouse 支持多行 DDL、`INSERT ... VALUES` 与 `INSERT ... FORMAT` 数据块；支持 PostgreSQL dollar-quoted 函数体，带进度与失败摘要）；或导出为 **`.sql`**（结构 + 可选 **INSERT** 数据，INSERT 数量上限可在导出对话框中配置，默认与查询导出上限量级一致）。PostgreSQL 导出覆盖 schema、表、视图、索引、外键、触发器、函数/过程；SQLite 导出覆盖表、视图、索引、触发器与 SQLite 方言 INSERT；SQL Server 导出覆盖当前 schema 的表、视图、普通/唯一索引、外键、触发器、函数/过程与 SQL Server 方言 INSERT；ClickHouse 导出通过 `system.tables` 读取表/视图 `create_table_query`，结构导出包含 `CREATE DATABASE`、表和视图，可选数据导出按表执行 `SELECT ... FORMAT Values` 并受每表行数上限保护
 - **SQL Server 当前限制**：SQL Server DDL 导出以基础可重放脚本为目标，不保证无损覆盖压缩、分区、权限、扩展属性、全文/空间/列存等高级属性；数据导出仍受每表行数上限约束；导入未显式限定 schema 的脚本时，SQL Server 仍按当前用户默认 schema 执行；不提供 server 级 database 创建、删除、重命名或跨 database 管理
 - **ClickHouse 当前限制**：首版不支持表格行级 update/delete，不导出或管理触发器、外键、例程和事件；结构/数据导出以可重放基础脚本为目标，数据导出是用户显式选择后的按表业务循环，不在元数据阶段逐表查结构。更多验证清单见 [`docs/clickhouse-support.md`](docs/clickhouse-support.md)
+
+#### 数据库对比与结构同步
+
+数据库结构同步复用跨连接对比的源端、目标端和数据库 / schema 选择，支持 **MySQL / MariaDB、PostgreSQL、SQLite、SQL Server 与 ClickHouse**。两端必须是两个不同的同类型保存连接。对比完成后可选择单表、多表或全部可同步表；搜索和状态筛选不会丢失已选表。
+
+首期同步范围仅包含 **物理表与字段**：创建源端独有表、新增或修改字段，以及在显式允许时删除目标端独有字段或表。不处理表数据，也不比较或同步索引、外键、视图、触发器、例程、事件、权限等其他对象。方言无法安全原地表达的变化会显示为阻塞项并执行零条 DDL，例如 SQLite 需要重建表的已有字段变化、PostgreSQL 的字段物理顺序或不完整分区定义、SQL Server 的 identity / computed / 字段顺序变化，以及 ClickHouse 的引擎或键表达式变化。
+
+同步遵循以下安全边界：
+
+- **删除默认关闭**：关闭时不生成 `DROP COLUMN` 或 `DROP TABLE`，目标端独有项显示为不可选或已跳过；开启后，预览会标记删除风险，仍需在执行前再次确认。
+- **始终先预览**：前端只提交端点、表名和删除开关；完整 SQL 由后端生成并只读展示。预览显示计划摘要、风险、阻塞 / 跳过项，以及 SHA-256 计划指纹的前 12 位。
+- **执行前校验漂移**：确认执行时，后端会重新批量读取两端结构并生成计划；计划指纹不一致、存在阻塞项或没有可执行操作时执行零条 DDL，并要求重新对比和预览。
+- **首错停止，不承诺整批回滚**：DDL 按预览顺序逐语句执行，遇到首个错误立即停止并返回已成功、失败和未执行项。不同数据库无法共同保证跨语句事务，因此此前成功的 DDL 可能已经生效，不承诺整批自动回滚；全部成功后会自动重新对比并刷新结果。
+
+五类数据库的初始化 SQL、安全场景和逐项预期见[数据库结构同步手工验收矩阵](docs/superpowers/manual-tests/2026-07-16-database-sync-matrix.md)。
 
 ### 外键管理
 
