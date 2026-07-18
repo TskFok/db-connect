@@ -384,6 +384,8 @@ pub struct DatabaseSyncExecutionResult {
 }
 ```
 
+`failed` 单独定位当前失败操作及其失败语句；`pending_operation_ids` 只包含该失败操作之后完全未开始的操作，不得重复包含失败操作。失败操作内部尚未执行的 SQL 由 `failed.statement_index` 与预览中该操作的结构化 SQL 数量计算，并在前端失败详情中单独说明。
+
 在 `schema_compare/mod.rs` 给 `TableSnapshot` 增加 `Serialize`，并把字段比较改为可复用引用接口：
 
 ```rust
@@ -1815,7 +1817,7 @@ async fn execution_stops_at_first_failed_statement_and_reports_pending_operation
     assert_eq!(result.status, DatabaseSyncExecutionStatus::PartiallySucceeded);
     assert_eq!(result.completed_statements.len(), 2);
     assert_eq!(result.failed.unwrap().operation_id, "op-0002");
-    assert_eq!(result.pending_operation_ids, vec!["op-0002", "op-0003"]);
+    assert_eq!(result.pending_operation_ids, vec!["op-0003"]);
 }
 
 #[test]
@@ -1926,7 +1928,7 @@ where
                         statement_index,
                         error,
                     }),
-                    pending_operation_ids: operations[operation_index..]
+                    pending_operation_ids: operations[operation_index + 1..]
                         .iter()
                         .map(|item| item.id.clone())
                         .collect(),
@@ -2395,7 +2397,8 @@ it("部分失败时同时展示成功、失败和未执行项", () => {
   renderPreview({ executionResult: partialFailure });
   expect(screen.getByText("已执行 2 条语句")) .toBeInTheDocument();
   expect(screen.getByText(/执行在第 3 条语句停止/)).toBeInTheDocument();
-  expect(screen.getByText("未执行 2 个操作")) .toBeInTheDocument();
+  expect(screen.getByText(/失败操作：/)) .toBeInTheDocument();
+  expect(screen.getByText("未执行 1 个操作")) .toBeInTheDocument();
   expect(screen.getByRole("button", { name: "重新对比" })).toBeEnabled();
 });
 ```
@@ -2415,7 +2418,7 @@ Expected: FAIL，提示预览组件不存在。
 - `blockers.length > 0` 展示错误 Alert，`skipped_items.length > 0` 展示跳过列表。
 - 所有可执行计划都显示“我已检查以上 SQL，并理解已成功执行的 DDL 可能无法自动回滚”复选框；存在 `risk === "destructive"` 时追加删除不可恢复警告，并在 `open`、`preview.plan_fingerprint` 或执行结果变化时重置。
 - `executing` 时禁止返回、关闭、重复执行；普通计划按钮文案“确认执行”，删除计划文案“确认并执行删除同步”。
-- `partially_succeeded`/`failed` 展示已成功语句定位、失败操作/脱敏错误与未执行操作；`succeeded` 展示成功摘要和清理警告。
+- `partially_succeeded`/`failed` 分区展示已成功语句、失败操作/脱敏错误以及失败操作之后完全未开始的操作；失败操作不重复进入 pending 列表，其内部剩余 SQL 数量根据结构化失败语句序号单独展示。`succeeded` 展示成功摘要和清理警告。
 
 ```tsx
 const destructive =
