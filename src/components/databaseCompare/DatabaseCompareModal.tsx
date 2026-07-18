@@ -63,6 +63,7 @@ export function DatabaseCompareModal({
   const [exporting, setExporting] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [executing, setExecuting] = useState(false);
+  const [executionLocked, setExecutionLocked] = useState(false);
   const [result, setResult] = useState<DatabaseCompareResult | null>(null);
   const [selectedTableNames, setSelectedTableNames] = useState<string[]>([]);
   const [includeDrops, setIncludeDrops] = useState(false);
@@ -84,11 +85,13 @@ export function DatabaseCompareModal({
   const targetLoadId = useRef(0);
   const compareId = useRef(0);
   const comparePendingRef = useRef(false);
+  const activeCompareRequestId = useRef<number | null>(null);
   const exportId = useRef(0);
   const previewRequestId = useRef(0);
   const executionRequestId = useRef(0);
   const activeSyncPlanIdentity = useRef<string | null>(null);
   const executingRef = useRef(false);
+  const executionInFlightRef = useRef(false);
 
   const clearSyncPreview = useCallback(() => {
     previewRequestId.current += 1;
@@ -123,6 +126,8 @@ export function DatabaseCompareModal({
     sourceLoadId.current += 1;
     targetLoadId.current += 1;
     compareId.current += 1;
+    activeCompareRequestId.current = null;
+    comparePendingRef.current = false;
     exportId.current += 1;
     setSourceConnectionId(undefined);
     setTargetConnectionId(undefined);
@@ -132,6 +137,7 @@ export function DatabaseCompareModal({
     setTargetDatabases([]);
     setLoadingSide(null);
     setComparing(false);
+    setComparePending(false);
     setExporting(false);
     setResult(null);
     setLoadErrors({ source: null, target: null });
@@ -246,6 +252,7 @@ export function DatabaseCompareModal({
     }
     const requestId = ++compareId.current;
     resetSyncState();
+    activeCompareRequestId.current = requestId;
     comparePendingRef.current = true;
     setComparePending(true);
     setComparing(true);
@@ -268,8 +275,11 @@ export function DatabaseCompareModal({
         setCompareError(`数据库对比失败：${errorMessage(compareError)}`);
       }
     } finally {
-      comparePendingRef.current = false;
-      setComparePending(false);
+      if (activeCompareRequestId.current === requestId) {
+        activeCompareRequestId.current = null;
+        comparePendingRef.current = false;
+        setComparePending(false);
+      }
       if (compareId.current === requestId) setComparing(false);
     }
   }, [
@@ -448,14 +458,16 @@ export function DatabaseCompareModal({
   ]);
 
   const handleExecuteSync = useCallback(async () => {
-    if (!syncPreview || !syncRequest || executingRef.current) return;
+    if (!syncPreview || !syncRequest || executionInFlightRef.current) return;
     const planFingerprint = syncPreview.plan_fingerprint;
     const identity = syncPlanIdentity(syncRequest, planFingerprint);
     if (activeSyncPlanIdentity.current !== identity) return;
 
     const requestId = ++executionRequestId.current;
     executingRef.current = true;
+    executionInFlightRef.current = true;
     setExecuting(true);
+    setExecutionLocked(true);
     setExecutionResult(null);
     try {
       const execution = await api.executeDatabaseSync({
@@ -494,6 +506,8 @@ export function DatabaseCompareModal({
       setPreviewOpen(false);
       message.error(errorMessage(executionError));
     } finally {
+      executionInFlightRef.current = false;
+      setExecutionLocked(false);
       if (executionRequestId.current === requestId) {
         executingRef.current = false;
         setExecuting(false);
@@ -787,6 +801,7 @@ export function DatabaseCompareModal({
           preview={syncPreview}
           executionResult={executionResult}
           executing={executing}
+          executionLocked={executionLocked}
           onBack={handlePreviewBack}
           onConfirm={() => void handleExecuteSync()}
           onRecompare={handleRecompare}

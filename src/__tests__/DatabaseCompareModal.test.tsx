@@ -714,6 +714,44 @@ describe("DatabaseCompareModal", () => {
     await waitFor(() => expect(api.compareDatabases).toHaveBeenCalledTimes(2));
   });
 
+  it("关闭重开立即开始新对比时旧请求不会覆盖结果或提前解锁", async () => {
+    const oldComparison = deferred<DatabaseCompareResult>();
+    const newComparison = deferred<DatabaseCompareResult>();
+    vi.mocked(api.compareDatabases)
+      .mockReturnValueOnce(oldComparison.promise)
+      .mockReturnValueOnce(newComparison.promise);
+    const { rerender } = render(
+      <DatabaseCompareModal open onClose={vi.fn()} />
+    );
+    await configureEndpoints();
+    fireEvent.click(screen.getByRole("button", { name: "开始对比" }));
+    expect(api.compareDatabases).toHaveBeenCalledTimes(1);
+
+    rerender(<DatabaseCompareModal open={false} onClose={vi.fn()} />);
+    rerender(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await configureEndpoints();
+    const compareButton = screen.getByRole("button", { name: "开始对比" });
+    expect(compareButton).toBeEnabled();
+    fireEvent.click(compareButton);
+    expect(api.compareDatabases).toHaveBeenCalledTimes(2);
+    expect(compareButton).toBeDisabled();
+
+    await act(async () => {
+      oldComparison.resolve(sampleAllStatusesResult());
+      await oldComparison.promise;
+    });
+    expect(screen.queryByText("audit_logs")).not.toBeInTheDocument();
+    expect(compareButton).toBeDisabled();
+
+    await act(async () => {
+      newComparison.resolve(sampleCompareResult());
+      await newComparison.promise;
+    });
+    expect(await screen.findByText("users")).toBeInTheDocument();
+    expect(screen.queryByText("audit_logs")).not.toBeInTheDocument();
+    await waitFor(() => expect(compareButton).toBeEnabled());
+  });
+
   it("用当前合法选择和端点请求同步预览并打开确认弹窗", async () => {
     const successSpy = vi.spyOn(message, "success");
     vi.mocked(api.compareDatabases).mockResolvedValue(
@@ -1035,6 +1073,46 @@ describe("DatabaseCompareModal", () => {
     expect(api.executeDatabaseSync).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["右上角 X", "遮罩", "Escape"])(
+    "部分执行结果通过%s退出时重新对比真实目标结构",
+    async (dismissMethod) => {
+      vi.mocked(api.executeDatabaseSync).mockResolvedValue(
+        samplePartialExecution()
+      );
+      render(<DatabaseCompareModal open onClose={vi.fn()} />);
+      await openSafePreview();
+      vi.mocked(api.compareDatabases).mockResolvedValue(sampleNoDiffResult());
+      acknowledgeSyncPlan();
+      fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+      expect(await screen.findByText("同步部分完成")).toBeInTheDocument();
+
+      if (dismissMethod === "右上角 X") {
+        fireEvent.click(screen.getByRole("button", { name: "关闭同步预览" }));
+      } else if (dismissMethod === "遮罩") {
+        const modalWrap = document.querySelector(
+          ".database-sync-preview-modal .ant-modal-wrap"
+        );
+        expect(modalWrap).not.toBeNull();
+        fireEvent.mouseDown(modalWrap as Element);
+        fireEvent.click(modalWrap as Element);
+      } else {
+        const modalWrap = document.querySelector(
+          ".database-sync-preview-modal .ant-modal-wrap"
+        );
+        expect(modalWrap).not.toBeNull();
+        fireEvent.keyDown(modalWrap as Element, {
+          key: "Escape",
+          code: "Escape",
+          keyCode: 27,
+        });
+      }
+
+      expect(await screen.findByText("两个数据库结构一致")).toBeInTheDocument();
+      expect(api.compareDatabases).toHaveBeenCalledTimes(2);
+      expect(screen.queryByText("同步执行结果")).not.toBeInTheDocument();
+    }
+  );
+
   it("执行中锁定关闭、交换、新对比和重复确认", async () => {
     const execution = deferred<DatabaseSyncExecutionResult>();
     const onClose = vi.fn();
@@ -1094,6 +1172,47 @@ describe("DatabaseCompareModal", () => {
       screen.getByLabelText("源连接").parentElement?.parentElement
     ).not.toHaveTextContent("MySQL A");
     successSpy.mockRestore();
+  });
+
+  it("旧执行关闭重开后仍占用执行锁，完成后才允许执行新计划", async () => {
+    const oldExecution = deferred<DatabaseSyncExecutionResult>();
+    vi.mocked(api.executeDatabaseSync)
+      .mockReturnValueOnce(oldExecution.promise)
+      .mockResolvedValueOnce(sampleSucceededExecution());
+    const { rerender } = render(
+      <DatabaseCompareModal open onClose={vi.fn()} />
+    );
+    await openSafePreview();
+    acknowledgeSyncPlan();
+    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+    expect(api.executeDatabaseSync).toHaveBeenCalledTimes(1);
+
+    rerender(<DatabaseCompareModal open={false} onClose={vi.fn()} />);
+    rerender(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await openSafePreview();
+    acknowledgeSyncPlan();
+
+    expect(screen.getByText("上一同步请求仍在处理中")).toBeInTheDocument();
+    const lockedConfirm = screen.getByRole("button", { name: "确认执行" });
+    expect(lockedConfirm).toBeDisabled();
+    fireEvent.click(lockedConfirm);
+    expect(api.executeDatabaseSync).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      oldExecution.resolve(sampleSucceededExecution());
+      await oldExecution.promise;
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.queryByText("上一同步请求仍在处理中")
+      ).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "确认执行" })).toBeEnabled();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+    await waitFor(() => {
+      expect(api.executeDatabaseSync).toHaveBeenCalledTimes(2);
+    });
   });
 
   it("关闭后生成的新预览不受旧执行错误影响", async () => {

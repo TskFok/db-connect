@@ -36,6 +36,7 @@ export interface DatabaseSyncPreviewModalProps {
   preview: DatabaseSyncPreview | null;
   executionResult: DatabaseSyncExecutionResult | null;
   executing: boolean;
+  executionLocked: boolean;
   onBack: () => void;
   onConfirm: () => void;
   onRecompare: () => void;
@@ -435,6 +436,7 @@ export function DatabaseSyncPreviewModal({
   preview,
   executionResult,
   executing,
+  executionLocked,
   onBack,
   onConfirm,
   onRecompare,
@@ -484,6 +486,7 @@ export function DatabaseSyncPreviewModal({
     confirmationKey !== null && confirmRequestedKey === confirmationKey;
   const confirmDisabled =
     executing ||
+    executionLocked ||
     confirmRequested ||
     !preview?.can_execute ||
     preview.operations.length === 0 ||
@@ -494,7 +497,12 @@ export function DatabaseSyncPreviewModal({
     Boolean(preview?.can_execute && preview.operations.length > 0);
   const confirmLabel = destructive ? "确认并执行删除同步" : "确认执行";
   const handleCancel = () => {
-    if (!executing) onBack();
+    if (executing) return;
+    if (executionResult) {
+      onRecompare();
+    } else {
+      onBack();
+    }
   };
   const handleConfirm = () => {
     if (confirmDisabled || !confirmationKey) return;
@@ -594,7 +602,17 @@ export function DatabaseSyncPreviewModal({
         {executionResult ? (
           <ExecutionResultContent preview={preview} result={executionResult} />
         ) : preview ? (
-          <PreviewContent preview={preview} />
+          <>
+            {executionLocked && !executing && (
+              <Alert
+                type="info"
+                showIcon
+                message="上一同步请求仍在处理中"
+                description="等待上一请求完成后，才能执行新的同步计划。"
+              />
+            )}
+            <PreviewContent preview={preview} />
+          </>
         ) : (
           <Alert
             type="info"

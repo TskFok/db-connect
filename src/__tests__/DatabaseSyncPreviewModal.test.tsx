@@ -107,6 +107,7 @@ const partialFailure: DatabaseSyncExecutionResult = {
 const baseProps = {
   executionResult: null,
   executing: false,
+  executionLocked: false,
   onBack: vi.fn(),
   onConfirm: vi.fn(),
   onRecompare: vi.fn(),
