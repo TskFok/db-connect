@@ -498,7 +498,7 @@ describe("DatabaseSyncPreviewModal", () => {
       /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.database-sync-progress--indeterminate \.ant-progress-bg \{[\s\S]*?width: 35% !important;[\s\S]*?animation: none;/
     );
     expect(databaseCompareModalStyles).toMatch(
-      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.database-sync-progress \.ant-progress-bg::before \{[\s\S]*?animation: none;/
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.database-sync-progress\s+\.ant-progress\.ant-progress-status-active\s+\.ant-progress-bg::before \{[\s\S]*?animation: none !important;/
     );
   });
 
