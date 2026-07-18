@@ -14,13 +14,15 @@ use crate::db::schema_sync::{
 use crate::models::types::{
     CompareEndpointInfo, ConnectionConfig, DatabaseSyncExecutionResult,
     DatabaseSyncExecutionStatus, DatabaseSyncFailure, DatabaseSyncOperation, DatabaseSyncPreview,
-    DatabaseSyncRequest, DatabaseSyncRisk, DatabaseSyncStatementSuccess, DatabaseType,
-    ExecuteDatabaseSyncRequest,
+    DatabaseSyncProgress, DatabaseSyncProgressPhase, DatabaseSyncRequest, DatabaseSyncRisk,
+    DatabaseSyncStatementSuccess, DatabaseType, ExecuteDatabaseSyncRequest,
 };
 use mysql_async::prelude::Queryable;
 use std::future::Future;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+
+const DATABASE_SYNC_PROGRESS_EVENT: &str = "database-sync-progress";
 
 #[tauri::command]
 pub async fn preview_database_sync(
@@ -37,10 +39,38 @@ pub async fn execute_database_sync(
     app: AppHandle,
     input: ExecuteDatabaseSyncRequest,
 ) -> Result<DatabaseSyncExecutionResult, String> {
+    emit_database_sync_progress(
+        Some(&app),
+        &input.plan_fingerprint,
+        DatabaseSyncProgressPhase::Validating,
+        0,
+        0,
+    );
     let saved =
         load_saved_connections_internal(&app).map_err(|error| redact_error_text(error, &[]))?;
-    let result = execute_database_sync_with_saved(&saved, input).await;
+    let result = execute_database_sync_with_saved(&saved, input, Some(app)).await;
     redact_execution_result(result, &saved)
+}
+
+fn emit_database_sync_progress(
+    app: Option<&AppHandle>,
+    plan_fingerprint: &str,
+    phase: DatabaseSyncProgressPhase,
+    current: usize,
+    total: usize,
+) {
+    let Some(app) = app else {
+        return;
+    };
+    let _ = app.emit(
+        DATABASE_SYNC_PROGRESS_EVENT,
+        DatabaseSyncProgress {
+            plan_fingerprint: plan_fingerprint.to_string(),
+            phase,
+            current,
+            total,
+        },
+    );
 }
 
 fn redact_preview_result<T>(
@@ -108,15 +138,32 @@ fn validate_executable_preview(
     Ok(())
 }
 
+#[allow(dead_code, reason = "保留无进度调用方的简洁接口")]
 async fn execute_operations_with<F, Fut>(
     operations: &[DatabaseSyncOperation],
-    mut execute: F,
+    execute: F,
 ) -> DatabaseSyncExecutionResult
 where
     F: FnMut(&str) -> Fut,
     Fut: Future<Output = Result<(), String>>,
 {
+    execute_operations_with_progress(operations, execute, |_current, _total| {}).await
+}
+
+async fn execute_operations_with_progress<F, Fut, P>(
+    operations: &[DatabaseSyncOperation],
+    mut execute: F,
+    mut on_progress: P,
+) -> DatabaseSyncExecutionResult
+where
+    F: FnMut(&str) -> Fut,
+    Fut: Future<Output = Result<(), String>>,
+    P: FnMut(usize, usize),
+{
+    let total = operations.iter().map(|operation| operation.sql.len()).sum();
     let mut completed = Vec::new();
+    on_progress(0, total);
+
     for (operation_index, operation) in operations.iter().enumerate() {
         for (statement_index, sql) in operation.sql.iter().enumerate() {
             if let Err(error) = execute(sql).await {
@@ -144,6 +191,7 @@ where
                 operation_id: operation.id.clone(),
                 statement_index,
             });
+            on_progress(completed.len(), total);
         }
     }
     DatabaseSyncExecutionResult {
@@ -499,6 +547,7 @@ async fn preview_database_sync_with_saved(
 async fn execute_database_sync_with_saved(
     saved: &[ConnectionConfig],
     input: ExecuteDatabaseSyncRequest,
+    progress_app: Option<AppHandle>,
 ) -> Result<DatabaseSyncExecutionResult, String> {
     let (source_config, target_config) = resolve_sync_configs(saved, &input.request)?;
     let request = normalize_sync_request(&input.request)?;
@@ -522,6 +571,7 @@ async fn execute_database_sync_with_saved(
                 target_pool,
                 &request,
                 &input.plan_fingerprint,
+                progress_app,
             )
             .await
         },
@@ -560,6 +610,7 @@ async fn execute_database_sync_on_pools(
     target_pool: DatabasePoolHandle,
     request: &DatabaseSyncRequest,
     confirmed_fingerprint: &str,
+    progress_app: Option<AppHandle>,
 ) -> Result<DatabaseSyncExecutionResult, String> {
     let preview = build_preview_with_loaders(
         database_type,
@@ -576,16 +627,38 @@ async fn execute_database_sync_on_pools(
     validate_executable_preview(&preview, request.include_drops)?;
 
     let target_pool_for_execute = target_pool.clone();
-    let mut result = execute_operations_with(&preview.operations, move |sql| {
-        let target_pool = target_pool_for_execute.clone();
-        let sql = sql.to_string();
-        async move { execute_sync_statement(target_pool, &sql).await }
-    })
+    let progress_app_for_execute = progress_app.clone();
+    let progress_fingerprint = confirmed_fingerprint.to_string();
+    let mut result = execute_operations_with_progress(
+        &preview.operations,
+        move |sql| {
+            let target_pool = target_pool_for_execute.clone();
+            let sql = sql.to_string();
+            async move { execute_sync_statement(target_pool, &sql).await }
+        },
+        move |current, total| {
+            emit_database_sync_progress(
+                progress_app_for_execute.as_ref(),
+                &progress_fingerprint,
+                DatabaseSyncProgressPhase::Executing,
+                current,
+                total,
+            );
+        },
+    )
     .await;
     add_execution_failure_context(&mut result, &preview.operations, target_name, request);
     if result.status != DatabaseSyncExecutionStatus::Succeeded {
         return Ok(result);
     }
+
+    emit_database_sync_progress(
+        progress_app.as_ref(),
+        confirmed_fingerprint,
+        DatabaseSyncProgressPhase::Refreshing,
+        result.completed_statements.len(),
+        result.completed_statements.len(),
+    );
 
     let (source_snapshot, target_snapshot) = tokio::join!(
         load_sync_schema_snapshot(source_pool, &request.source.database),
@@ -824,6 +897,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn execution_progress_reports_initial_total_and_only_successful_statements() {
+        let operations = vec![
+            operation("op-0001", vec!["SQL 1"]),
+            operation("op-0002", vec!["SQL 2", "SQL 3"]),
+            operation("op-0003", vec!["SQL 4"]),
+        ];
+        let progress = Arc::new(Mutex::new(Vec::new()));
+        let progress_for_callback = progress.clone();
+
+        let result = execute_operations_with_progress(
+            &operations,
+            |sql| {
+                let sql = sql.to_string();
+                async move {
+                    if sql == "SQL 3" {
+                        Err("模拟失败".to_string())
+                    } else {
+                        Ok(())
+                    }
+                }
+            },
+            move |current, total| {
+                progress_for_callback.lock().unwrap().push((current, total));
+            },
+        )
+        .await;
+
+        assert_eq!(*progress.lock().unwrap(), vec![(0, 4), (1, 4), (2, 4)]);
+        assert_eq!(
+            result.status,
+            DatabaseSyncExecutionStatus::PartiallySucceeded
+        );
+        assert_eq!(result.completed_statements.len(), 2);
+    }
+
+    #[tokio::test]
     async fn execution_stops_at_first_failed_statement_and_reports_pending_operations() {
         let operations = vec![
             operation("op-0001", vec!["SQL 1"]),
@@ -1011,6 +1120,7 @@ mod tests {
                 request,
                 plan_fingerprint: preview.plan_fingerprint,
             },
+            None,
         )
         .await
         .expect("execute");
@@ -1083,6 +1193,7 @@ mod tests {
                 request,
                 plan_fingerprint: preview.plan_fingerprint,
             },
+            None,
         )
         .await
         .expect("execute exact table");
@@ -1126,6 +1237,7 @@ mod tests {
                 request: request.clone(),
                 plan_fingerprint: preview.plan_fingerprint,
             },
+            None,
         )
         .await
         .expect("execute composite primary key");
@@ -1289,6 +1401,7 @@ mod tests {
                 request,
                 plan_fingerprint: preview.plan_fingerprint,
             },
+            None,
         )
         .await
         .unwrap_err();

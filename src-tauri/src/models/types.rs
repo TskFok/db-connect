@@ -190,6 +190,22 @@ pub struct ExecuteDatabaseSyncRequest {
     pub plan_fingerprint: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DatabaseSyncProgressPhase {
+    Validating,
+    Executing,
+    Refreshing,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DatabaseSyncProgress {
+    pub plan_fingerprint: String,
+    pub phase: DatabaseSyncProgressPhase,
+    pub current: usize,
+    pub total: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[allow(dead_code, reason = "将在后续数据库同步命令中构造")]
 pub struct DatabaseSyncStatementSuccess {
@@ -754,6 +770,26 @@ pub struct ExportSqlFileResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn database_sync_progress_serializes_with_snake_case_phase() {
+        let progress = DatabaseSyncProgress {
+            plan_fingerprint: "fingerprint".to_string(),
+            phase: DatabaseSyncProgressPhase::Refreshing,
+            current: 3,
+            total: 3,
+        };
+
+        assert_eq!(
+            serde_json::to_value(progress).unwrap(),
+            serde_json::json!({
+                "plan_fingerprint": "fingerprint",
+                "phase": "refreshing",
+                "current": 3,
+                "total": 3
+            })
+        );
+    }
 
     #[test]
     fn test_database_info_serialization() {
