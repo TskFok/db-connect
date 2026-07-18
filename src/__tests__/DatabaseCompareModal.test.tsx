@@ -7,6 +7,15 @@ import {
 } from "@testing-library/react";
 import { message } from "antd";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const eventMocks = vi.hoisted(() => ({
+  listen: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: eventMocks.listen,
+}));
+
 import { DatabaseCompareModal } from "../components/databaseCompare/DatabaseCompareModal";
 import * as api from "../services/tauriCommands";
 import { useConnectionStore } from "../stores/connectionStore";
@@ -15,6 +24,7 @@ import type {
   DatabaseCompareResult,
   DatabaseSyncExecutionResult,
   DatabaseSyncPreview,
+  DatabaseSyncProgress,
 } from "../types";
 import { saveDatabaseCompareWorkbook } from "../utils/databaseCompareExport";
 
@@ -275,6 +285,7 @@ describe("DatabaseCompareModal", () => {
     vi.mocked(api.executeDatabaseSync).mockResolvedValue(
       sampleSucceededExecution()
     );
+    eventMocks.listen.mockResolvedValue(vi.fn());
     vi.mocked(saveDatabaseCompareWorkbook).mockResolvedValue(true);
     useConnectionStore.setState({ savedConnections: SAVED_CONNECTIONS });
     Object.defineProperty(window, "matchMedia", {
@@ -1126,6 +1137,9 @@ describe("DatabaseCompareModal", () => {
     const confirm = screen.getByRole("button", { name: "确认执行" });
 
     fireEvent.click(confirm);
+    await waitFor(() => {
+      expect(api.executeDatabaseSync).toHaveBeenCalledTimes(1);
+    });
 
     expect(screen.getByRole("button", { name: "正在执行同步" })).toBeDisabled();
     expect(
@@ -1159,6 +1173,9 @@ describe("DatabaseCompareModal", () => {
     await openSafePreview();
     acknowledgeSyncPlan();
     fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+    await waitFor(() => {
+      expect(api.executeDatabaseSync).toHaveBeenCalledTimes(1);
+    });
 
     rerender(<DatabaseCompareModal open={false} onClose={vi.fn()} />);
     await act(async () => {
@@ -1188,7 +1205,9 @@ describe("DatabaseCompareModal", () => {
     await openSafePreview();
     acknowledgeSyncPlan();
     fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
-    expect(api.executeDatabaseSync).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(api.executeDatabaseSync).toHaveBeenCalledTimes(1);
+    });
 
     rerender(<DatabaseCompareModal open={false} onClose={vi.fn()} />);
     rerender(<DatabaseCompareModal open onClose={vi.fn()} />);
@@ -1228,6 +1247,9 @@ describe("DatabaseCompareModal", () => {
     await openSafePreview();
     acknowledgeSyncPlan();
     fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+    await waitFor(() => {
+      expect(api.executeDatabaseSync).toHaveBeenCalledTimes(1);
+    });
 
     rerender(<DatabaseCompareModal open={false} onClose={vi.fn()} />);
     rerender(<DatabaseCompareModal open onClose={vi.fn()} />);
@@ -1268,5 +1290,86 @@ describe("DatabaseCompareModal", () => {
     expect(await screen.findByText("同步 SQL 预览")).toBeInTheDocument();
     expect(api.previewDatabaseSync).toHaveBeenCalledTimes(2);
     errorSpy.mockRestore();
+  });
+
+  it("执行前监听进度，过滤其他计划事件并在完成后清理", async () => {
+    const execution = deferred<DatabaseSyncExecutionResult>();
+    const unlisten = vi.fn();
+    let progressHandler:
+      | ((event: { payload: DatabaseSyncProgress }) => void)
+      | undefined;
+    eventMocks.listen.mockImplementation(async (_eventName, handler) => {
+      progressHandler = handler;
+      return unlisten;
+    });
+    vi.mocked(api.executeDatabaseSync).mockReturnValue(execution.promise);
+
+    render(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await openSafePreview();
+    acknowledgeSyncPlan();
+    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+
+    await waitFor(() => {
+      expect(eventMocks.listen).toHaveBeenCalledWith(
+        "database-sync-progress",
+        expect.any(Function)
+      );
+    });
+    await waitFor(() => expect(api.executeDatabaseSync).toHaveBeenCalledOnce());
+
+    act(() => {
+      progressHandler?.({
+        payload: {
+          plan_fingerprint: "other-plan",
+          phase: "executing",
+          current: 3,
+          total: 4,
+        },
+      });
+    });
+    expect(
+      screen.queryByText("正在执行 DDL，已完成 3 / 4 条语句")
+    ).not.toBeInTheDocument();
+
+    act(() => {
+      progressHandler?.({
+        payload: {
+          plan_fingerprint: "preview-fingerprint",
+          phase: "executing",
+          current: 1,
+          total: 4,
+        },
+      });
+    });
+    expect(
+      screen.getByText("正在执行 DDL，已完成 1 / 4 条语句")
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      execution.resolve(sampleSucceededExecution());
+      await execution.promise;
+    });
+    expect(unlisten).toHaveBeenCalledOnce();
+    expect(await screen.findByText("同步执行结果")).toBeInTheDocument();
+  });
+
+  it("进度监听注册失败时仍执行同步并展示退化状态", async () => {
+    const execution = deferred<DatabaseSyncExecutionResult>();
+    eventMocks.listen.mockRejectedValue(new Error("监听不可用"));
+    vi.mocked(api.executeDatabaseSync).mockReturnValue(execution.promise);
+
+    render(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await openSafePreview();
+    acknowledgeSyncPlan();
+    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+
+    await waitFor(() => expect(api.executeDatabaseSync).toHaveBeenCalledOnce());
+    expect(screen.getByText("正在执行数据库结构同步")).toBeInTheDocument();
+
+    await act(async () => {
+      execution.resolve(sampleSucceededExecution());
+      await execution.promise;
+    });
+    expect(await screen.findByText("同步执行结果")).toBeInTheDocument();
   });
 });

@@ -1,5 +1,6 @@
 import { EyeOutlined, LoadingOutlined, SwapOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Form, Modal, Select, message } from "antd";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../../services/tauriCommands";
 import { useConnectionStore } from "../../stores/connectionStore";
@@ -7,6 +8,7 @@ import type {
   DatabaseCompareResult,
   DatabaseSyncExecutionResult,
   DatabaseSyncPreview,
+  DatabaseSyncProgress,
   DatabaseSyncRequest,
 } from "../../types";
 import { normalizeDatabaseType } from "../../utils/connectionConfig";
@@ -76,6 +78,8 @@ export function DatabaseCompareModal({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [executionResult, setExecutionResult] =
     useState<DatabaseSyncExecutionResult | null>(null);
+  const [syncProgress, setSyncProgress] =
+    useState<DatabaseSyncProgress | null>(null);
   const [loadErrors, setLoadErrors] = useState<
     Record<Exclude<LoadingSide, null>, string | null>
   >({ source: null, target: null });
@@ -90,10 +94,30 @@ export function DatabaseCompareModal({
   const previewRequestId = useRef(0);
   const executionRequestId = useRef(0);
   const activeSyncPlanIdentity = useRef<string | null>(null);
+  const syncProgressUnlistenRef = useRef<UnlistenFn | null>(null);
   const executingRef = useRef(false);
   const executionInFlightRef = useRef(false);
 
+  const stopSyncProgressListener = useCallback(() => {
+    const unlisten = syncProgressUnlistenRef.current;
+    syncProgressUnlistenRef.current = null;
+    unlisten?.();
+  }, []);
+
+  const clearSyncProgress = useCallback(() => {
+    stopSyncProgressListener();
+    setSyncProgress(null);
+  }, [stopSyncProgressListener]);
+
+  useEffect(
+    () => () => {
+      stopSyncProgressListener();
+    },
+    [stopSyncProgressListener]
+  );
+
   const clearSyncPreview = useCallback(() => {
+    clearSyncProgress();
     previewRequestId.current += 1;
     executionRequestId.current += 1;
     activeSyncPlanIdentity.current = null;
@@ -104,7 +128,7 @@ export function DatabaseCompareModal({
     setSyncRequest(null);
     setExecutionResult(null);
     setPreviewOpen(false);
-  }, []);
+  }, [clearSyncProgress]);
 
   const resetSyncState = useCallback(() => {
     clearSyncPreview();
@@ -469,7 +493,33 @@ export function DatabaseCompareModal({
     setExecuting(true);
     setExecutionLocked(true);
     setExecutionResult(null);
+    clearSyncProgress();
     try {
+      try {
+        const unlisten = await listen<DatabaseSyncProgress>(
+          "database-sync-progress",
+          (event) => {
+            if (
+              executionRequestId.current === requestId &&
+              activeSyncPlanIdentity.current === identity &&
+              event.payload.plan_fingerprint === planFingerprint
+            ) {
+              setSyncProgress(event.payload);
+            }
+          }
+        );
+        if (
+          executionRequestId.current !== requestId ||
+          activeSyncPlanIdentity.current !== identity
+        ) {
+          unlisten();
+          return;
+        }
+        syncProgressUnlistenRef.current = unlisten;
+      } catch {
+        setSyncProgress(null);
+      }
+
       const execution = await api.executeDatabaseSync({
         request: syncRequest,
         plan_fingerprint: planFingerprint,
@@ -506,6 +556,7 @@ export function DatabaseCompareModal({
       setPreviewOpen(false);
       message.error(errorMessage(executionError));
     } finally {
+      clearSyncProgress();
       executionInFlightRef.current = false;
       setExecutionLocked(false);
       if (executionRequestId.current === requestId) {
@@ -513,7 +564,7 @@ export function DatabaseCompareModal({
         setExecuting(false);
       }
     }
-  }, [syncPreview, syncRequest]);
+  }, [clearSyncProgress, syncPreview, syncRequest]);
 
   const handlePreviewBack = useCallback(() => {
     if (executingRef.current) return;
@@ -805,7 +856,7 @@ export function DatabaseCompareModal({
           preview={syncPreview}
           executionResult={executionResult}
           executing={executing}
-          progress={null}
+          progress={syncProgress}
           executionLocked={executionLocked}
           onBack={handlePreviewBack}
           onConfirm={() => void handleExecuteSync()}
