@@ -19,10 +19,12 @@ use crate::models::types::{
 };
 use mysql_async::prelude::Queryable;
 use std::future::Future;
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 const DATABASE_SYNC_PROGRESS_EVENT: &str = "database-sync-progress";
+type DatabaseSyncProgressSink = Arc<dyn Fn(DatabaseSyncProgress) + Send + Sync>;
 
 #[tauri::command]
 pub async fn preview_database_sync(
@@ -39,38 +41,54 @@ pub async fn execute_database_sync(
     app: AppHandle,
     input: ExecuteDatabaseSyncRequest,
 ) -> Result<DatabaseSyncExecutionResult, String> {
+    let progress_app = app.clone();
+    let progress_sink: DatabaseSyncProgressSink = Arc::new(move |progress| {
+        let _ = progress_app.emit(DATABASE_SYNC_PROGRESS_EVENT, progress);
+    });
+    execute_database_sync_command_with_loader(
+        input,
+        || load_saved_connections_internal(&app),
+        progress_sink,
+    )
+    .await
+}
+
+async fn execute_database_sync_command_with_loader<L>(
+    input: ExecuteDatabaseSyncRequest,
+    load_saved: L,
+    progress_sink: DatabaseSyncProgressSink,
+) -> Result<DatabaseSyncExecutionResult, String>
+where
+    L: FnOnce() -> Result<Vec<ConnectionConfig>, String>,
+{
     emit_database_sync_progress(
-        Some(&app),
+        Some(&progress_sink),
         &input.plan_fingerprint,
         DatabaseSyncProgressPhase::Validating,
         0,
         0,
     );
-    let saved =
-        load_saved_connections_internal(&app).map_err(|error| redact_error_text(error, &[]))?;
-    let result = execute_database_sync_with_saved(&saved, input, Some(app)).await;
+    let saved = load_saved().map_err(|error| redact_error_text(error, &[]))?;
+    let result = execute_database_sync_with_saved(&saved, input, Some(progress_sink)).await;
     redact_execution_result(result, &saved)
 }
 
 fn emit_database_sync_progress(
-    app: Option<&AppHandle>,
+    progress_sink: Option<&DatabaseSyncProgressSink>,
     plan_fingerprint: &str,
     phase: DatabaseSyncProgressPhase,
     current: usize,
     total: usize,
 ) {
-    let Some(app) = app else {
+    let Some(progress_sink) = progress_sink else {
         return;
     };
-    let _ = app.emit(
-        DATABASE_SYNC_PROGRESS_EVENT,
-        DatabaseSyncProgress {
-            plan_fingerprint: plan_fingerprint.to_string(),
-            phase,
-            current,
-            total,
-        },
-    );
+    progress_sink(DatabaseSyncProgress {
+        plan_fingerprint: plan_fingerprint.to_string(),
+        phase,
+        current,
+        total,
+    });
 }
 
 fn redact_preview_result<T>(
@@ -547,7 +565,7 @@ async fn preview_database_sync_with_saved(
 async fn execute_database_sync_with_saved(
     saved: &[ConnectionConfig],
     input: ExecuteDatabaseSyncRequest,
-    progress_app: Option<AppHandle>,
+    progress_sink: Option<DatabaseSyncProgressSink>,
 ) -> Result<DatabaseSyncExecutionResult, String> {
     let (source_config, target_config) = resolve_sync_configs(saved, &input.request)?;
     let request = normalize_sync_request(&input.request)?;
@@ -571,7 +589,7 @@ async fn execute_database_sync_with_saved(
                 target_pool,
                 &request,
                 &input.plan_fingerprint,
-                progress_app,
+                progress_sink,
             )
             .await
         },
@@ -610,7 +628,7 @@ async fn execute_database_sync_on_pools(
     target_pool: DatabasePoolHandle,
     request: &DatabaseSyncRequest,
     confirmed_fingerprint: &str,
-    progress_app: Option<AppHandle>,
+    progress_sink: Option<DatabaseSyncProgressSink>,
 ) -> Result<DatabaseSyncExecutionResult, String> {
     let preview = build_preview_with_loaders(
         database_type,
@@ -627,7 +645,7 @@ async fn execute_database_sync_on_pools(
     validate_executable_preview(&preview, request.include_drops)?;
 
     let target_pool_for_execute = target_pool.clone();
-    let progress_app_for_execute = progress_app.clone();
+    let progress_sink_for_execute = progress_sink.clone();
     let progress_fingerprint = confirmed_fingerprint.to_string();
     let mut result = execute_operations_with_progress(
         &preview.operations,
@@ -638,7 +656,7 @@ async fn execute_database_sync_on_pools(
         },
         move |current, total| {
             emit_database_sync_progress(
-                progress_app_for_execute.as_ref(),
+                progress_sink_for_execute.as_ref(),
                 &progress_fingerprint,
                 DatabaseSyncProgressPhase::Executing,
                 current,
@@ -653,7 +671,7 @@ async fn execute_database_sync_on_pools(
     }
 
     emit_database_sync_progress(
-        progress_app.as_ref(),
+        progress_sink.as_ref(),
         confirmed_fingerprint,
         DatabaseSyncProgressPhase::Refreshing,
         result.completed_statements.len(),
@@ -1151,6 +1169,82 @@ mod tests {
                 |_| Ok(()),
             )
             .is_err());
+        remove_sqlite_fixture(source_path, target_path);
+    }
+
+    #[tokio::test]
+    async fn successful_command_reports_validating_executing_and_refreshing_in_order() {
+        let (saved, request, source_path, target_path) = sqlite_add_column_fixture();
+        let preview = preview_database_sync_with_saved(&saved, &request)
+            .await
+            .expect("preview");
+        let progress = Arc::new(Mutex::new(Vec::new()));
+        let progress_for_load = progress.clone();
+        let progress_for_sink = progress.clone();
+        let target_path_for_sink = target_path.clone();
+        let sink: DatabaseSyncProgressSink = Arc::new(move |event| {
+            if event.phase == DatabaseSyncProgressPhase::Refreshing {
+                assert_eq!(
+                    sqlite_column_names(&target_path_for_sink, "users"),
+                    vec!["id", "name"]
+                );
+            }
+            progress_for_sink.lock().unwrap().push(event);
+        });
+
+        let result = execute_database_sync_command_with_loader(
+            ExecuteDatabaseSyncRequest {
+                request,
+                plan_fingerprint: preview.plan_fingerprint.clone(),
+            },
+            || {
+                assert_eq!(
+                    progress_for_load
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .map(|event| event.phase)
+                        .collect::<Vec<_>>(),
+                    vec![DatabaseSyncProgressPhase::Validating]
+                );
+                Ok(saved)
+            },
+            sink,
+        )
+        .await
+        .expect("execute");
+
+        assert_eq!(result.status, DatabaseSyncExecutionStatus::Succeeded);
+        assert!(result.latest_compare_result.is_some());
+        assert_eq!(
+            *progress.lock().unwrap(),
+            vec![
+                DatabaseSyncProgress {
+                    plan_fingerprint: preview.plan_fingerprint.clone(),
+                    phase: DatabaseSyncProgressPhase::Validating,
+                    current: 0,
+                    total: 0,
+                },
+                DatabaseSyncProgress {
+                    plan_fingerprint: preview.plan_fingerprint.clone(),
+                    phase: DatabaseSyncProgressPhase::Executing,
+                    current: 0,
+                    total: 1,
+                },
+                DatabaseSyncProgress {
+                    plan_fingerprint: preview.plan_fingerprint.clone(),
+                    phase: DatabaseSyncProgressPhase::Executing,
+                    current: 1,
+                    total: 1,
+                },
+                DatabaseSyncProgress {
+                    plan_fingerprint: preview.plan_fingerprint,
+                    phase: DatabaseSyncProgressPhase::Refreshing,
+                    current: 1,
+                    total: 1,
+                },
+            ]
+        );
         remove_sqlite_fixture(source_path, target_path);
     }
 
