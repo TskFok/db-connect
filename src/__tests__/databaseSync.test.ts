@@ -42,11 +42,25 @@ const executeRequestKeysAreExact: Equal<
   keyof ExecuteDatabaseSyncRequest,
   "request" | "plan_fingerprint"
 > = true;
+const operationKindContractIsExact: Equal<
+  DatabaseSyncOperationKind,
+  | "create_table"
+  | "add_column"
+  | "alter_column"
+  | "replace_primary_key"
+  | "drop_column"
+  | "drop_table"
+  | "update_comment"
+> = true;
+const executionStatusContractIsExact: Equal<
+  DatabaseSyncExecutionStatus,
+  "succeeded" | "partially_succeeded" | "failed"
+> = true;
 
 const tables = [
-  { name: "changed", status: "changed", columns: [] },
-  { name: "new_table", status: "source_only", columns: [] },
   { name: "old_table", status: "target_only", columns: [] },
+  { name: "new_table", status: "source_only", columns: [] },
+  { name: "changed", status: "changed", columns: [] },
 ] as TableDiff[];
 
 const request = {
@@ -63,8 +77,8 @@ const previewFixture = {
     executable_operations: 1,
     high_risk_operations: 0,
     destructive_operations: 0,
-    skipped_items: 0,
-    blockers: 0,
+    skipped_items: 1,
+    blockers: 1,
   },
   operations: [
     {
@@ -76,20 +90,56 @@ const previewFixture = {
       sql: ["ALTER TABLE changed ADD COLUMN name text"],
     },
   ],
-  skipped_items: [],
-  blockers: [],
-  can_execute: true,
+  skipped_items: [
+    {
+      table_name: "legacy_logs",
+      summary: "跳过删除表",
+      reason: "删除操作未开启",
+    },
+  ],
+  blockers: [
+    {
+      table_name: "changed",
+      summary: "无法修改生成字段",
+      reason: "目标数据库不支持安全修改",
+    },
+  ],
+  can_execute: false,
 } satisfies DatabaseSyncPreview;
 
 const executionFixture = {
-  status: "succeeded",
+  status: "partially_succeeded",
   completed_statements: [
     { operation_id: "changed:add_column:0", statement_index: 0 },
   ],
-  failed: null,
-  pending_operation_ids: [],
+  failed: {
+    operation_id: "changed:alter_column:1",
+    statement_index: 1,
+    error: "执行失败",
+  },
+  pending_operation_ids: ["changed:alter_column:1"],
   cleanup_errors: [],
-  latest_compare_result: null,
+  latest_compare_result: {
+    database_type: "mysql",
+    source: {
+      connection_id: "source-id",
+      connection_name: "源连接",
+      database: "source_db",
+    },
+    target: {
+      connection_id: "target-id",
+      connection_name: "目标连接",
+      database: "target_db",
+    },
+    compared_at: "2026-07-17T10:00:00Z",
+    summary: {
+      source_only_tables: 0,
+      target_only_tables: 0,
+      changed_tables: 1,
+      different_columns: 1,
+    },
+    tables,
+  },
 } satisfies DatabaseSyncExecutionResult;
 
 describe("databaseSync selection", () => {
@@ -109,7 +159,7 @@ describe("databaseSync selection", () => {
   });
 
   it("开关删除后清理失效选择，并保持未显示筛选项", () => {
-    const selected = ["changed", "old_table"];
+    const selected = ["old_table", "changed", "changed"];
     expect(normalizeSyncSelection(selected, tables, false)).toEqual([
       "changed",
     ]);
@@ -118,6 +168,12 @@ describe("databaseSync selection", () => {
       "new_table",
       "old_table",
     ]);
+  });
+
+  it("取消单表选择时移除目标表并规范化其余选择", () => {
+    expect(
+      toggleSyncTable(["old_table", "changed", "old_table"], "old_table", false)
+    ).toEqual(["changed"]);
   });
 });
 
@@ -147,9 +203,15 @@ describe("databaseSync contract", () => {
     expect(operationKinds).toHaveLength(7);
     expect(statuses).toHaveLength(3);
     expect(previewFixture.operations[0].table_name).toBe("changed");
+    expect(previewFixture.skipped_items[0].reason).toBe("删除操作未开启");
+    expect(previewFixture.blockers[0].table_name).toBe("changed");
     expect(executionFixture.completed_statements[0].statement_index).toBe(0);
+    expect(executionFixture.failed?.error).toBe("执行失败");
+    expect(executionFixture.latest_compare_result?.database_type).toBe("mysql");
     expect(syncRequestKeysAreExact).toBe(true);
     expect(executeRequestKeysAreExact).toBe(true);
+    expect(operationKindContractIsExact).toBe(true);
+    expect(executionStatusContractIsExact).toBe(true);
   });
 
   it("预览调用 preview_database_sync 并使用 request 外层参数", async () => {
