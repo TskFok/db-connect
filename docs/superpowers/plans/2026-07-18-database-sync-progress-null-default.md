@@ -518,7 +518,9 @@ describe("databaseSyncProgress", () => {
   });
 
   it("刷新阶段显示 DDL 已完成", () => {
-    expect(databaseSyncProgressPercent(progress("refreshing", 4, 4))).toBe(100);
+    expect(
+      databaseSyncProgressPercent(progress("refreshing", 4, 4))
+    ).toBeUndefined();
     expect(formatDatabaseSyncProgress(progress("refreshing", 4, 4))).toBe(
       "DDL 已执行完成，正在刷新结构对比"
     );
@@ -559,7 +561,6 @@ export function databaseSyncProgressPercent(
   progress: DatabaseSyncProgress | null
 ): number | undefined {
   if (!progress) return undefined;
-  if (progress.phase === "refreshing") return 100;
   if (progress.phase !== "executing" || progress.total <= 0) return undefined;
   return Math.min(
     100,
@@ -637,7 +638,7 @@ it("执行中展示校验、真实语句进度和刷新阶段", () => {
   expect(
     screen.getByText("DDL 已执行完成，正在刷新结构对比")
   ).toBeInTheDocument();
-  expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "100");
+  expect(screen.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
 });
 ```
 
@@ -685,7 +686,7 @@ const progressMessage = formatDatabaseSyncProgress(progress);
   >
     <Progress
       aria-label="数据库结构同步进度"
-      percent={progressPercent ?? 0}
+      percent={progressPercent}
       showInfo={progressPercent !== undefined}
       status="active"
     />
