@@ -415,14 +415,17 @@ describe("DatabaseSyncPreviewModal", () => {
     expect(screen.getByText(/执行在第 3 条语句停止/)).toBeInTheDocument();
     expect(screen.getByText("失败操作：users / 修改字段")).toBeInTheDocument();
     expect(screen.getByText("目标字段仍被视图引用")).toBeInTheDocument();
-    expect(screen.getByText("未执行 2 个操作")).toBeInTheDocument();
+    expect(screen.getByText("未执行 1 个操作")).toBeInTheDocument();
     expect(
       screen.getByText("orders / 创建表 / 第 1 条 SQL")
     ).toBeInTheDocument();
     expect(
       screen.getByText("orders / 创建表 / 第 2 条 SQL")
     ).toBeInTheDocument();
-    expect(screen.getByText("users / 修改字段")).toBeInTheDocument();
+    const pending = screen.getByRole("region", { name: "未执行操作" });
+    expect(
+      within(pending).queryByText("users / 修改字段")
+    ).not.toBeInTheDocument();
     expect(screen.getByText("old_logs / 删除表")).toBeInTheDocument();
     expect(screen.getByText("连接清理警告")).toBeInTheDocument();
 
@@ -493,7 +496,12 @@ describe("DatabaseSyncPreviewModal", () => {
     expect(screen.getByText("已执行 0 条语句")).toBeInTheDocument();
     expect(screen.getByText("执行在第 1 条语句停止")).toBeInTheDocument();
     expect(screen.getByText("失败操作：orders / 创建表")).toBeInTheDocument();
-    expect(screen.getByText("未执行 2 个操作")).toBeInTheDocument();
+    expect(screen.getByText("未执行 1 个操作")).toBeInTheDocument();
+    expect(screen.getByText("该操作另有 1 条 SQL 未执行")).toBeInTheDocument();
+    const pending = screen.getByRole("region", { name: "未执行操作" });
+    expect(
+      within(pending).queryByText("orders / 创建表")
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("region", { name: "已成功执行的语句" })
     ).not.toBeInTheDocument();

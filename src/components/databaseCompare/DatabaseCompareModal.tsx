@@ -551,6 +551,7 @@ export function DatabaseCompareModal({
     exporting ||
     previewing ||
     executing;
+  const syncEndpointLocked = previewing || previewOpen || executing;
 
   return (
     <Modal
@@ -635,7 +636,7 @@ export function DatabaseCompareModal({
                   value={sourceConnectionId}
                   options={sourceConnectionOptions}
                   onChange={handleSourceConnectionChange}
-                  disabled={executing}
+                  disabled={syncEndpointLocked}
                   placeholder="请选择已保存连接"
                   showSearch
                   optionFilterProp="label"
@@ -657,7 +658,7 @@ export function DatabaseCompareModal({
                     setSourceDatabase(database);
                     resetResult();
                   }}
-                  disabled={!sourceConnectionId || executing}
+                  disabled={!sourceConnectionId || syncEndpointLocked}
                   loading={loadingSide === "source"}
                   placeholder="请选择数据库/schema"
                   showSearch
@@ -682,6 +683,7 @@ export function DatabaseCompareModal({
               comparePending ||
               exporting ||
               previewing ||
+              previewOpen ||
               executing
             }
             onClick={handleSwap}
@@ -696,7 +698,9 @@ export function DatabaseCompareModal({
                   options={targetConnectionOptions}
                   onChange={handleTargetConnectionChange}
                   disabled={
-                    !sourceConnectionId || loadingSide === "source" || executing
+                    !sourceConnectionId ||
+                    loadingSide === "source" ||
+                    syncEndpointLocked
                   }
                   placeholder="请选择同类型连接"
                   showSearch
@@ -719,7 +723,7 @@ export function DatabaseCompareModal({
                     setTargetDatabase(database);
                     resetResult();
                   }}
-                  disabled={!targetConnectionId || executing}
+                  disabled={!targetConnectionId || syncEndpointLocked}
                   loading={loadingSide === "target"}
                   placeholder="请选择数据库/schema"
                   showSearch

@@ -314,11 +314,7 @@ function ExecutionResultContent({
       ).length
     : 0;
   const pendingOperations = result.pending_operation_ids
-    .filter(
-      (operationId) =>
-        failedOperationCompletedCount === 0 ||
-        operationId !== result.failed?.operation_id
-    )
+    .filter((operationId) => operationId !== result.failed?.operation_id)
     .map((operationId) => ({
       id: operationId,
       operation: findOperation(preview, operationId),
@@ -340,6 +336,12 @@ function ExecutionResultContent({
 
   const failedStatementNumber = completedCount + 1;
   const failedSqlNumber = (result.failed?.statement_index ?? 0) + 1;
+  const failedOperationRemainingCount = result.failed
+    ? Math.max(
+        0,
+        (failedOperation?.sql.length ?? 0) - result.failed.statement_index - 1
+      )
+    : 0;
   const resultTitle =
     result.status === "partially_succeeded" ? "同步部分完成" : "同步执行失败";
 
@@ -397,6 +399,11 @@ function ExecutionResultContent({
               <span>操作内第 {failedSqlNumber} 条 SQL</span>
               {failedOperationCompletedCount > 0 && (
                 <span>该操作已完成 {failedOperationCompletedCount} 条 SQL</span>
+              )}
+              {failedOperationRemainingCount > 0 && (
+                <span>
+                  该操作另有 {failedOperationRemainingCount} 条 SQL 未执行
+                </span>
               )}
               <code>{result.failed.error}</code>
             </div>

@@ -833,6 +833,10 @@ describe("DatabaseCompareModal", () => {
     expect(screen.getByRole("checkbox", { name: "选择 users" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "开始对比" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "导出 Excel" })).toBeDisabled();
+    expect(screen.getByLabelText("源连接")).toBeDisabled();
+    expect(screen.getByLabelText("源数据库/schema")).toBeDisabled();
+    expect(screen.getByLabelText("目标连接")).toBeDisabled();
+    expect(screen.getByLabelText("目标数据库/schema")).toBeDisabled();
 
     await act(async () => {
       preview.resolve(sampleSyncPreview());
@@ -843,6 +847,10 @@ describe("DatabaseCompareModal", () => {
         screen.getByRole("button", { name: "预览同步（1）" })
       ).toBeEnabled();
     });
+    expect(screen.getByLabelText("源连接")).toBeDisabled();
+    expect(screen.getByLabelText("源数据库/schema")).toBeDisabled();
+    expect(screen.getByLabelText("目标连接")).toBeDisabled();
+    expect(screen.getByLabelText("目标数据库/schema")).toBeDisabled();
   });
 
   it("当前预览失败时反馈错误并允许重试", async () => {
@@ -863,7 +871,7 @@ describe("DatabaseCompareModal", () => {
     errorSpy.mockRestore();
   });
 
-  it("端点变化后忽略尚未完成的旧预览错误", async () => {
+  it("预览请求期间端点锁定且当前错误正常反馈", async () => {
     const preview = deferred<DatabaseSyncPreview>();
     const errorSpy = vi.spyOn(message, "error");
     vi.mocked(api.compareDatabases).mockResolvedValue(sampleCompareResult());
@@ -875,18 +883,18 @@ describe("DatabaseCompareModal", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 users" }));
     fireEvent.click(screen.getByRole("button", { name: "预览同步（1）" }));
 
-    await selectAntOption("源数据库/schema", "audit");
+    expect(screen.getByLabelText("源数据库/schema")).toBeDisabled();
     await act(async () => {
       preview.reject("旧预览失败");
       await preview.promise.catch(() => undefined);
     });
 
-    expect(errorSpy).not.toHaveBeenCalledWith("生成同步预览失败：旧预览失败");
-    expect(screen.queryByText("users")).not.toBeInTheDocument();
+    expect(errorSpy).toHaveBeenCalledWith("生成同步预览失败：旧预览失败");
+    expect(screen.getByText("users")).toBeInTheDocument();
     errorSpy.mockRestore();
   });
 
-  it("端点变化后忽略旧预览成功并重置同步状态", async () => {
+  it("预览请求期间端点锁定且当前成功打开预览", async () => {
     const preview = deferred<DatabaseSyncPreview>();
     const successSpy = vi.spyOn(message, "success");
     vi.mocked(api.compareDatabases).mockResolvedValue(
@@ -901,20 +909,13 @@ describe("DatabaseCompareModal", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "选择全部可同步表" }));
     fireEvent.click(screen.getByRole("button", { name: "预览同步（3）" }));
 
-    await selectAntOption("源数据库/schema", "audit");
+    expect(screen.getByLabelText("源数据库/schema")).toBeDisabled();
     await act(async () => {
       preview.resolve(sampleSyncPreview());
       await preview.promise;
     });
-    expect(successSpy).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole("button", { name: "开始对比" }));
-    await waitFor(() => {
-      expect(screen.getByText("已选择 0 / 2 张表")).toBeInTheDocument();
-    });
-    expect(
-      screen.getByRole("switch", { name: "允许删除目标端结构" })
-    ).not.toBeChecked();
+    expect(successSpy).toHaveBeenCalled();
+    expect(screen.getByText("同步 SQL 预览")).toBeInTheDocument();
     successSpy.mockRestore();
   });
 
