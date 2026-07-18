@@ -6,6 +6,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { message } from "antd";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const eventMocks = vi.hoisted(() => ({
@@ -1294,13 +1295,14 @@ describe("DatabaseCompareModal", () => {
 
   it("执行前监听进度，过滤其他计划事件并在完成后清理", async () => {
     const execution = deferred<DatabaseSyncExecutionResult>();
+    const listener = deferred<UnlistenFn>();
     const unlisten = vi.fn();
     let progressHandler:
       | ((event: { payload: DatabaseSyncProgress }) => void)
       | undefined;
-    eventMocks.listen.mockImplementation(async (_eventName, handler) => {
+    eventMocks.listen.mockImplementation((_eventName, handler) => {
       progressHandler = handler;
-      return unlisten;
+      return listener.promise;
     });
     vi.mocked(api.executeDatabaseSync).mockReturnValue(execution.promise);
 
@@ -1314,6 +1316,12 @@ describe("DatabaseCompareModal", () => {
         "database-sync-progress",
         expect.any(Function)
       );
+    });
+    expect(api.executeDatabaseSync).not.toHaveBeenCalled();
+
+    await act(async () => {
+      listener.resolve(unlisten);
+      await listener.promise;
     });
     await waitFor(() => expect(api.executeDatabaseSync).toHaveBeenCalledOnce());
 
@@ -1351,6 +1359,107 @@ describe("DatabaseCompareModal", () => {
     });
     expect(unlisten).toHaveBeenCalledOnce();
     expect(await screen.findByText("同步执行结果")).toBeInTheDocument();
+  });
+
+  it("关闭后延迟监听拒绝时不执行同步", async () => {
+    const listener = deferred<UnlistenFn>();
+    eventMocks.listen.mockReturnValue(listener.promise);
+    const { rerender } = render(
+      <DatabaseCompareModal open onClose={vi.fn()} />
+    );
+    await openSafePreview();
+    acknowledgeSyncPlan();
+    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+    await waitFor(() => expect(eventMocks.listen).toHaveBeenCalledOnce());
+
+    rerender(<DatabaseCompareModal open={false} onClose={vi.fn()} />);
+    await act(async () => {
+      listener.reject(new Error("监听不可用"));
+      await listener.promise.catch(() => undefined);
+    });
+
+    expect(api.executeDatabaseSync).not.toHaveBeenCalled();
+  });
+
+  it("卸载后延迟监听成功时立即清理且不执行同步", async () => {
+    const listener = deferred<UnlistenFn>();
+    const unlisten = vi.fn();
+    eventMocks.listen.mockReturnValue(listener.promise);
+    const { unmount } = render(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await openSafePreview();
+    acknowledgeSyncPlan();
+    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+    await waitFor(() => expect(eventMocks.listen).toHaveBeenCalledOnce());
+
+    unmount();
+    await act(async () => {
+      listener.resolve(unlisten);
+      await listener.promise;
+    });
+
+    expect(unlisten).toHaveBeenCalledOnce();
+    expect(api.executeDatabaseSync).not.toHaveBeenCalled();
+  });
+
+  it("失效请求的旧监听事件不会更新新执行的进度", async () => {
+    const oldListener = deferred<UnlistenFn>();
+    const oldUnlisten = vi.fn();
+    const newUnlisten = vi.fn();
+    const execution = deferred<DatabaseSyncExecutionResult>();
+    const progressHandlers: Array<
+      (event: { payload: DatabaseSyncProgress }) => void
+    > = [];
+    eventMocks.listen
+      .mockImplementationOnce((_eventName, handler) => {
+        progressHandlers.push(handler);
+        return oldListener.promise;
+      })
+      .mockImplementationOnce(async (_eventName, handler) => {
+        progressHandlers.push(handler);
+        return newUnlisten;
+      });
+    vi.mocked(api.executeDatabaseSync).mockReturnValue(execution.promise);
+    const { rerender } = render(
+      <DatabaseCompareModal open onClose={vi.fn()} />
+    );
+    await openSafePreview();
+    acknowledgeSyncPlan();
+    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+    await waitFor(() => expect(eventMocks.listen).toHaveBeenCalledOnce());
+
+    rerender(<DatabaseCompareModal open={false} onClose={vi.fn()} />);
+    await act(async () => {
+      oldListener.resolve(oldUnlisten);
+      await oldListener.promise;
+    });
+    expect(oldUnlisten).toHaveBeenCalledOnce();
+    expect(api.executeDatabaseSync).not.toHaveBeenCalled();
+
+    rerender(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await openSafePreview();
+    acknowledgeSyncPlan();
+    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+    await waitFor(() => expect(api.executeDatabaseSync).toHaveBeenCalledOnce());
+
+    act(() => {
+      progressHandlers[0]({
+        payload: {
+          plan_fingerprint: "preview-fingerprint",
+          phase: "executing",
+          current: 3,
+          total: 4,
+        },
+      });
+    });
+    expect(screen.getByText("正在执行数据库结构同步")).toBeInTheDocument();
+    expect(
+      screen.queryByText("正在执行 DDL，已完成 3 / 4 条语句")
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      execution.resolve(sampleSucceededExecution());
+      await execution.promise;
+    });
   });
 
   it("进度监听注册失败时仍执行同步并展示退化状态", async () => {

@@ -95,6 +95,7 @@ export function DatabaseCompareModal({
   const executionRequestId = useRef(0);
   const activeSyncPlanIdentity = useRef<string | null>(null);
   const syncProgressUnlistenRef = useRef<UnlistenFn | null>(null);
+  const isMountedRef = useRef(true);
   const executingRef = useRef(false);
   const executionInFlightRef = useRef(false);
 
@@ -109,12 +110,13 @@ export function DatabaseCompareModal({
     setSyncProgress(null);
   }, [stopSyncProgressListener]);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
       stopSyncProgressListener();
-    },
-    [stopSyncProgressListener]
-  );
+    };
+  }, [stopSyncProgressListener]);
 
   const clearSyncPreview = useCallback(() => {
     clearSyncProgress();
@@ -494,12 +496,18 @@ export function DatabaseCompareModal({
     setExecutionLocked(true);
     setExecutionResult(null);
     clearSyncProgress();
+    const isCurrentExecution = () =>
+      isMountedRef.current &&
+      executionRequestId.current === requestId &&
+      activeSyncPlanIdentity.current === identity;
     try {
+      let unlisten: UnlistenFn | null = null;
       try {
-        const unlisten = await listen<DatabaseSyncProgress>(
+        unlisten = await listen<DatabaseSyncProgress>(
           "database-sync-progress",
           (event) => {
             if (
+              isMountedRef.current &&
               executionRequestId.current === requestId &&
               activeSyncPlanIdentity.current === identity &&
               event.payload.plan_fingerprint === planFingerprint
@@ -508,17 +516,16 @@ export function DatabaseCompareModal({
             }
           }
         );
-        if (
-          executionRequestId.current !== requestId ||
-          activeSyncPlanIdentity.current !== identity
-        ) {
-          unlisten();
-          return;
-        }
-        syncProgressUnlistenRef.current = unlisten;
       } catch {
+        if (!isCurrentExecution()) return;
         setSyncProgress(null);
       }
+
+      if (!isCurrentExecution()) {
+        unlisten?.();
+        return;
+      }
+      if (unlisten) syncProgressUnlistenRef.current = unlisten;
 
       const execution = await api.executeDatabaseSync({
         request: syncRequest,
@@ -556,6 +563,11 @@ export function DatabaseCompareModal({
       setPreviewOpen(false);
       message.error(errorMessage(executionError));
     } finally {
+      if (!isMountedRef.current) {
+        stopSyncProgressListener();
+        executionInFlightRef.current = false;
+        return;
+      }
       clearSyncProgress();
       executionInFlightRef.current = false;
       setExecutionLocked(false);
@@ -564,7 +576,7 @@ export function DatabaseCompareModal({
         setExecuting(false);
       }
     }
-  }, [clearSyncProgress, syncPreview, syncRequest]);
+  }, [clearSyncProgress, stopSyncProgressListener, syncPreview, syncRequest]);
 
   const handlePreviewBack = useCallback(() => {
     if (executingRef.current) return;
