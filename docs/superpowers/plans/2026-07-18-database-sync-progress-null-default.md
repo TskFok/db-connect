@@ -604,7 +604,9 @@ it("执行中展示校验、真实语句进度和刷新阶段", () => {
     },
   });
   expect(screen.getByText("正在校验源端与目标端结构")).toBeInTheDocument();
-  expect(screen.getByRole("progressbar", { name: "数据库结构同步进度" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("progressbar", { name: "数据库结构同步进度" })
+  ).not.toHaveAttribute("aria-valuenow");
 
   rerender(
     <DatabaseSyncPreviewModal
@@ -686,6 +688,7 @@ const progressMessage = formatDatabaseSyncProgress(progress);
   >
     <Progress
       aria-label="数据库结构同步进度"
+      aria-valuenow={progressPercent}
       percent={progressPercent}
       showInfo={progressPercent !== undefined}
       status="active"
@@ -746,9 +749,13 @@ const progressMessage = formatDatabaseSyncProgress(progress);
 
 @media (prefers-reduced-motion: reduce) {
   .database-sync-progress--indeterminate .ant-progress-bg {
-    width: 100% !important;
+    width: 35% !important;
     animation: none;
     opacity: 0.45;
+  }
+
+  .database-sync-progress .ant-progress-bg::before {
+    animation: none;
   }
 }
 ```
