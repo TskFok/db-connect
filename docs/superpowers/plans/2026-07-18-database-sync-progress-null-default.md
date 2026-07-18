@@ -754,8 +754,10 @@ const progressMessage = formatDatabaseSyncProgress(progress);
     opacity: 0.45;
   }
 
-  .database-sync-progress .ant-progress-bg::before {
-    animation: none;
+  .database-sync-progress
+    .ant-progress.ant-progress-status-active
+    .ant-progress-bg::before {
+    animation: none !important;
   }
 }
 ```
