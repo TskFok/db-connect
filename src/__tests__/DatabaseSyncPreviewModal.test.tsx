@@ -178,6 +178,33 @@ describe("DatabaseSyncPreviewModal", () => {
     ).toBeInTheDocument();
   });
 
+  it("让弹窗正文独立纵向滚动并保留标题和页脚", () => {
+    renderPreview();
+
+    const modalContent = document.querySelector(
+      ".database-sync-preview-modal .ant-modal-content"
+    ) as HTMLElement | null;
+    const modalBody = document.querySelector(
+      ".database-sync-preview-modal .ant-modal-body"
+    ) as HTMLElement | null;
+    const modalFooter = screen
+      .getByRole("button", { name: "返回对比结果" })
+      .closest(".ant-modal-footer");
+    const modalTitle = screen.getByText("同步 SQL 预览");
+
+    expect(modalContent).not.toBeNull();
+    expect(modalBody).not.toBeNull();
+    expect(modalContent?.style.display).toBe("flex");
+    expect(modalContent?.style.flexDirection).toBe("column");
+    expect(modalContent?.style.maxHeight).toBe("calc(100dvh - 48px)");
+    expect(modalBody?.style.flex).toBe("1 1 auto");
+    expect(modalBody?.style.minHeight).toBe("0");
+    expect(modalBody?.style.overflowY).toBe("auto");
+    expect(modalBody?.style.scrollbarGutter).toBe("stable");
+    expect(modalBody?.contains(modalTitle)).toBe(false);
+    expect(modalBody?.contains(modalFooter)).toBe(false);
+  });
+
   it("关闭按钮名称准确说明预览态和结果态的不同副作用", () => {
     const { rerender } = renderPreview();
     expect(

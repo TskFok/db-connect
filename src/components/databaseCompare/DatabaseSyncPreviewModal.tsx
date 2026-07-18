@@ -529,6 +529,19 @@ export function DatabaseSyncPreviewModal({
       onCancel={handleCancel}
       width={960}
       rootClassName="database-sync-preview-modal"
+      styles={{
+        content: {
+          display: "flex",
+          flexDirection: "column",
+          maxHeight: "calc(100dvh - 48px)",
+        },
+        body: {
+          flex: "1 1 auto",
+          minHeight: 0,
+          overflowY: "auto",
+          scrollbarGutter: "stable",
+        },
+      }}
       destroyOnHidden
       closable={
         executing

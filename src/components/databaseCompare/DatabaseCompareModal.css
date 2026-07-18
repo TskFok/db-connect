@@ -106,11 +106,7 @@
 .database-sync-preview-body {
   display: grid;
   gap: 16px;
-  height: 100%;
-  max-height: none;
   min-width: 0;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
   padding: 4px;
 }
 
@@ -128,18 +124,6 @@
   top: 24px;
   max-height: calc(100dvh - 48px);
   padding-bottom: 24px;
-}
-
-.database-sync-preview-modal .ant-modal-content {
-  display: flex;
-  flex-direction: column;
-  max-height: calc(100dvh - 48px);
-}
-
-.database-sync-preview-modal .ant-modal-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: hidden;
 }
 
 .database-sync-preview-modal .ant-modal-close {
