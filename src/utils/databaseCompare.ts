@@ -60,6 +60,7 @@ function formatSnapshotValue(
   field: ColumnChangedField
 ): string {
   const value = snapshot[field];
+  if (field === "default_value" && value === null) return "NULL";
   if (value === null) return "";
   if (typeof value === "boolean") return value ? "是" : "否";
   return String(value);

@@ -58,7 +58,7 @@ describe("databaseCompare", () => {
     );
   });
 
-  it("格式化单侧字段时输出七项完整属性", () => {
+  it("格式化单侧字段时输出七项完整属性并明确展示 NULL 默认值", () => {
     const column: ColumnDiff = {
       name: "email",
       status: "target_only",
@@ -77,7 +77,18 @@ describe("databaseCompare", () => {
 
     expect(formatColumnSideValues(column, "source")).toBe("");
     expect(formatColumnSideValues(column, "target")).toBe(
-      "字段顺序=2；字段类型=varchar(255)；允许为空=是；默认值=；主键=否；额外属性=；注释="
+      "字段顺序=2；字段类型=varchar(255)；允许为空=是；默认值=NULL；主键=否；额外属性=；注释="
+    );
+
+    const expressionColumn: ColumnDiff = {
+      ...column,
+      target: {
+        ...column.target!,
+        default_value: "CURRENT_TIMESTAMP",
+      },
+    };
+    expect(formatColumnSideValues(expressionColumn, "target")).toContain(
+      "默认值=CURRENT_TIMESTAMP"
     );
   });
 
