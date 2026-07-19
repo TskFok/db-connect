@@ -94,6 +94,54 @@ pub(crate) async fn list_databases_for_compare(
     }
 }
 
+fn strip_balanced_outer_parentheses(value: &str) -> Option<&str> {
+    let value = value.trim();
+    if !value.starts_with('(') || !value.ends_with(')') {
+        return None;
+    }
+
+    let mut depth = 0usize;
+    for (index, character) in value.char_indices() {
+        match character {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 && index + character.len_utf8() != value.len() {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    (depth == 0).then(|| value[1..value.len() - 1].trim())
+}
+
+fn is_semantic_null_default(value: Option<&str>) -> bool {
+    let Some(value) = value else {
+        return true;
+    };
+    let mut value = value.trim();
+
+    loop {
+        if value.eq_ignore_ascii_case("NULL") {
+            return true;
+        }
+        let Some(inner) = strip_balanced_outer_parentheses(value) else {
+            return false;
+        };
+        value = inner;
+    }
+}
+
+fn default_values_equal(source: Option<&str>, target: Option<&str>) -> bool {
+    if is_semantic_null_default(source) && is_semantic_null_default(target) {
+        true
+    } else {
+        source == target
+    }
+}
+
 fn changed_fields(source: &ColumnSnapshot, target: &ColumnSnapshot) -> Vec<String> {
     let checks = [
         (
@@ -104,7 +152,10 @@ fn changed_fields(source: &ColumnSnapshot, target: &ColumnSnapshot) -> Vec<Strin
         ("nullable", source.nullable != target.nullable),
         (
             "default_value",
-            source.default_value != target.default_value,
+            !default_values_equal(
+                source.default_value.as_deref(),
+                target.default_value.as_deref(),
+            ),
         ),
         ("primary_key", source.primary_key != target.primary_key),
         ("extra", source.extra != target.extra),
@@ -282,6 +333,59 @@ mod tests {
                 extra: String::new(),
                 comment: String::new(),
             },
+        }
+    }
+
+    fn row_with_default(default_value: Option<&str>) -> SnapshotRow {
+        let mut snapshot = row("users", "status", 1, "varchar(20)");
+        snapshot.details.default_value = default_value.map(str::to_string);
+        snapshot
+    }
+
+    #[test]
+    fn compare_treats_only_semantic_null_defaults_as_equal() {
+        for (source_default, target_default) in [
+            (None, Some("NULL")),
+            (Some("(( NULL ))"), None),
+            (Some("null"), Some("(NULL)")),
+        ] {
+            let result = compare_schema_snapshots(
+                DatabaseType::MySql,
+                endpoint("source", "源端", "app"),
+                endpoint("target", "目标端", "app"),
+                "2026-07-19T00:00:00Z".to_string(),
+                rows_to_tables(vec![row_with_default(source_default)]),
+                rows_to_tables(vec![row_with_default(target_default)]),
+            );
+
+            assert!(
+                result.tables.is_empty(),
+                "source={source_default:?}, target={target_default:?}"
+            );
+        }
+
+        for target_default in [
+            "'NULL'",
+            "NULL::text",
+            "CAST(NULL AS text)",
+            "0",
+            "(NULL) + 1",
+            "(NULL",
+        ] {
+            let result = compare_schema_snapshots(
+                DatabaseType::MySql,
+                endpoint("source", "源端", "app"),
+                endpoint("target", "目标端", "app"),
+                "2026-07-19T00:00:00Z".to_string(),
+                rows_to_tables(vec![row_with_default(None)]),
+                rows_to_tables(vec![row_with_default(Some(target_default))]),
+            );
+
+            assert_eq!(
+                result.tables[0].columns[0].changed_fields,
+                vec!["default_value"],
+                "target={target_default:?}"
+            );
         }
     }
 
