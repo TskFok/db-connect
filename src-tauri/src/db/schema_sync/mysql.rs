@@ -18,12 +18,18 @@ use super::{
 };
 
 #[allow(dead_code, reason = "将在后续统一同步元数据分发中调用")]
-pub(crate) fn metadata_sql() -> &'static str {
-    "SELECT tables.TABLE_NAME AS table_name, COALESCE(tables.ENGINE, '') AS engine, \
+pub(crate) fn metadata_sql(has_generation_expression: bool) -> String {
+    let generation_expression = if has_generation_expression {
+        "COALESCE(columns.GENERATION_EXPRESSION, '')"
+    } else {
+        "''"
+    };
+    format!(
+        "SELECT tables.TABLE_NAME AS table_name, COALESCE(tables.ENGINE, '') AS engine, \
             tables.CREATE_OPTIONS AS create_options, \
             COALESCE(partition_info.is_partitioned, 0) AS is_partitioned, \
             tables.TABLE_COMMENT AS comment, columns.COLUMN_NAME AS column_name, \
-            COALESCE(columns.GENERATION_EXPRESSION, '') AS generation_expression, \
+            {generation_expression} AS generation_expression, \
             statistics.SEQ_IN_INDEX AS primary_key_ordinal \
      FROM information_schema.TABLES tables \
      JOIN information_schema.COLUMNS columns \
@@ -45,6 +51,7 @@ pub(crate) fn metadata_sql() -> &'static str {
       AND partition_info.TABLE_NAME = tables.TABLE_NAME \
      WHERE tables.TABLE_SCHEMA = :schema AND tables.TABLE_TYPE = 'BASE TABLE' \
      ORDER BY tables.TABLE_NAME, columns.ORDINAL_POSITION"
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,8 +137,12 @@ pub(crate) async fn load_metadata(
     schema: &str,
 ) -> Result<BTreeMap<String, TableSyncMetadata>, String> {
     let mut conn = get_conn_with_retry(pool).await?;
+    let supports_generation_expression = supports_generation_expression(&mut conn).await?;
     let rows: Vec<mysql_async::Row> = conn
-        .exec(metadata_sql(), params! { "schema" => schema })
+        .exec(
+            metadata_sql(supports_generation_expression),
+            params! { "schema" => schema },
+        )
         .await
         .map_err(|error| format!("查询 MySQL 同步表元数据失败: {error}"))?;
     let mapped = rows
@@ -150,6 +161,22 @@ pub(crate) async fn load_metadata(
         })
         .collect();
     Ok(aggregate_metadata_rows(mapped))
+}
+
+async fn supports_generation_expression(conn: &mut mysql_async::Conn) -> Result<bool, String> {
+    let rows: Vec<mysql_async::Row> = conn
+        .exec(
+            "SELECT 1 \
+             FROM information_schema.COLUMNS \
+             WHERE TABLE_SCHEMA = 'information_schema' \
+               AND TABLE_NAME = 'COLUMNS' \
+               AND COLUMN_NAME = 'GENERATION_EXPRESSION' \
+             LIMIT 1",
+            (),
+        )
+        .await
+        .map_err(|error| format!("查询 MySQL 同步元数据能力失败: {error}"))?;
+    Ok(!rows.is_empty())
 }
 
 fn validate_supported_table_shape(metadata: &TableSyncMetadata) -> Result<(), String> {
@@ -904,14 +931,15 @@ mod tests {
     }
 
     #[test]
-    fn metadata_query_loads_all_base_tables_once() {
-        let sql = metadata_sql();
+    fn metadata_query_omits_unsupported_generation_expression_column() {
+        let sql = metadata_sql(false);
         assert!(sql.contains("information_schema.TABLES"));
         assert!(sql.contains("information_schema.COLUMNS"));
         assert!(sql.contains("LEFT JOIN information_schema.STATISTICS"));
         assert!(sql.contains("INDEX_NAME = 'PRIMARY'"));
         assert!(sql.contains("SEQ_IN_INDEX"));
-        assert!(sql.contains("GENERATION_EXPRESSION"));
+        assert!(!sql.contains("columns.GENERATION_EXPRESSION"));
+        assert!(sql.contains("'' AS generation_expression"));
         assert!(sql.contains("tables.CREATE_OPTIONS AS create_options"));
         assert!(sql.contains("information_schema.PARTITIONS"));
         assert!(sql.contains("PARTITION_NAME IS NOT NULL"));
@@ -919,6 +947,12 @@ mod tests {
         assert!(sql.contains("TABLE_SCHEMA = :schema"));
         assert!(sql.contains("TABLE_TYPE = 'BASE TABLE'"));
         assert!(!sql.contains(":table"));
+    }
+
+    #[test]
+    fn metadata_query_reads_generation_expression_when_supported() {
+        let sql = metadata_sql(true);
+        assert!(sql.contains("COALESCE(columns.GENERATION_EXPRESSION, '')"));
     }
 
     #[test]
