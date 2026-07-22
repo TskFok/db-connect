@@ -216,29 +216,19 @@ npm run tauri build
 ### 发布到 GitHub Releases
 
 ```bash
-# 默认发布 patch 版本，例如 0.1.0 -> 0.1.1
+# 默认递增 patch，例如 0.1.0 -> 0.1.1
 npm run release
 
-# 指定升级方式
-npm run release -- minor
-npm run release -- major
+# 指定更高的稳定版本
 npm run release -- 1.2.3
 ```
 
-发布脚本会要求当前工作区干净，随后同步更新 `package.json`、`package-lock.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 和 `src/appVersion.ts` 的版本号，创建中文提交 `发布 vX.Y.Z`，推送当前分支，并推送 `vX.Y.Z` tag。tag 推送会触发 GitHub Actions 构建 macOS / Windows / Linux 安装包，并公开发布到 GitHub Releases。本地仅需 Git，无需安装 GitHub CLI。
+发布前会先确保工作区干净、当前分支与 `origin` 完全同步，并本地跑通 `npm test`、`npm run build`、`cargo test`。随后同步更新 `package.json`、`package-lock.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 和 `src/appVersion.ts`，创建注解提交 `发布：vX.Y.Z`，推送当前分支与注解标签 `vX.Y.Z`。tag 推送会触发 GitHub Actions 构建 macOS / Windows / Linux 安装包并公开发布。本地仅需 Git，无需安装 GitHub CLI。
 
 若版本提交已推送但 tag 推送或 workflow 触发失败，可在修复问题后重新触发当前版本发布：
 
 ```bash
-npm run release -- current
-# 或
-pnpm release -- current
-```
-
-可先运行 dry-run 检查下一个版本号，不写文件、不提交、不推送：
-
-```bash
-npm run release -- --dry-run patch
+npm run release -- --current
 ```
 
 ### 测试

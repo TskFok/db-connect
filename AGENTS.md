@@ -34,7 +34,7 @@ docs: 补充发布流程说明
 `npm run release` 自动生成的版本提交使用固定格式，不参与 changelog 分组：
 
 ```
-发布 vX.Y.Z
+发布：vX.Y.Z
 ```
 
 ## Release Notes

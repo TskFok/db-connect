@@ -1,4 +1,4 @@
-const RELEASE_COMMIT_RE = /^发布 v\d+\.\d+\.\d+$/;
+const RELEASE_COMMIT_RE = /^发布：v\d+\.\d+\.\d+$/;
 const CONVENTIONAL_COMMIT_RE = /^([a-z]+)(?:\([^)]+\))?!?:\s+(.+)$/i;
 const SEMVER_TAG_RE = /^v\d+\.\d+\.\d+$/;
 

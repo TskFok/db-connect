@@ -10,7 +10,7 @@ test("buildReleaseNotes groups direct conventional commits and skips release com
   const notes = buildReleaseNotes([
     {
       hash: "e06ed30ee242b263772761f19b79a807493d09ca",
-      subject: "发布 v1.0.1",
+      subject: "发布：v1.0.1",
       body: "",
     },
     {
@@ -59,7 +59,7 @@ test("buildReleaseNotes renders no changes when only release commits exist", () 
   const notes = buildReleaseNotes([
     {
       hash: "e06ed30ee242b263772761f19b79a807493d09ca",
-      subject: "发布 v1.0.1",
+      subject: "发布：v1.0.1",
       body: "",
     },
   ]);
