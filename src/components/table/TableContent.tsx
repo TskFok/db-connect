@@ -1,9 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, type ReactNode } from "react";
-import { Tabs, Space, Typography, Tag, Spin } from "antd";
+import { Tabs, Spin } from "antd";
 import {
   TableOutlined,
-  EyeOutlined,
-  DatabaseOutlined,
   UnorderedListOutlined,
   CodeOutlined,
   BarChartOutlined,
@@ -17,8 +15,6 @@ import { TableData } from "./TableData";
 import { SqlEditor } from "../sql/SqlEditorLazy";
 import { getDatabaseCapabilities } from "../../utils/databaseCapabilities";
 import { normalizeDatabaseType } from "../../utils/connectionConfig";
-
-const { Title, Text } = Typography;
 
 const IndexList = lazy(() =>
   import("../index/IndexList").then((m) => ({ default: m.IndexList }))
@@ -173,26 +169,6 @@ export function TableContent() {
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-      {/* 表头信息 */}
-      <div style={{ marginBottom: 12 }}>
-        <Space align="center">
-          <DatabaseOutlined style={{ color: "#1677ff" }} />
-          <Text type="secondary">{selectedDatabase}</Text>
-          <Text type="secondary">/</Text>
-          {isView ? (
-            <EyeOutlined style={{ color: "#faad14" }} />
-          ) : (
-            <TableOutlined style={{ color: "#52c41a" }} />
-          )}
-          <Title level={4} style={{ margin: 0 }}>
-            {selectedTable}
-          </Title>
-          <Tag color={isView ? "orange" : "blue"}>
-            {isView ? "VIEW" : "TABLE"}
-          </Tag>
-        </Space>
-      </div>
-
       <Tabs
         key={`${selectedDatabase}|${selectedTable}`}
         activeKey={activeTabKey}

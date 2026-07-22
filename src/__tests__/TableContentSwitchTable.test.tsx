@@ -79,6 +79,14 @@ describe("TableContent 多表切换", () => {
     });
   });
 
+  it("不再渲染内容区的数据库、表名与类型表头", () => {
+    render(<TableContent />);
+
+    expect(screen.queryByText("mydb")).not.toBeInTheDocument();
+    expect(screen.queryByText("users")).not.toBeInTheDocument();
+    expect(screen.queryByText("TABLE")).not.toBeInTheDocument();
+  });
+
   it("切换 selectedTable 时 data 面板的 TableData 会重新渲染（避免 Ant Tabs 复用旧 items）", () => {
     render(<TableContent />);
 
