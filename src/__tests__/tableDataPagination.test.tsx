@@ -178,4 +178,26 @@ describe("TableData 分页栏", () => {
     });
     expect(screen.getByText("正在统计行数…")).toBeInTheDocument();
   });
+
+  it("筛选徽标应预留完整轮廓所需的纵向偏移", () => {
+    const filterRows = [{ column: "id", operator: "=" as const, value: "1" }];
+    const filteredSnapshot = {
+      ...usersSnapshot,
+      whereClause: "`id` = 1",
+      filterRows,
+    };
+    seedStores({
+      whereClause: filteredSnapshot.whereClause,
+      filterRows,
+      tableDataCache: { "conn-1|mydb|users": filteredSnapshot },
+    });
+
+    const { container } = render(<TableData />);
+    const indicator = container.querySelector(
+      ".table-data-filter-badge .ant-badge-count"
+    );
+
+    expect(indicator).toBeInTheDocument();
+    expect((indicator as HTMLElement).style.marginTop).toBe("8px");
+  });
 });

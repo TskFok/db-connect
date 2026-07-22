@@ -1755,7 +1755,7 @@ export function TableData() {
                 count={hasActiveFilter ? enabledFilterCount : 0}
                 size="small"
                 color="var(--color-primary)"
-                offset={[-6, 6]}
+                offset={[-6, 8]}
               >
                 <span style={{ display: "inline-flex", overflow: "visible" }}>
                   <Button
