@@ -177,7 +177,18 @@ export function DatabaseTree() {
 
       return {
         title: (
-          <Text strong style={{ fontSize: 13 }}>
+          <Text
+            strong
+            style={{
+              display: "block",
+              minWidth: 0,
+              fontSize: 13,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+            ellipsis={{ tooltip: db }}
+          >
             {db}
           </Text>
         ),

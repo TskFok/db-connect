@@ -288,6 +288,27 @@ describe("DatabaseTree capabilities", () => {
     ).toBeInTheDocument();
   });
 
+  it("数据库节点名称过长时应单行省略", () => {
+    const databaseName = "very_long_database_name_that_must_be_truncated";
+    useDatabaseStore.setState({
+      activeConnId: "pg-1",
+      databases: [databaseName],
+      tables: {},
+    });
+
+    render(<DatabaseTree />);
+
+    const title = screen
+      .getByText(databaseName)
+      .closest(".ant-typography");
+    expect(title).not.toBeNull();
+    expect(title).toHaveStyle({
+      whiteSpace: "nowrap",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+    });
+  });
+
   it("ClickHouse 显示 database/table 元数据，允许行数为空", () => {
     useDatabaseStore.setState({
       activeConnId: "ch-1",
