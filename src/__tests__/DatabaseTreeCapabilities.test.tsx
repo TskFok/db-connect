@@ -78,6 +78,18 @@ const clickhouseConnection = {
   },
 };
 
+const mysqlConnection = {
+  connId: "mysql-1",
+  config: {
+    id: "mysql-profile",
+    name: "MySQL",
+    host: "localhost",
+    port: 3306,
+    username: "root",
+    database_type: "mysql" as const,
+  },
+};
+
 describe("DatabaseTree capabilities", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -233,6 +245,47 @@ describe("DatabaseTree capabilities", () => {
     expect(
       screen.queryByRole("button", { name: /收藏/ })
     ).not.toBeInTheDocument();
+  });
+
+  it("表节点只显示单行表名，不显示行数或收藏入口", () => {
+    const tableName = "very_long_table_name_that_must_stay_on_one_line";
+    useConnectionStore.setState({
+      activeConnections: { "mysql-1": mysqlConnection },
+      activeConnId: "mysql-1",
+      activeConnection: mysqlConnection,
+    });
+    useDatabaseStore.setState({
+      activeConnId: "mysql-1",
+      databases: ["app"],
+      tables: {
+        app: [
+          {
+            name: tableName,
+            table_type: "TABLE",
+            engine: "InnoDB",
+            rows: 1234,
+            data_length: null,
+            index_length: null,
+            comment: "",
+          },
+        ],
+      },
+      expandedKeys: ["db:app"],
+    });
+
+    render(<DatabaseTree />);
+
+    const title = screen.getByText(tableName);
+    expect(title).toHaveStyle({
+      whiteSpace: "nowrap",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+    });
+    expect(screen.queryByText("1,234 行")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("收藏")).not.toBeInTheDocument();
+    expect(
+      title.closest(".ant-tree-treenode")?.querySelector(".ant-tree-iconEle")
+    ).toBeInTheDocument();
   });
 
   it("ClickHouse 显示 database/table 元数据，允许行数为空", () => {

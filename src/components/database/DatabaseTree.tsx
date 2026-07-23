@@ -20,8 +20,6 @@ import {
   EditOutlined,
   SortAscendingOutlined,
   SortDescendingOutlined,
-  StarOutlined,
-  StarFilled,
   PlusOutlined,
   CodeOutlined,
 } from "@ant-design/icons";
@@ -29,24 +27,14 @@ import type { DataNode, EventDataNode } from "antd/es/tree";
 import { useDatabaseStore } from "../../stores/databaseStore";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useTableDataStore } from "../../stores/tableDataStore";
-import { useFavoriteStore } from "../../stores/favoriteStore";
 import { DatabaseEditModal } from "./DatabaseEditModal";
 import { DatabaseCreateModal } from "./DatabaseCreateModal";
 import { FavoriteTables } from "./FavoriteTables";
 import { SavedSqlDropdown } from "./SavedSqlDropdown";
 import { useClientReadOnly } from "../../hooks/useClientReadOnly";
 import { getDatabaseCapabilities } from "../../utils/databaseCapabilities";
-import { favoriteConnectionKey } from "../../utils/favoriteConnection";
 
 const { Text, Title } = Typography;
-
-function favoriteTableKey(
-  connectionId: string,
-  database: string,
-  table: string
-): string {
-  return `${connectionId}\n${database}\n${table}`;
-}
 
 export function DatabaseTree() {
   const {
@@ -82,26 +70,11 @@ export function DatabaseTree() {
   const { removeTableFromCache } = useTableDataStore();
 
   const connId = activeConnection?.connId ?? "";
-  const connectionId = activeConnection
-    ? favoriteConnectionKey(activeConnection.config)
-    : "";
-  const favorites = useFavoriteStore((s) => s.favorites);
-  const toggleFavorite = useFavoriteStore((s) => s.toggleFavorite);
   const clientReadOnly = useClientReadOnly();
   const capabilities = useMemo(
     () => getDatabaseCapabilities(activeConnection?.config.database_type),
     [activeConnection?.config.database_type]
   );
-  const favoriteTableKeys = useMemo(
-    () =>
-      new Set(
-        favorites.map((f) =>
-          favoriteTableKey(f.connectionId, f.database, f.table)
-        )
-      ),
-    [favorites]
-  );
-
   // 树容器高度 (用于虚拟滚动)
   const treeContainerRef = useRef<HTMLDivElement>(null);
   const [treeHeight, setTreeHeight] = useState(400);
@@ -172,78 +145,23 @@ export function DatabaseTree() {
         : undefined;
       const children: DataNode[] | undefined = sortedTables
         ? sortedTables.map((t) => {
-            const fav = favoriteTableKeys.has(
-              favoriteTableKey(connectionId, db, t.name)
-            );
             return {
               title: (
-                <span
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 2,
-                    width: "100%",
-                    minWidth: 0,
-                  }}
-                >
-                  {/* 第一行：表名（可截断） */}
-                  <Tooltip title={t.comment || "无注释"} placement="topLeft">
-                    <Text
-                      style={{ fontSize: 13, display: "block" }}
-                      ellipsis={{ tooltip: t.name }}
-                    >
-                      {t.name}
-                    </Text>
-                  </Tooltip>
-                  {/* 第二行：行数 + 收藏按钮（始终可见） */}
-                  <span
+                <Tooltip title={t.comment || "无注释"} placement="topLeft">
+                  <Text
                     style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
+                      display: "block",
+                      minWidth: 0,
+                      fontSize: 13,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
                     }}
+                    ellipsis={{ tooltip: t.name }}
                   >
-                    {t.rows !== null && (
-                      <Text
-                        type="secondary"
-                        style={{ fontSize: 11, whiteSpace: "nowrap" }}
-                      >
-                        {t.rows.toLocaleString()} 行
-                      </Text>
-                    )}
-                    {capabilities.favoriteTables && (
-                      <span
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleFavorite({
-                            connectionId,
-                            database: db,
-                            table: t.name,
-                          });
-                        }}
-                        style={{
-                          cursor: "pointer",
-                          padding: "0 2px",
-                          marginLeft: "auto",
-                        }}
-                        title={fav ? "取消收藏" : "收藏"}
-                      >
-                        {fav ? (
-                          <StarFilled
-                            style={{ color: "#faad14", fontSize: 12 }}
-                          />
-                        ) : (
-                          <StarOutlined
-                            style={{
-                              color: "var(--text-secondary)",
-                              fontSize: 12,
-                            }}
-                          />
-                        )}
-                      </span>
-                    )}
-                  </span>
-                </span>
+                    {t.name}
+                  </Text>
+                </Tooltip>
               ),
               key: `table:${db}:${t.name}`,
               icon:
@@ -274,10 +192,6 @@ export function DatabaseTree() {
     databaseSortOrder,
     tableSortOrder,
     capabilities.tableBrowsing,
-    capabilities.favoriteTables,
-    connectionId,
-    favoriteTableKeys,
-    toggleFavorite,
   ]);
 
   // 展开节点时懒加载表列表
