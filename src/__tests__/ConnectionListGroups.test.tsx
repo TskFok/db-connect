@@ -196,7 +196,10 @@ describe("ConnectionList groups", () => {
     expect(screen.getByLabelText("数据库类型：SQLite")).toBeInTheDocument();
     expect(screen.getByLabelText("数据库类型：SQL Server")).toBeInTheDocument();
     expect(screen.getByLabelText("数据库类型：ClickHouse")).toBeInTheDocument();
+    expect(screen.getByText("PostgreSQL SSH")).toBeInTheDocument();
     expect(screen.getByLabelText("SSH 隧道：PostgreSQL SSH")).toBeInTheDocument();
+    expect(screen.queryByText("pg.local:5432")).not.toBeInTheDocument();
+    expect(screen.queryByText("SSH: jump.local:22")).not.toBeInTheDocument();
   });
 
   it("删除分组需要二次确认后才调用 store action", async () => {

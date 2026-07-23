@@ -215,7 +215,6 @@ function SortableConnectionItem({
                 display: "flex",
                 alignItems: "center",
                 gap: 8,
-                marginBottom: 4,
               }}
             >
               <DatabaseTypeIcon databaseType={item.database_type} />
@@ -240,17 +239,6 @@ function SortableConnectionItem({
                 </Tag>
               )}
             </div>
-            <Text type="secondary" style={{ fontSize: 12 }} ellipsis>
-              {item.host}:{item.port}
-              {item.database && ` / ${item.database}`}
-            </Text>
-            {item.ssh && (
-              <div>
-                <Text type="secondary" style={{ fontSize: 11 }}>
-                  SSH: {item.ssh.host}:{item.ssh.port}
-                </Text>
-              </div>
-            )}
           </div>
         </div>
 
