@@ -218,7 +218,11 @@ function SortableConnectionItem({
               }}
             >
               <DatabaseTypeIcon databaseType={item.database_type} />
-              <Text strong style={{ color: "var(--text-primary)" }} ellipsis>
+              <Text
+                strong
+                style={{ color: "var(--text-primary)", flex: 1, minWidth: 0 }}
+                ellipsis={{ tooltip: item.name }}
+              >
                 {item.name}
               </Text>
               {item.ssh && (

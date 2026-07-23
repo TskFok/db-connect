@@ -120,9 +120,19 @@ describe("DatabaseTree capabilities", () => {
   });
 
   it("标题区域保留连接名称但不显示数据库地址", () => {
+    const connectionName = "very_long_connection_name_that_must_be_truncated";
+    useConnectionStore.setState({
+      activeConnection: {
+        ...postgresConnection,
+        config: { ...postgresConnection.config, name: connectionName },
+      },
+    });
+
     render(<DatabaseTree />);
 
-    expect(screen.getByText("Postgres")).toBeInTheDocument();
+    const title = screen.getByText(connectionName).closest(".ant-typography");
+    expect(title).not.toBeNull();
+    expect(title).toHaveStyle({ flex: "1", minWidth: "0" });
     expect(screen.queryByText("localhost:5432")).not.toBeInTheDocument();
   });
 

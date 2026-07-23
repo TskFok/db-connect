@@ -386,7 +386,14 @@ export function DatabaseTree() {
         >
           <Title
             level={5}
-            style={{ margin: 0, color: "var(--text-primary)", fontSize: 14 }}
+            style={{
+              margin: 0,
+              color: "var(--text-primary)",
+              fontSize: 14,
+              flex: 1,
+              minWidth: 0,
+            }}
+            ellipsis={{ tooltip: activeConnection?.config.name }}
           >
             {activeConnection?.config.name}
           </Title>

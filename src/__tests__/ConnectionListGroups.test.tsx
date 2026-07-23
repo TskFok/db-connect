@@ -137,6 +137,20 @@ describe("ConnectionList groups", () => {
     expect(screen.getByTestId("create-connection")).toHaveTextContent("");
   });
 
+  it("连接名称过长时应允许省略", () => {
+    const connectionName = "very_long_connection_name_that_must_be_truncated";
+    useConnectionStore.setState({
+      savedConnections: [{ ...connections[0], name: connectionName }],
+      connectionGroups: [],
+    });
+
+    render(<ConnectionList />);
+
+    const title = screen.getByText(connectionName).closest(".ant-typography");
+    expect(title).not.toBeNull();
+    expect(title).toHaveStyle({ flex: "1", minWidth: "0" });
+  });
+
   it("为当前支持的连接类型渲染数据库类型主图标并保留 SSH 辅助图标", () => {
     const typedConnections: ConnectionConfig[] = [
       {
