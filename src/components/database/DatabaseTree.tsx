@@ -566,10 +566,6 @@ export function DatabaseTree() {
             </Tooltip>
           </Space>
         </div>
-        <Text type="secondary" style={{ fontSize: 11 }}>
-          {activeConnection?.config.host}:{activeConnection?.config.port}
-          {activeConnection?.config.ssh && " (SSH)"}
-        </Text>
         <div
           style={{
             display: "flex",

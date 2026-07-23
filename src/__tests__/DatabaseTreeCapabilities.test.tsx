@@ -107,6 +107,13 @@ describe("DatabaseTree capabilities", () => {
     mockApi.listDatabases.mockResolvedValue(["app"]);
   });
 
+  it("标题区域保留连接名称但不显示数据库地址", () => {
+    render(<DatabaseTree />);
+
+    expect(screen.getByText("Postgres")).toBeInTheDocument();
+    expect(screen.queryByText("localhost:5432")).not.toBeInTheDocument();
+  });
+
   it("PostgreSQL MVP 阶段会自动加载 schema 树", async () => {
     render(<DatabaseTree />);
 
