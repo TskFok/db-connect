@@ -167,6 +167,8 @@ export function TableContent() {
     return null;
   }
 
+  const tableDisplayName = `${selectedDatabase}.${selectedTable}`;
+
   return (
     <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
       <Tabs
@@ -176,6 +178,22 @@ export function TableContent() {
         style={{ flex: 1, minHeight: 0, overflow: "hidden" }}
         className="full-height-tabs"
         items={tabItems}
+        tabBarExtraContent={{
+          right: (
+            <span
+              title={tableDisplayName}
+              style={{
+                display: "inline-block",
+                maxWidth: "min(40vw, 360px)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {tableDisplayName}
+            </span>
+          ),
+        }}
       />
     </div>
   );

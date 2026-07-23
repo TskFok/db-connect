@@ -87,6 +87,14 @@ describe("TableContent 多表切换", () => {
     expect(screen.queryByText("TABLE")).not.toBeInTheDocument();
   });
 
+  it("在页签栏右侧显示当前数据库/schema 与表名", () => {
+    render(<TableContent />);
+
+    const tableTitle = screen.getByText("mydb.users");
+    expect(tableTitle).toBeInTheDocument();
+    expect(tableTitle).toHaveAttribute("title", "mydb.users");
+  });
+
   it("切换 selectedTable 时 data 面板的 TableData 会重新渲染（避免 Ant Tabs 复用旧 items）", () => {
     render(<TableContent />);
 
