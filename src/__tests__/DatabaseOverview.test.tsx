@@ -143,6 +143,14 @@ describe("DatabaseOverview 表头列宽调节", () => {
     expect(dragHandles.length).toBeGreaterThan(0);
   });
 
+  it("表名列应启用省略显示", () => {
+    render(<DatabaseOverview />);
+
+    const nameCell = screen.getByText("users").closest(".ant-table-cell");
+    expect(nameCell).not.toBeNull();
+    expect(nameCell).toHaveClass("ant-table-cell-ellipsis");
+  });
+
   it("双击表头边缘应触发自适应列宽", () => {
     const { container } = render(<DatabaseOverview />);
     const handle = container.querySelector(

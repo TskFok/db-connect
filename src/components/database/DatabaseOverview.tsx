@@ -298,6 +298,7 @@ export function DatabaseOverview() {
       name: {
         title: "表名",
         dataIndex: "name",
+        ellipsis: true,
         sorter: (a: TableInfo, b: TableInfo) =>
           a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
         sortDirections: ["ascend", "descend"],
