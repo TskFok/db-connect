@@ -200,4 +200,29 @@ describe("TableData 分页栏", () => {
     expect(indicator).toBeInTheDocument();
     expect((indicator as HTMLElement).style.marginTop).toBe("8px");
   });
+
+  it("提交修改徽标应预留完整轮廓所需的纵向偏移", () => {
+    seedStores({
+      pendingChangesCache: {
+        "conn-1|mydb|users": {
+          'id=1|col="name"': {
+            rowKey: 0,
+            colName: "name",
+            oldValue: "Alice",
+            newValue: "Alicia",
+            primaryKeys: { id: 1 },
+          },
+        },
+      },
+    });
+
+    render(<TableData />);
+    const submitButton = screen.getByRole("button", { name: /提交修改/ });
+    const indicator = submitButton
+      .closest(".ant-badge")
+      ?.querySelector(".ant-badge-count");
+
+    expect(indicator).toBeInTheDocument();
+    expect((indicator as HTMLElement).style.marginTop).toBe("8px");
+  });
 });

@@ -1932,7 +1932,7 @@ export function TableData() {
           {pendingCount > 0 && (
             <>
               <Tooltip title={rowEditDisabledReason || undefined}>
-                <Badge count={pendingCount} size="small" offset={[-4, 0]}>
+                <Badge count={pendingCount} size="small" offset={[-4, 8]}>
                   <Button
                     icon={<CheckOutlined />}
                     size="small"
