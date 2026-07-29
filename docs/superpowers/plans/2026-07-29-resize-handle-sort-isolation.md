@@ -148,7 +148,7 @@ Expected: ESLint 零错误退出，TypeScript 与 Vite 生产构建成功。
 
 Actual: 改动文件的定向 ESLint 零错误，TypeScript 与 Vite 生产构建成功。完整 `npm run lint` 被未改动的 `scripts/release.mjs` 两个 `preserve-caught-error` 和 `scripts/release.node-test.mjs` 一个 `no-undef` 基线错误阻断。
 
-- [ ] **Step 7: 审查并提交实现**
+- [x] **Step 7: 审查并提交实现**
 
 Run:
 
