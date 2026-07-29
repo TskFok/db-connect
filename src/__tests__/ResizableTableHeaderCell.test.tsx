@@ -50,6 +50,42 @@ describe("ResizableTableHeaderCell", () => {
     expect(lastWidth).toBeGreaterThan(120);
   });
 
+  it("调节列宽后的 click 不应冒泡到表头", () => {
+    const onResize = vi.fn();
+    const onHeaderClick = vi.fn();
+    const { container } = render(
+      <table>
+        <thead>
+          <tr>
+            <ResizableTableHeaderCell
+              width={120}
+              onResize={onResize}
+              onClick={onHeaderClick}
+            >
+              表名
+            </ResizableTableHeaderCell>
+          </tr>
+        </thead>
+      </table>
+    );
+
+    const handle = container.querySelector(
+      ".resizable-table-header-handle"
+    ) as HTMLElement;
+    const header = container.querySelector("th") as HTMLElement;
+
+    fireEvent.mouseDown(handle, { clientX: 100 });
+    fireEvent.mouseMove(document, { clientX: 130 });
+    fireEvent.mouseUp(document);
+    fireEvent.click(handle);
+
+    expect(onResize).toHaveBeenCalled();
+    expect(onHeaderClick).not.toHaveBeenCalled();
+
+    fireEvent.click(header);
+    expect(onHeaderClick).toHaveBeenCalledTimes(1);
+  });
+
   it("双击调节手柄应调用 onAutoFit", () => {
     const onAutoFit = vi.fn();
     const { container } = render(

@@ -82,10 +82,16 @@ export const ResizableTableHeaderCell = forwardRef<
       onAutoFit?.();
     };
 
+    const stopClickPropagation = (e: MouseEvent) => {
+      e.stopPropagation();
+    };
+
     el.addEventListener("mousedown", startResize, true);
+    el.addEventListener("click", stopClickPropagation, true);
     el.addEventListener("dblclick", onDoubleClick, true);
     return () => {
       el.removeEventListener("mousedown", startResize, true);
+      el.removeEventListener("click", stopClickPropagation, true);
       el.removeEventListener("dblclick", onDoubleClick, true);
     };
   }, [hasResize, width, onResize, onAutoFit]);
