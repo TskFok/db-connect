@@ -31,6 +31,24 @@ describe("copyAsInsert 剪贴板集成", () => {
     );
   });
 
+  it("PostgreSQL 生成双引号 INSERT 后成功写入剪贴板", async () => {
+    mockedWriteText.mockResolvedValue(undefined);
+
+    const sql = generateInsertStatements(
+      "QuestionOption",
+      ["id", "label", "isCorrect"],
+      [{ id: "abc", label: "A", isCorrect: true }],
+      [],
+      "postgres"
+    );
+
+    await writeText(sql);
+
+    expect(mockedWriteText).toHaveBeenCalledWith(
+      'INSERT INTO "QuestionOption" ("id", "label", "isCorrect") VALUES (\'abc\', \'A\', true);'
+    );
+  });
+
   it("多行 INSERT 语句正确写入剪贴板", async () => {
     mockedWriteText.mockResolvedValue(undefined);
 

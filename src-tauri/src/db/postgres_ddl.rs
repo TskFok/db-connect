@@ -13,7 +13,8 @@ use crate::db::postgres::{esc_pg_str_external, get_client_with_retry};
 use crate::db::sql_utils::pg_id;
 use crate::models::types::{AddColumnRequest, AlterColumnRequest, ColumnInfo, CreateTableRequest};
 use deadpool_postgres::Pool as PgPool;
-use tokio_postgres::error::SqlState;
+
+pub use crate::db::postgres_error::format_pg_error;
 
 /// PostgreSQL 系统 schema，禁止删除/重命名。
 pub const SYSTEM_SCHEMAS: &[&str] = &[
@@ -56,49 +57,6 @@ pub fn validate_new_schema_name(schema: &str) -> Result<(), String> {
         );
     }
     Ok(())
-}
-
-/// PostgreSQL DDL 错误格式化：把 SQLState 映射为中文场景化描述。
-/// 非数据库错误（连接失败等）保留原始信息。
-pub fn format_pg_error(action: &str, e: tokio_postgres::Error) -> String {
-    if let Some(db_err) = e.as_db_error() {
-        let code = db_err.code();
-        let detail = db_err.message();
-        let mapped = if *code == SqlState::DUPLICATE_TABLE
-            || *code == SqlState::DUPLICATE_SCHEMA
-            || *code == SqlState::DUPLICATE_OBJECT
-            || *code == SqlState::DUPLICATE_COLUMN
-        {
-            format!("{}失败: 对象已存在: {}", action, detail)
-        } else if *code == SqlState::UNDEFINED_TABLE
-            || *code == SqlState::UNDEFINED_SCHEMA
-            || *code == SqlState::UNDEFINED_COLUMN
-            || *code == SqlState::UNDEFINED_OBJECT
-        {
-            format!("{}失败: 对象不存在: {}", action, detail)
-        } else if *code == SqlState::INSUFFICIENT_PRIVILEGE {
-            format!("{}失败: 权限不足: {}", action, detail)
-        } else if *code == SqlState::DEPENDENT_OBJECTS_STILL_EXIST {
-            format!(
-                "{}失败: 存在依赖对象（视图、外键、序列等），请先处理依赖或使用 CASCADE: {}",
-                action, detail
-            )
-        } else if *code == SqlState::INVALID_SCHEMA_NAME || *code == SqlState::INVALID_NAME {
-            format!("{}失败: 名称非法: {}", action, detail)
-        } else if *code == SqlState::READ_ONLY_SQL_TRANSACTION {
-            format!("{}失败: 当前连接/事务为只读: {}", action, detail)
-        } else if *code == SqlState::NOT_NULL_VIOLATION {
-            format!(
-                "{}失败: 存在 NULL 行，无法添加 NOT NULL 约束: {}",
-                action, detail
-            )
-        } else {
-            format!("{}失败 [{}]: {}", action, code.code(), detail)
-        };
-        mapped
-    } else {
-        format!("{}失败: {}", action, e)
-    }
 }
 
 /// 构建 `CREATE SCHEMA "name"`。

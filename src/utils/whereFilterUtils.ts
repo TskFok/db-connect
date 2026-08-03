@@ -1,4 +1,7 @@
-import { escapeSqlString, escapeIdentifier } from "./sqlUtils";
+import {
+  escapeSqlStringForDialect,
+  escapeIdentifierForDialect,
+} from "./sqlUtils";
 import type { DatabaseType } from "../types";
 
 /** 支持的 WHERE 操作符 */
@@ -43,33 +46,6 @@ export interface WhereFilterConfig {
 
 /** 列名 -> MySQL column_type 的映射，用于判断是否字符串列 */
 export type ColumnTypesMap = Record<string, string>;
-
-function escapeIdentifierForDialect(
-  name: string,
-  dialect: WhereSqlDialect = "mysql"
-): string {
-  if (dialect === "postgres" || dialect === "sqlite") {
-    return `"${name.replace(/"/g, '""')}"`;
-  }
-  if (dialect === "sqlserver") {
-    return `[${name.replace(/]/g, "]]")}]`;
-  }
-  return escapeIdentifier(name);
-}
-
-function escapeStringForDialect(
-  value: string,
-  dialect: WhereSqlDialect = "mysql"
-): string {
-  if (
-    dialect === "postgres" ||
-    dialect === "sqlite" ||
-    dialect === "sqlserver"
-  ) {
-    return value.replace(/'/g, "''");
-  }
-  return escapeSqlString(value);
-}
 
 /**
  * 判断 MySQL 列类型是否为字符串类型（搜索时数字应格式化为字符串）
@@ -183,7 +159,7 @@ function formatValue(
   const trimmed = input.trim();
   if (trimmed === "" || trimmed.toLowerCase() === "null") return "NULL";
   if (!forceString && /^-?\d+(\.\d+)?$/.test(trimmed)) return trimmed;
-  return `'${escapeStringForDialect(trimmed, dialect)}'`;
+  return `'${escapeSqlStringForDialect(trimmed, dialect)}'`;
 }
 
 /**

@@ -4,6 +4,7 @@ pub mod connection;
 pub mod dialect;
 pub mod postgres;
 pub mod postgres_ddl;
+pub mod postgres_error;
 pub mod postgres_objects;
 pub mod schema_compare;
 pub mod schema_sync;

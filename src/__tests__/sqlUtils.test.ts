@@ -155,9 +155,25 @@ describe("sqlUtils", () => {
       expect(formatSqlValue(false)).toBe("0");
     });
 
+    it("PostgreSQL 布尔值应转为 true/false", () => {
+      expect(formatSqlValue(true, "postgres")).toBe("true");
+      expect(formatSqlValue(false, "postgres")).toBe("false");
+    });
+
+    it("SQLite 布尔值应转为 true/false", () => {
+      expect(formatSqlValue(true, "sqlite")).toBe("true");
+      expect(formatSqlValue(false, "sqlite")).toBe("false");
+    });
+
     it("字符串应加引号并转义", () => {
       expect(formatSqlValue("hello")).toBe("'hello'");
       expect(formatSqlValue("it's")).toBe("'it''s'");
+    });
+
+    it("PostgreSQL 字符串只双写单引号，不转义反斜杠", () => {
+      expect(formatSqlValue("it's a \\test", "postgres")).toBe(
+        "'it''s a \\test'"
+      );
     });
 
     it("空字符串应返回带引号的空字符串", () => {
@@ -174,6 +190,54 @@ describe("sqlUtils", () => {
       );
       expect(result).toBe(
         "INSERT INTO `users` (`id`, `name`, `email`) VALUES (1, 'Alice', 'alice@test.com');"
+      );
+    });
+
+    it("PostgreSQL 应使用双引号标识符", () => {
+      const result = generateInsertStatements(
+        "QuestionOption",
+        ["id", "questionId", "label", "content", "position", "isCorrect"],
+        [
+          {
+            id: "cmsd0kqql001h07pf62jbmum5",
+            questionId: "cmsd0kqql001h07pf62jbmum5",
+            label: "A",
+            content: "放弃，抛弃",
+            position: 0,
+            isCorrect: true,
+          },
+        ],
+        [],
+        "postgres"
+      );
+      expect(result).toBe(
+        'INSERT INTO "QuestionOption" ("id", "questionId", "label", "content", "position", "isCorrect") VALUES (\'cmsd0kqql001h07pf62jbmum5\', \'cmsd0kqql001h07pf62jbmum5\', \'A\', \'放弃，抛弃\', 0, true);'
+      );
+    });
+
+    it("SQLite 应使用双引号标识符", () => {
+      const result = generateInsertStatements(
+        "users",
+        ["id", "name"],
+        [{ id: 1, name: "Alice" }],
+        [],
+        "sqlite"
+      );
+      expect(result).toBe(
+        'INSERT INTO "users" ("id", "name") VALUES (1, \'Alice\');'
+      );
+    });
+
+    it("SQL Server 应使用方括号标识符", () => {
+      const result = generateInsertStatements(
+        "users",
+        ["id", "name"],
+        [{ id: 1, name: "Alice" }],
+        [],
+        "sqlserver"
+      );
+      expect(result).toBe(
+        "INSERT INTO [users] ([id], [name]) VALUES (1, 'Alice');"
       );
     });
 
@@ -392,6 +456,54 @@ describe("sqlUtils", () => {
       ]);
       expect(result).toBe(
         "UPDATE `mydb`.`users` SET `payload` = 'value\\\\\"quoted' WHERE `id` = 'pk\\\\\"1';"
+      );
+    });
+
+    it("PostgreSQL 应使用双引号标识符与 true/false", () => {
+      const result = generateUpdateStatements(
+        "public",
+        "QuestionOption",
+        [
+          {
+            primaryKeys: { id: "abc" },
+            colName: "isCorrect",
+            newValue: true,
+          },
+        ],
+        "postgres"
+      );
+      expect(result).toBe(
+        'UPDATE "public"."QuestionOption" SET "isCorrect" = true WHERE "id" = \'abc\';'
+      );
+    });
+
+    it("SQL Server 应使用方括号标识符", () => {
+      const result = generateUpdateStatements(
+        "dbo",
+        "users",
+        [{ primaryKeys: { id: 1 }, colName: "name", newValue: "Alice" }],
+        "sqlserver"
+      );
+      expect(result).toBe(
+        "UPDATE [dbo].[users] SET [name] = 'Alice' WHERE [id] = 1;"
+      );
+    });
+
+    it("PostgreSQL 字符串只双写单引号，不转义反斜杠", () => {
+      const result = generateUpdateStatements(
+        "public",
+        "users",
+        [
+          {
+            primaryKeys: { id: 1 },
+            colName: "bio",
+            newValue: "it's a \\path",
+          },
+        ],
+        "postgres"
+      );
+      expect(result).toBe(
+        'UPDATE "public"."users" SET "bio" = \'it\'\'s a \\path\' WHERE "id" = 1;'
       );
     });
   });

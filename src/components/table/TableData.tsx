@@ -1479,7 +1479,8 @@ export function TableData() {
         table,
         insertColumns,
         insertRows,
-        excludeCols
+        excludeCols,
+        currentDatabaseType
       );
 
       if (!sql) {
@@ -1510,6 +1511,7 @@ export function TableData() {
       hiddenColumns,
       connId,
       database,
+      currentDatabaseType,
       messageApi,
     ]
   );
@@ -2422,7 +2424,8 @@ export function TableData() {
                     table,
                     Array.from(pendingChanges.values()).filter(
                       (c) => Object.keys(c.primaryKeys).length > 0
-                    )
+                    ),
+                    currentDatabaseType
                   )}
                 </code>
               </pre>

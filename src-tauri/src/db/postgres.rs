@@ -1,3 +1,4 @@
+use crate::db::postgres_error::format_pg_error;
 use crate::db::sql_utils::{
     pg_id, pg_str, postgres_count_query, postgres_paginated_select,
     postgres_sql_editor_allowed_on_read_only_connection, validate_where_clause,
@@ -466,7 +467,7 @@ pub async fn run_sql_on_client(
     let messages = client
         .simple_query(sql)
         .await
-        .map_err(|e| format!("执行 SQL 失败: {}", e))?;
+        .map_err(|e| format_pg_error("执行 SQL", e))?;
     let elapsed = start.elapsed().as_millis() as u64;
     let (columns, rows) = simple_messages_to_columns_and_json(&messages)?;
 

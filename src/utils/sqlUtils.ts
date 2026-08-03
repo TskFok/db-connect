@@ -1,3 +1,6 @@
+import type { DatabaseType } from "../types";
+import { quoteIdentifier } from "./sqlCompletion";
+
 /**
  * 将多条 SQL 语句拆分为单条（按分号分隔，考虑引号、-- 与 # 行注释、块注释内的分号）
  */
@@ -142,17 +145,48 @@ export function escapeSqlString(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/'/g, "''");
 }
 
+/** 按方言转义字符串字面量内容（不含外层引号） */
+export function escapeSqlStringForDialect(
+  value: string,
+  dialect: DatabaseType = "mysql"
+): string {
+  if (
+    dialect === "postgres" ||
+    dialect === "sqlite" ||
+    dialect === "sqlserver"
+  ) {
+    return value.replace(/'/g, "''");
+  }
+  return escapeSqlString(value);
+}
+
 /** 转义 MySQL 标识符（数据库名、表名、列名）中的反引号并包裹 */
 export function escapeIdentifier(name: string): string {
   return `\`${name.replace(/`/g, "``")}\``;
 }
 
+/** 按方言转义并包裹标识符 */
+export function escapeIdentifierForDialect(
+  name: string,
+  dialect: DatabaseType = "mysql"
+): string {
+  return quoteIdentifier(name, dialect);
+}
+
 /** 将值格式化为 SQL 中的字面量 */
-export function formatSqlValue(value: unknown): string {
+export function formatSqlValue(
+  value: unknown,
+  dialect: DatabaseType = "mysql"
+): string {
   if (value === null || value === undefined) return "NULL";
   if (typeof value === "number") return String(value);
-  if (typeof value === "boolean") return value ? "1" : "0";
-  return `'${escapeSqlString(String(value))}'`;
+  if (typeof value === "boolean") {
+    if (dialect === "postgres" || dialect === "sqlite") {
+      return value ? "true" : "false";
+    }
+    return value ? "1" : "0";
+  }
+  return `'${escapeSqlStringForDialect(String(value), dialect)}'`;
 }
 
 /**
@@ -161,21 +195,25 @@ export function formatSqlValue(value: unknown): string {
  * @param allColumns 所有列名
  * @param rows 行数据 (object 格式)
  * @param excludeColumns 需要排除的列 (主键列)
+ * @param dialect 数据库方言，决定标识符引用与字面量格式
  */
 export function generateInsertStatements(
   tableName: string,
   allColumns: string[],
   rows: Record<string, unknown>[],
-  excludeColumns: string[] = []
+  excludeColumns: string[] = [],
+  dialect: DatabaseType = "mysql"
 ): string {
   const cols = allColumns.filter((c) => !excludeColumns.includes(c));
   if (cols.length === 0) return "";
 
-  const colsPart = cols.map((c) => escapeIdentifier(c)).join(", ");
+  const colsPart = cols
+    .map((c) => escapeIdentifierForDialect(c, dialect))
+    .join(", ");
 
   const statements = rows.map((row) => {
-    const values = cols.map((col) => formatSqlValue(row[col]));
-    return `INSERT INTO ${escapeIdentifier(tableName)} (${colsPart}) VALUES (${values.join(", ")});`;
+    const values = cols.map((col) => formatSqlValue(row[col], dialect));
+    return `INSERT INTO ${escapeIdentifierForDialect(tableName, dialect)} (${colsPart}) VALUES (${values.join(", ")});`;
   });
 
   return statements.join("\n");
@@ -218,6 +256,7 @@ function primaryKeysToRowKey(primaryKeys: Record<string, unknown>): string {
  * @param database 数据库名
  * @param table 表名
  * @param changes 待提交修改列表，每项包含 primaryKeys、colName、newValue
+ * @param dialect 数据库方言，决定标识符引用与字面量格式
  */
 export function generateUpdateStatements(
   database: string,
@@ -226,9 +265,10 @@ export function generateUpdateStatements(
     primaryKeys: Record<string, unknown>;
     colName: string;
     newValue: unknown;
-  }>
+  }>,
+  dialect: DatabaseType = "mysql"
 ): string {
-  const tableRef = `${escapeIdentifier(database)}.${escapeIdentifier(table)}`;
+  const tableRef = `${escapeIdentifierForDialect(database, dialect)}.${escapeIdentifierForDialect(table, dialect)}`;
   const byRow = new Map<
     string,
     Array<{ colName: string; newValue: unknown }>
@@ -252,12 +292,15 @@ export function generateUpdateStatements(
       const primaryKeys = primaryKeysByKey.get(rowKey)!;
       const whereClause = Object.entries(primaryKeys)
         .sort(([a], [b]) => a.localeCompare(b))
-        .map(([k, v]) => `${escapeIdentifier(k)} = ${formatSqlValue(v)}`)
+        .map(
+          ([k, v]) =>
+            `${escapeIdentifierForDialect(k, dialect)} = ${formatSqlValue(v, dialect)}`
+        )
         .join(" AND ");
       const setClause = cols
         .map(
           (c) =>
-            `${escapeIdentifier(c.colName)} = ${formatSqlValue(c.newValue)}`
+            `${escapeIdentifierForDialect(c.colName, dialect)} = ${formatSqlValue(c.newValue, dialect)}`
         )
         .join(", ");
       return `UPDATE ${tableRef} SET ${setClause} WHERE ${whereClause};`;
