@@ -162,6 +162,108 @@ describe("databaseStore", () => {
     });
   });
 
+  describe("setSqlTabExecution（SQL 标签执行中状态，修复切换标签后运行状态丢失）", () => {
+    const getSqlTabId = () => {
+      const state = useDatabaseStore.getState();
+      const tab = state.openTabs.find((t) => t.type === "sql");
+      return tab?.type === "sql" ? tab.id : "";
+    };
+
+    it("应登记执行中状态与取消令牌", () => {
+      useDatabaseStore.getState().openSqlTab("conn-1", "SELECT SLEEP(10)");
+      const tabId = getSqlTabId();
+
+      useDatabaseStore
+        .getState()
+        .setSqlTabExecution("conn-1", tabId, { executionId: "exec-1" });
+
+      expect(useDatabaseStore.getState().sqlTabExecutions[tabId]).toEqual({
+        executionId: "exec-1",
+      });
+    });
+
+    it("传 null 应清除执行中状态", () => {
+      useDatabaseStore.getState().openSqlTab("conn-1", "SELECT 1");
+      const tabId = getSqlTabId();
+
+      useDatabaseStore
+        .getState()
+        .setSqlTabExecution("conn-1", tabId, { executionId: "exec-1" });
+      useDatabaseStore.getState().setSqlTabExecution("conn-1", tabId, null);
+
+      expect(
+        useDatabaseStore.getState().sqlTabExecutions[tabId]
+      ).toBeUndefined();
+    });
+
+    it("切换标签后执行中状态应保留（bug 回归：切换标签导致运行中断显示）", () => {
+      // 打开一个 SQL 标签和一个表标签
+      useDatabaseStore.getState().openSqlTab("conn-1", "SELECT SLEEP(10)");
+      const sqlTabId = getSqlTabId();
+      useDatabaseStore.setState((s) => {
+        const conn = s.connectionStates["conn-1"];
+        const openTabs = [
+          ...conn.openTabs,
+          { type: "table", database: "myapp", table: "users" } as const,
+        ];
+        return {
+          connectionStates: {
+            ...s.connectionStates,
+            "conn-1": { ...conn, openTabs },
+          },
+          openTabs,
+        };
+      });
+
+      useDatabaseStore
+        .getState()
+        .setSqlTabExecution("conn-1", sqlTabId, { executionId: "exec-9" });
+
+      // 切到表标签再切回 SQL 标签
+      useDatabaseStore.getState().switchTab("conn-1", 1);
+      expect(
+        useDatabaseStore.getState().sqlTabExecutions[sqlTabId]
+      ).toEqual({ executionId: "exec-9" });
+
+      useDatabaseStore.getState().switchTab("conn-1", 0);
+      expect(
+        useDatabaseStore.getState().sqlTabExecutions[sqlTabId]
+      ).toEqual({ executionId: "exec-9" });
+    });
+
+    it("对已关闭或不存在的标签不登记，避免残留", () => {
+      useDatabaseStore.getState().openSqlTab("conn-1", "SELECT 1");
+
+      useDatabaseStore
+        .getState()
+        .setSqlTabExecution("conn-1", "closed-tab-id", {
+          executionId: "exec-x",
+        });
+
+      expect(
+        useDatabaseStore.getState().sqlTabExecutions["closed-tab-id"]
+      ).toBeUndefined();
+    });
+
+    it("closeTab 应同时清理该标签的执行中状态", () => {
+      useDatabaseStore.getState().openSqlTab("conn-1", "SELECT SLEEP(10)");
+      const tabId = getSqlTabId();
+      useDatabaseStore
+        .getState()
+        .setSqlTabExecution("conn-1", tabId, { executionId: "exec-2" });
+
+      useDatabaseStore.getState().closeTab("conn-1", 0);
+
+      expect(
+        useDatabaseStore.getState().sqlTabExecutions[tabId]
+      ).toBeUndefined();
+      expect(
+        useDatabaseStore.getState().connectionStates["conn-1"]
+          ?.sqlTabExecutions?.[tabId]
+      ).toBeUndefined();
+    });
+  });
+
   describe("数据库和表排序", () => {
     it("setDatabaseSortOrder 应该设置数据库排序方式", () => {
       useDatabaseStore.getState().switchToConnection("conn-1");

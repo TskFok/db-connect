@@ -41,6 +41,12 @@ export interface ConnectionDatabaseState {
   >;
   /** 侧边栏等对指定 SQL 标签页请求执行时的单调递增令牌（编辑器内监听 nonce 触发执行） */
   sqlTabExecuteNonce: Record<string, number>;
+  /**
+   * SQL 标签页运行中的执行状态：id -> { executionId }。
+   * 存在即表示执行中；executionId 供「停止」按钮取消查询。
+   * 放在 store 而非组件内，保证切换标签（编辑器卸载/重挂载）后执行中状态与取消能力不丢失。
+   */
+  sqlTabExecutions: Record<string, { executionId: string | null }>;
   /** 在 SQL 标签页时点击了数据库，应展示表列表而非 SQL 编辑器 */
   showDatabaseOverviewWhenSqlActive: boolean;
   /** 按 database|table 缓存的表结构 */
@@ -68,6 +74,7 @@ export const emptyConnState = (): ConnectionDatabaseState => ({
   sqlTabContents: {},
   sqlTabResults: {},
   sqlTabExecuteNonce: {},
+  sqlTabExecutions: {},
   showDatabaseOverviewWhenSqlActive: false,
   tableStructures: {},
   tableInfos: {},

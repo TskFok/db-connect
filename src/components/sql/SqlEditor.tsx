@@ -78,14 +78,17 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     selectedDatabase,
     sqlTabContents,
     sqlTabResults,
+    sqlTabExecutions,
     setSqlTabContent,
     setSqlTabResult,
+    setSqlTabExecution,
   } = useDatabaseStore();
   const themeMode = useThemeStore((s) => s.mode);
   const { add: addSavedSql, getAll: getSavedSqlList } = useSavedSqlStore();
 
   const [currentDb, setCurrentDb] = useState<string | null>(selectedDatabase);
-  const [executing, setExecuting] = useState(false);
+  /** 表内嵌 SQL（无 tabId）的本地执行中状态；独立 SQL 标签页从 store 读取，切换标签不丢失 */
+  const [localExecuting, setLocalExecuting] = useState(false);
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [saveModalName, setSaveModalName] = useState("");
   /** 批量已执行 SQL 折叠面板展开的 key（antd Collapse） */
@@ -128,6 +131,21 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
   const executedSqlList = tabId
     ? (tabResult?.executedSqlList ?? EMPTY_EXECUTED_SQL_LIST)
     : localExecutedSqlList;
+  // 独立 SQL 标签页：执行中状态存于 store，切换标签（组件卸载重挂载）后仍能显示执行中并可停止
+  const executing = tabId ? !!sqlTabExecutions[tabId] : localExecuting;
+
+  /** 标记执行状态：tab 模式写入 store（跨卸载保留），表内嵌模式用本地 state；同时维护取消令牌 */
+  const markExecution = useCallback(
+    (cid: string, execution: { executionId: string | null } | null) => {
+      currentExecutionIdRef.current = execution?.executionId ?? null;
+      if (tabId && cid) {
+        setSqlTabExecution(cid, tabId, execution);
+      } else {
+        setLocalExecuting(execution !== null);
+      }
+    },
+    [tabId, setSqlTabExecution]
+  );
 
   const executedPreview = useMemo(
     () =>
@@ -384,7 +402,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
         message.warning("请先输入或选中要解释的 SQL");
         return;
       }
-      setExecuting(true);
+      markExecution(cid, { executionId: null });
       if (tabId && cid) {
         setSqlTabResult(cid, tabId, null, null, []);
       } else {
@@ -406,10 +424,10 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
           setLocalError(err);
         }
       } finally {
-        setExecuting(false);
+        markExecution(cid, null);
       }
     },
-    [getEditorSqlSnippet, tabId, setSqlTabResult]
+    [getEditorSqlSnippet, tabId, setSqlTabResult, markExecution]
   );
 
   const doExecute = useCallback(async () => {
@@ -473,7 +491,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
       if (!confirmed) return;
     }
 
-    setExecuting(true);
+    markExecution(cid, { executionId: null });
     if (tabId && connId) {
       setSqlTabResult(connId, tabId, null, null, []);
     } else {
@@ -489,7 +507,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
       for (let i = 0; i < statements.length; i++) {
         const stmt = statements[i];
         const execId = `${tabId ?? "local"}-${Date.now()}-${i}`;
-        currentExecutionIdRef.current = execId;
+        markExecution(cid, { executionId: execId });
         const res = await api.executeSql(cid, db, stmt, execId);
         successfulSql.push(stmt);
         lastResult = res;
@@ -500,8 +518,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
         // 部分成功，保留已执行的结果
       }
     } finally {
-      currentExecutionIdRef.current = null;
-      setExecuting(false);
+      markExecution(cid, null);
       if (tabId && cid) {
         setSqlTabResult(cid, tabId, lastResult, execError, successfulSql);
       } else {
@@ -514,13 +531,17 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     tabId,
     connId,
     setSqlTabResult,
+    markExecution,
     activeConnection?.config.skip_dangerous_sql_confirm,
   ]);
 
-  /** 停止：取消（KILL QUERY）当前正在执行的语句 */
+  /** 停止：取消（KILL QUERY）当前正在执行的语句（tab 模式从 store 读取令牌，跨卸载仍可停止） */
   const handleStop = useCallback(async () => {
     const { connId: cid } = execParamsRef.current;
-    const execId = currentExecutionIdRef.current;
+    const execId = tabId
+      ? (useDatabaseStore.getState().sqlTabExecutions[tabId]?.executionId ??
+        null)
+      : currentExecutionIdRef.current;
     if (!cid || !execId) return;
     if (databaseType === "clickhouse") {
       message.warning("ClickHouse 暂不支持主动取消查询");
@@ -536,7 +557,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     } catch (e) {
       message.error(`取消查询失败: ${String(e)}`);
     }
-  }, [databaseType]);
+  }, [databaseType, tabId]);
 
   const tabExecuteNonce = useDatabaseStore((s) =>
     tabId ? ((s.sqlTabExecuteNonce ?? {})[tabId] ?? 0) : 0

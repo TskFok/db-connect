@@ -23,6 +23,7 @@ export function syncCurrentView(state: ConnectionDatabaseState) {
     sqlTabContents: state.sqlTabContents ?? {},
     sqlTabResults: state.sqlTabResults ?? {},
     sqlTabExecuteNonce: state.sqlTabExecuteNonce ?? {},
+    sqlTabExecutions: state.sqlTabExecutions ?? {},
     showDatabaseOverviewWhenSqlActive:
       state.showDatabaseOverviewWhenSqlActive ?? false,
     tableInfos: state.tableInfos ?? {},

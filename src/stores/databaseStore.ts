@@ -72,6 +72,8 @@ interface DatabaseState {
     }
   >;
   sqlTabExecuteNonce: Record<string, number>;
+  /** SQL 标签页运行中的执行状态：id -> { executionId }（存在即执行中，切换标签不丢失） */
+  sqlTabExecutions: Record<string, { executionId: string | null }>;
   showDatabaseOverviewWhenSqlActive: boolean;
   /** 按 database|table 缓存的表信息（用于 Tab 图标等） */
   tableInfos: Record<string, TableInfo>;
@@ -120,6 +122,15 @@ interface DatabaseState {
   ) => void;
   /** 请求指定 SQL 标签页在当前连接下一次执行编辑器内容（编辑器内防抖监听） */
   requestSqlTabExecute: (connId: string, tabId: string) => void;
+  /**
+   * 标记 SQL 标签页的运行中执行状态。
+   * execution 非空表示执行中（executionId 供取消查询使用）；传 null 表示执行结束。
+   */
+  setSqlTabExecution: (
+    connId: string,
+    tabId: string,
+    execution: { executionId: string | null } | null
+  ) => void;
   loadDatabaseInfo: (connId: string, database: string) => Promise<void>;
   createDatabase: (
     connId: string,
@@ -218,6 +229,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   sqlTabContents: {},
   sqlTabResults: {},
   sqlTabExecuteNonce: {},
+  sqlTabExecutions: {},
   showDatabaseOverviewWhenSqlActive: false,
   tableInfos: {},
   databaseInfo: null,
@@ -595,6 +607,39 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     set(res);
   },
 
+  setSqlTabExecution: (
+    connId: string,
+    tabId: string,
+    execution: { executionId: string | null } | null
+  ) => {
+    const { connectionStates, activeConnId } = get();
+    const state = connectionStates[connId];
+    if (!state || !tabId) return;
+    const prev = state.sqlTabExecutions ?? {};
+    const newSqlTabExecutions = { ...prev };
+    if (execution) {
+      // 仅为仍打开的 SQL 标签登记执行中状态，避免标签关闭后残留
+      const openTabs = state.openTabs ?? [];
+      if (!openTabs.some((t) => t.type === "sql" && t.id === tabId)) return;
+      newSqlTabExecutions[tabId] = execution;
+    } else {
+      delete newSqlTabExecutions[tabId];
+    }
+    const updated: ConnectionDatabaseState = {
+      ...state,
+      sqlTabExecutions: newSqlTabExecutions,
+    };
+    const newStates = { ...connectionStates, [connId]: updated };
+    const res: Partial<DatabaseState> = {
+      connectionStates: newStates,
+      sqlTabExecutions: newSqlTabExecutions,
+    };
+    if (activeConnId === connId) {
+      Object.assign(res, syncCurrentView(updated));
+    }
+    set(res);
+  },
+
   switchTableTab: (connId: string, index: number) => {
     get().switchTab(connId, index);
   },
@@ -663,14 +708,17 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       const newSqlTabContents = { ...(state.sqlTabContents ?? {}) };
       const newSqlTabResults = { ...(state.sqlTabResults ?? {}) };
       const newSqlTabExecuteNonce = { ...(state.sqlTabExecuteNonce ?? {}) };
+      const newSqlTabExecutions = { ...(state.sqlTabExecutions ?? {}) };
       delete newSqlTabContents[closedEntry.id];
       delete newSqlTabResults[closedEntry.id];
       delete newSqlTabExecuteNonce[closedEntry.id];
+      delete newSqlTabExecutions[closedEntry.id];
       updated = {
         ...updated,
         sqlTabContents: newSqlTabContents,
         sqlTabResults: newSqlTabResults,
         sqlTabExecuteNonce: newSqlTabExecuteNonce,
+        sqlTabExecutions: newSqlTabExecutions,
       };
     }
 
@@ -718,6 +766,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       sqlTabContents: updated.sqlTabContents,
       sqlTabResults: updated.sqlTabResults,
       sqlTabExecuteNonce: updated.sqlTabExecuteNonce,
+      sqlTabExecutions: updated.sqlTabExecutions,
     };
     if (activeConnId === connId) {
       Object.assign(res, syncCurrentView(updated));
@@ -1402,6 +1451,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
             sqlTabContents: {},
             sqlTabResults: {},
             sqlTabExecuteNonce: {},
+            sqlTabExecutions: {},
             showDatabaseOverviewWhenSqlActive: false,
             tableInfos: {},
             expandedKeys: [],
@@ -1431,6 +1481,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         sqlTabContents: {},
         sqlTabResults: {},
         sqlTabExecuteNonce: {},
+        sqlTabExecutions: {},
         showDatabaseOverviewWhenSqlActive: false,
         tableInfos: {},
         expandedKeys: [],
@@ -1457,6 +1508,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       sqlTabContents: {},
       sqlTabResults: {},
       sqlTabExecuteNonce: {},
+      sqlTabExecutions: {},
       showDatabaseOverviewWhenSqlActive: false,
       tableInfos: {},
       treeLoading: false,
