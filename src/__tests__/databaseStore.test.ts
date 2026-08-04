@@ -71,6 +71,7 @@ describe("databaseStore", () => {
       expect(state.activeTabIndex).toBe(0);
       expect(state.sqlTabContents).toEqual({});
       expect(state.sqlTabExecuteNonce).toEqual({});
+      expect(state.viewMode).toBe("tab");
     });
 
     it("数据库 capability 应区分 MySQL 全量能力与 PostgreSQL（阶段五：索引/外键/触发器/例程已开放，但不展示 MySQL 独有的事件/引擎/字符集）", () => {
@@ -991,7 +992,11 @@ describe("databaseStore", () => {
             databases: ["myapp"],
             tables: { myapp: [] },
             openTables: [{ database: "myapp", table: "users" }],
+            openTabs: [
+              { type: "table", database: "myapp", table: "users" },
+            ],
             activeTableTabIndex: 0,
+            activeTabIndex: 0,
             tableStructures: {},
             tableInfos: {},
             selectedDatabase: "myapp",
@@ -1014,6 +1019,8 @@ describe("databaseStore", () => {
         table: "users",
       });
       expect(state.selectedDatabase).toBe("myapp");
+      expect(state.selectedTable).toBeNull();
+      expect(state.viewMode).toBe("overview");
     });
   });
 
@@ -1237,6 +1244,122 @@ describe("databaseStore", () => {
       expect(mockApi.listTables).toHaveBeenCalledTimes(1);
       expect(mockApi.listTables).toHaveBeenCalledWith("conn-1", "myapp");
     });
+
+    it("打开表后点击数据库再刷新，不应跳回已打开的表标签（保持数据库概览）", async () => {
+      useDatabaseStore.getState().switchToConnection("conn-1");
+      const tableInfo = {
+        name: "users",
+        table_type: "TABLE",
+        engine: "InnoDB",
+        rows: 200,
+        data_length: 32768,
+        index_length: null,
+        comment: "",
+      };
+      // 模拟：先打开了 users 表（openTabs 仍指向它），随后点击数据库（selectedTable 置空）
+      useDatabaseStore.setState({
+        connectionStates: {
+          "conn-1": {
+            ...emptyConnState(),
+            databases: ["myapp"],
+            tables: { myapp: [tableInfo] },
+            openTabs: [{ type: "table", database: "myapp", table: "users" }],
+            activeTabIndex: 0,
+            openTables: [{ database: "myapp", table: "users" }],
+            activeTableTabIndex: 0,
+            tableStructures: {},
+            tableInfos: { "myapp|users": tableInfo },
+            selectedDatabase: "myapp",
+            selectedTable: null,
+            tableStructure: null,
+            selectedTableInfo: null,
+            viewMode: "overview",
+            expandedKeys: ["db:myapp"],
+            databaseSortOrder: "asc",
+            tableSortOrder: "asc",
+            databaseInfo: null,
+          },
+        },
+        selectedDatabase: "myapp",
+        selectedTable: null,
+        viewMode: "overview",
+        openTabs: [{ type: "table", database: "myapp", table: "users" }],
+        activeTabIndex: 0,
+      });
+
+      mockApi.listDatabases.mockResolvedValue(["myapp"]);
+      mockApi.listTables.mockResolvedValue([tableInfo]);
+
+      await useDatabaseStore.getState().refresh("conn-1");
+
+      const state = useDatabaseStore.getState();
+      // 选中状态保持在数据库概览，而不是被 openTabs 推导覆盖回 users 表
+      expect(state.viewMode).toBe("overview");
+      expect(state.selectedDatabase).toBe("myapp");
+      expect(state.selectedTable).toBeNull();
+      expect(state.tableStructure).toBeNull();
+      // 打开的标签页不受影响
+      expect(state.openTabs).toEqual([
+        { type: "table", database: "myapp", table: "users" },
+      ]);
+      // 未选中表时不应请求表结构
+      expect(mockApi.getTableStructure).not.toHaveBeenCalled();
+    });
+
+    it("overview 模式下 loadTables 不应跳回已打开的表标签", async () => {
+      useDatabaseStore.getState().switchToConnection("conn-1");
+      const tableInfo = {
+        name: "users",
+        table_type: "TABLE",
+        engine: "InnoDB",
+        rows: 200,
+        data_length: 32768,
+        index_length: null,
+        comment: "",
+      };
+      useDatabaseStore.setState({
+        connectionStates: {
+          "conn-1": {
+            ...emptyConnState(),
+            databases: ["myapp"],
+            tables: { myapp: [tableInfo] },
+            openTabs: [{ type: "table", database: "myapp", table: "users" }],
+            activeTabIndex: 0,
+            openTables: [{ database: "myapp", table: "users" }],
+            selectedDatabase: "myapp",
+            selectedTable: null,
+            viewMode: "overview",
+            expandedKeys: ["db:myapp"],
+          },
+        },
+        selectedDatabase: "myapp",
+        selectedTable: null,
+        viewMode: "overview",
+        openTabs: [{ type: "table", database: "myapp", table: "users" }],
+        activeTabIndex: 0,
+      });
+
+      mockApi.listTables.mockResolvedValue([
+        tableInfo,
+        {
+          name: "posts",
+          table_type: "TABLE",
+          engine: "InnoDB",
+          rows: 10,
+          data_length: 1024,
+          index_length: null,
+          comment: "",
+        },
+      ]);
+
+      await useDatabaseStore.getState().loadTables("conn-1", "myapp");
+
+      const state = useDatabaseStore.getState();
+      expect(state.viewMode).toBe("overview");
+      expect(state.selectedDatabase).toBe("myapp");
+      expect(state.selectedTable).toBeNull();
+      expect(state.tables["myapp"]).toHaveLength(2);
+    });
   });
 
   describe("selectDatabase", () => {
@@ -1261,6 +1384,7 @@ describe("databaseStore", () => {
       expect(state.selectedTable).toBeNull();
       expect(state.tableStructure).toBeNull();
       expect(state.tables["myapp"]).toEqual(mockTables);
+      expect(state.viewMode).toBe("overview");
     });
 
     it("如果表列表已缓存则不重复加载", async () => {

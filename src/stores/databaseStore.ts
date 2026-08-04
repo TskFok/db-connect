@@ -15,12 +15,13 @@ import {
   type ConnectionDatabaseState,
   type OpenTabEntry,
   type OpenTableEntry,
+  type ViewMode,
 } from "./databaseStoreState";
 import { applyOpenTabDerivedState, syncCurrentView } from "./databaseStoreView";
 
 // 状态形状与纯派生逻辑拆分到 ./databaseStoreState，便于维护并复用；此处重新导出以保持既有导入路径不变
 export { emptyConnState };
-export type { ConnectionDatabaseState, OpenTabEntry, OpenTableEntry };
+export type { ConnectionDatabaseState, OpenTabEntry, OpenTableEntry, ViewMode };
 
 interface DatabaseState {
   /** 当前激活的 connId（来自 connectionStore） */
@@ -74,7 +75,8 @@ interface DatabaseState {
   sqlTabExecuteNonce: Record<string, number>;
   /** SQL 标签页运行中的执行状态：id -> { executionId }（存在即执行中，切换标签不丢失） */
   sqlTabExecutions: Record<string, { executionId: string | null }>;
-  showDatabaseOverviewWhenSqlActive: boolean;
+  /** 右侧内容区视图模式：overview=数据库概览，tab=激活标签内容 */
+  viewMode: ViewMode;
   /** 按 database|table 缓存的表信息（用于 Tab 图标等） */
   tableInfos: Record<string, TableInfo>;
   /** 当前编辑的数据库信息 */
@@ -230,7 +232,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   sqlTabResults: {},
   sqlTabExecuteNonce: {},
   sqlTabExecutions: {},
-  showDatabaseOverviewWhenSqlActive: false,
+  viewMode: "tab",
   tableInfos: {},
   databaseInfo: null,
   databaseInfoLoading: false,
@@ -295,15 +297,14 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       const { connectionStates, activeConnId } = get();
       const state = connectionStates[connId] ?? emptyConnState();
 
-      // 仅更新树上的选中数据库与展开状态，不关闭已打开的表标签页
-      // 点击数据库时标记需展示表列表（当当前在 SQL 标签页时）
+      // 仅更新树上的选中数据库与展开状态，不关闭已打开的表标签页；进入 overview 模式
       const updated: ConnectionDatabaseState = {
         ...state,
         selectedDatabase: database,
         selectedTable: null,
         tableStructure: null,
         selectedTableInfo: null,
-        showDatabaseOverviewWhenSqlActive: true,
+        viewMode: "overview",
         expandedKeys: state.expandedKeys.includes(`db:${database}`)
           ? state.expandedKeys
           : [...state.expandedKeys, `db:${database}`],
@@ -322,12 +323,6 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       };
       if (activeConnId === connId) {
         Object.assign(res, syncCurrentView(updated));
-        // 点击数据库时强制用树选中项驱动右侧视图，显示该库的表列表（不因 openTables 被覆盖）
-        res.selectedDatabase = database;
-        res.selectedTable = null;
-        res.tableStructure = null;
-        res.selectedTableInfo = null;
-        res.showDatabaseOverviewWhenSqlActive = true;
       }
       set(res);
     } catch (e) {
@@ -360,6 +355,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         const updated: ConnectionDatabaseState = {
           ...state,
           activeTabIndex: existingIdx,
+          viewMode: "tab",
         };
         const derived = applyOpenTabDerivedState(updated);
         const newStates = { ...connectionStates, [connId]: updated };
@@ -373,6 +369,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
           selectedTable: updated.selectedTable,
           tableStructure: updated.tableStructure,
           selectedTableInfo: updated.selectedTableInfo,
+          viewMode: "tab",
         };
         if (activeConnId === connId) {
           Object.assign(res, syncCurrentView(updated));
@@ -425,6 +422,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         selectedTable: table,
         tableStructure: structure,
         selectedTableInfo: tableInfo,
+        viewMode: "tab",
       };
       const derived = applyOpenTabDerivedState(updated);
 
@@ -436,6 +434,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         activeTabIndex: newIdx,
         openTables: derived.openTables ?? updated.openTables,
         activeTableTabIndex: derived.activeTableTabIndex ?? newIdx,
+        viewMode: "tab",
       };
       if (activeConnId === connId) {
         Object.assign(res, syncCurrentView(updated));
@@ -481,6 +480,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         selectedTable: table,
         tableStructure: null,
         selectedTableInfo: tableInfo,
+        viewMode: "tab",
       };
       const newStates = { ...connectionStates, [connId]: updated };
       const res: Partial<DatabaseState> = {
@@ -489,6 +489,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         structureError: msg,
         openTabs: newOpenTabs,
         activeTabIndex: newIdx,
+        viewMode: "tab",
       };
       if (activeConnId === connId) {
         Object.assign(res, syncCurrentView(updated));
@@ -513,7 +514,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       openTabs: newOpenTabs,
       activeTabIndex: newIdx,
       sqlTabContents: newSqlTabContents,
-      showDatabaseOverviewWhenSqlActive: false,
+      viewMode: "tab",
     };
     const newStates = { ...connectionStates, [connId]: updated };
     const res: Partial<DatabaseState> = {
@@ -521,7 +522,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       openTabs: newOpenTabs,
       activeTabIndex: newIdx,
       sqlTabContents: newSqlTabContents,
-      showDatabaseOverviewWhenSqlActive: false,
+      viewMode: "tab",
     };
     if (activeConnId === connId) {
       Object.assign(res, syncCurrentView(updated));
@@ -650,21 +651,18 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     const openTabs = state?.openTabs ?? [];
     if (!state || index < 0 || index >= openTabs.length) return;
 
-    const newTab = openTabs[index];
     const updated: ConnectionDatabaseState = {
       ...state,
       activeTabIndex: index,
-      // 切换到 SQL 标签时清除「展示表列表」标记，恢复显示 SQL 编辑器
-      showDatabaseOverviewWhenSqlActive:
-        newTab?.type === "sql"
-          ? false
-          : state.showDatabaseOverviewWhenSqlActive,
+      // 切换到任意标签时进入 tab 模式，恢复显示标签内容（离开数据库概览）
+      viewMode: "tab",
     };
     const derived = applyOpenTabDerivedState(updated);
     const newStates = { ...connectionStates, [connId]: updated };
     const res: Partial<DatabaseState> = {
       connectionStates: newStates,
       activeTabIndex: index,
+      viewMode: "tab",
       openTables: derived.openTables ?? state.openTables,
       activeTableTabIndex:
         derived.activeTableTabIndex ?? state.activeTableTabIndex,
@@ -1452,7 +1450,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
             sqlTabResults: {},
             sqlTabExecuteNonce: {},
             sqlTabExecutions: {},
-            showDatabaseOverviewWhenSqlActive: false,
+            viewMode: "tab",
             tableInfos: {},
             expandedKeys: [],
             databaseInfo: null,
@@ -1482,7 +1480,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         sqlTabResults: {},
         sqlTabExecuteNonce: {},
         sqlTabExecutions: {},
-        showDatabaseOverviewWhenSqlActive: false,
+        viewMode: "tab",
         tableInfos: {},
         expandedKeys: [],
         structureError: null,
@@ -1509,7 +1507,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       sqlTabResults: {},
       sqlTabExecuteNonce: {},
       sqlTabExecutions: {},
-      showDatabaseOverviewWhenSqlActive: false,
+      viewMode: "tab",
       tableInfos: {},
       treeLoading: false,
       structureLoading: false,

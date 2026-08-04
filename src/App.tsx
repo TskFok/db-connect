@@ -81,7 +81,7 @@ function AppInner() {
     selectedTable,
     openTabs,
     activeTabIndex,
-    showDatabaseOverviewWhenSqlActive,
+    viewMode,
     treeLoading,
     structureLoading,
     tableContentActiveTab,
@@ -158,19 +158,16 @@ function AppInner() {
     }
 
     const activeTab = openTabs[activeTabIndex];
+    if (viewMode === "overview" && selectedDatabase) {
+      setActiveViewBreadcrumb("database-overview", {
+        connection: activeConnection.config.name,
+        database: selectedDatabase,
+        source: activeTab?.type === "sql" ? "sql-tab" : undefined,
+      });
+      return;
+    }
+
     if (activeTab?.type === "sql") {
-      if (
-        showDatabaseOverviewWhenSqlActive &&
-        selectedDatabase &&
-        !selectedTable
-      ) {
-        setActiveViewBreadcrumb("database-overview", {
-          connection: activeConnection.config.name,
-          database: selectedDatabase,
-          source: "sql-tab",
-        });
-        return;
-      }
       setActiveViewBreadcrumb("sql-tab", {
         connection: activeConnection.config.name,
         database: selectedDatabase,
@@ -207,7 +204,7 @@ function AppInner() {
     selectedDatabase,
     selectedTable,
     showConnectionForm,
-    showDatabaseOverviewWhenSqlActive,
+    viewMode,
     tableContentActiveTab,
   ]);
 
@@ -305,26 +302,22 @@ function AppInner() {
                 <TableTabsBar />
                 {(() => {
                   const activeTab = openTabs[activeTabIndex];
+                  // overview：点击数据库后展示表列表，不随激活标签跳转
+                  if (viewMode === "overview" && selectedDatabase) {
+                    return (
+                      <div
+                        style={{
+                          flex: 1,
+                          minHeight: 0,
+                          display: "flex",
+                          flexDirection: "column",
+                        }}
+                      >
+                        <DatabaseOverview />
+                      </div>
+                    );
+                  }
                   if (activeTab?.type === "sql") {
-                    // 在 SQL 标签页点击数据库时展示表列表，点击 SQL 标签时恢复 SQL 编辑器
-                    if (
-                      showDatabaseOverviewWhenSqlActive &&
-                      selectedDatabase &&
-                      !selectedTable
-                    ) {
-                      return (
-                        <div
-                          style={{
-                            flex: 1,
-                            minHeight: 0,
-                            display: "flex",
-                            flexDirection: "column",
-                          }}
-                        >
-                          <DatabaseOverview />
-                        </div>
-                      );
-                    }
                     return (
                       <div
                         style={{

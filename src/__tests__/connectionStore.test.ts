@@ -59,7 +59,7 @@ vi.mock("../stores/databaseStore", () => ({
           activeTabIndex: 0,
           sqlTabContents: {},
           sqlTabResults: {},
-          showDatabaseOverviewWhenSqlActive: false,
+          viewMode: "tab" as const,
           tableStructures: {},
           tableInfos: {},
           selectedDatabase: null,
