@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { ConnectionForm } from "../components/connection/ConnectionForm";
 import { useConnectionStore } from "../stores/connectionStore";
@@ -67,6 +73,224 @@ describe("ConnectionForm database type defaults", () => {
     );
   }, 20_000);
 
+  it("新建服务端连接默认通过复选框隐藏 SSL 与 SSH 配置", () => {
+    render(<ConnectionForm />);
+
+    const sslToggle = screen.getByRole("checkbox", {
+      name: "使用 SSL / TLS",
+    });
+    expect(sslToggle).not.toBeChecked();
+    expect(sslToggle).not.toHaveAttribute("aria-controls");
+    expect(
+      screen.getByRole("checkbox", { name: "使用 SSH 隧道" })
+    ).not.toBeChecked();
+    expect(screen.queryByRole("tab", { name: "直接连接" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "SSH 隧道" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "SSL 模式" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "SSH 服务器" })).toBeNull();
+  });
+
+  it("勾选使用 SSL 后显示 SSL 配置", () => {
+    render(<ConnectionForm />);
+
+    const sslToggle = screen.getByRole("checkbox", {
+      name: "使用 SSL / TLS",
+    });
+    fireEvent.click(sslToggle);
+
+    expect(sslToggle).toHaveAttribute("aria-controls", "ssl-configuration");
+    expect(
+      screen.getByRole("combobox", { name: "SSL 模式" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("加密连接（系统信任库 + 校验主机名）")
+    ).toBeInTheDocument();
+  });
+
+  it("勾选使用 SSH 隧道后显示 SSH 配置", () => {
+    render(<ConnectionForm />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "使用 SSH 隧道" }));
+
+    expect(
+      screen.getByRole("textbox", { name: "SSH 服务器" })
+    ).toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: "SSH 端口" })).toHaveValue(
+      "22"
+    );
+  });
+
+  it("编辑已有 SSL 与 SSH 配置时自动勾选并回填", () => {
+    useConnectionStore.setState({
+      editingConnection: {
+        id: "secured",
+        database_type: "postgres",
+        name: "Secured PostgreSQL",
+        host: "db.internal",
+        port: 5432,
+        username: "postgres",
+        ssl_mode: "required",
+        ssh: {
+          host: "jump.internal",
+          port: 22,
+          username: "deploy",
+        },
+      },
+    });
+
+    render(<ConnectionForm />);
+
+    expect(
+      screen.getByRole("checkbox", { name: "使用 SSL / TLS" })
+    ).toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: "使用 SSH 隧道" })
+    ).toBeChecked();
+    expect(
+      screen.getByRole("combobox", { name: "SSL 模式" })
+    ).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "SSH 服务器" })).toHaveValue(
+      "jump.internal"
+    );
+  });
+
+  it("切换到无 SSH 的编辑连接时清空上一个 SSH 配置", async () => {
+    useConnectionStore.setState({
+      editingConnection: {
+        id: "with-ssh",
+        database_type: "postgres",
+        name: "With SSH",
+        host: "db.internal",
+        port: 5432,
+        username: "postgres",
+        ssh: {
+          host: "jump.internal",
+          port: 2202,
+          username: "deploy",
+          password: "secret",
+          private_key_path: "/tmp/id_rsa",
+        },
+      },
+    });
+    render(<ConnectionForm />);
+
+    act(() => {
+      useConnectionStore.setState({
+        editingConnection: {
+          id: "direct",
+          database_type: "postgres",
+          name: "Direct",
+          host: "direct.internal",
+          port: 5432,
+          username: "postgres",
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("checkbox", { name: "使用 SSH 隧道" })
+      ).not.toBeChecked();
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: "使用 SSH 隧道" }));
+
+    expect(screen.getByRole("textbox", { name: "SSH 服务器" })).toHaveValue("");
+    expect(screen.getByRole("spinbutton", { name: "SSH 端口" })).toHaveValue(
+      "22"
+    );
+    expect(screen.getByRole("textbox", { name: "SSH 用户名" })).toHaveValue("");
+    expect(screen.getByLabelText("SSH 密码")).toHaveValue("");
+    expect(screen.getByRole("textbox", { name: "SSH 私钥路径" })).toHaveValue(
+      ""
+    );
+  });
+
+  it.each(["disabled", " DISABLED ", "off", " NONE "])(
+    "编辑禁用 SSL 模式 %s 时保持未勾选",
+    (sslMode) => {
+      useConnectionStore.setState({
+        editingConnection: {
+          id: "ssl-disabled",
+          database_type: "postgres",
+          name: "SSL Disabled",
+          host: "db.internal",
+          port: 5432,
+          username: "postgres",
+          ssl_mode: sslMode,
+        },
+      });
+
+      render(<ConnectionForm />);
+
+      expect(
+        screen.getByRole("checkbox", { name: "使用 SSL / TLS" })
+      ).not.toBeChecked();
+      expect(screen.queryByRole("combobox", { name: "SSL 模式" })).toBeNull();
+    }
+  );
+
+  it("编辑带空格和大写的 SSL 模式时规范化并正确回填", () => {
+    useConnectionStore.setState({
+      editingConnection: {
+        id: "ssl-required",
+        database_type: "postgres",
+        name: "SSL Required",
+        host: "db.internal",
+        port: 5432,
+        username: "postgres",
+        ssl_mode: " REQUIRED ",
+      },
+    });
+
+    render(<ConnectionForm />);
+
+    expect(
+      screen.getByRole("checkbox", { name: "使用 SSL / TLS" })
+    ).toBeChecked();
+    expect(
+      screen.getByText("加密连接（系统信任库 + 校验主机名）")
+    ).toBeInTheDocument();
+  });
+
+  it("取消 SSL 与 SSH 选项后保存时移除原配置", async () => {
+    mockApi.saveConnection.mockResolvedValue(undefined);
+    mockApi.listSavedConnections.mockResolvedValue([]);
+    useConnectionStore.setState({
+      editingConnection: {
+        id: "secured",
+        database_type: "postgres",
+        name: "Secured PostgreSQL",
+        host: "db.internal",
+        port: 5432,
+        username: "postgres",
+        ssl_mode: "required",
+        ssh: {
+          host: "jump.internal",
+          port: 22,
+          username: "deploy",
+        },
+      },
+    });
+    render(<ConnectionForm />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "使用 SSL / TLS" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "使用 SSH 隧道" }));
+    fireEvent.click(screen.getByRole("button", { name: /保存$/ }));
+
+    await waitFor(() => {
+      expect(mockApi.saveConnection).toHaveBeenCalledWith({
+        id: "secured",
+        database_type: "postgres",
+        name: "Secured PostgreSQL",
+        host: "db.internal",
+        port: 5432,
+        username: "postgres",
+        password: undefined,
+        database: undefined,
+      });
+    });
+  });
+
   it("编辑缺少 database_type 的旧连接时按 MySQL 显示", () => {
     useConnectionStore.setState({
       editingConnection: {
@@ -110,11 +334,18 @@ describe("ConnectionForm database type defaults", () => {
         "1433"
       );
     });
-    expect(screen.getByRole("textbox", { name: "主机地址" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: "主机地址" })
+    ).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "用户名" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "数据库" })).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "SQLite 文件" })).toBeNull();
-    expect(screen.getByText("SSL / TLS（SQL Server）")).toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: "使用 SSL / TLS" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: "使用 SSH 隧道" })
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByText("高级：只读与安全"));
     expect(screen.getByLabelText("只读连接")).toBeInTheDocument();
     expect(screen.getByLabelText("高危 SQL")).toBeInTheDocument();
@@ -131,12 +362,18 @@ describe("ConnectionForm database type defaults", () => {
         "8123"
       );
     });
-    expect(screen.getByRole("textbox", { name: "主机地址" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: "主机地址" })
+    ).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "用户名" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "数据库" })).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "SQLite 文件" })).toBeNull();
-    expect(screen.getByText("SSL / TLS（ClickHouse）")).toBeInTheDocument();
-    expect(screen.getByText("SSH 隧道")).toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: "使用 SSL / TLS" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: "使用 SSH 隧道" })
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByText("高级：只读与安全"));
     expect(screen.getByLabelText("只读连接")).toBeInTheDocument();
     expect(screen.getByLabelText("高危 SQL")).toBeInTheDocument();
@@ -231,7 +468,12 @@ describe("ConnectionForm database type defaults", () => {
     expect(screen.getByLabelText("只读连接")).toBeInTheDocument();
     expect(screen.getByLabelText("高危 SQL")).toBeInTheDocument();
     expect(screen.queryByText(/SSL \/ TLS/)).toBeNull();
-    expect(screen.queryByText("SSH 隧道")).toBeNull();
+    expect(
+      screen.queryByRole("checkbox", { name: "使用 SSL / TLS" })
+    ).toBeNull();
+    expect(
+      screen.queryByRole("checkbox", { name: "使用 SSH 隧道" })
+    ).toBeNull();
   });
 
   it("保存 SQLite 连接时提交本地文件配置", async () => {

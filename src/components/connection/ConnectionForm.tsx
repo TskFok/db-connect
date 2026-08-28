@@ -3,7 +3,6 @@ import {
   Form,
   InputNumber,
   Button,
-  Tabs,
   Card,
   Space,
   Typography,
@@ -23,11 +22,7 @@ import {
   ArrowLeftOutlined,
 } from "@ant-design/icons";
 import { useConnectionStore } from "../../stores/connectionStore";
-import type {
-  ConnectionConfig,
-  ConnectionType,
-  DatabaseType,
-} from "../../types";
+import type { ConnectionConfig, DatabaseType } from "../../types";
 import {
   defaultPortForDatabaseType,
   normalizeDatabaseType,
@@ -48,7 +43,6 @@ const DATABASE_TYPE_OPTIONS: Array<{
 ];
 
 const SSL_MODE_OPTIONS = [
-  { value: "disabled", label: "关闭（默认，不加密）" },
   { value: "required", label: "加密连接（系统信任库 + 校验主机名）" },
   {
     value: "verify_ca",
@@ -64,6 +58,16 @@ const SSL_MODE_OPTIONS = [
   },
 ];
 
+const DISABLED_SSL_MODES = new Set(["", "disabled", "none", "off"]);
+
+const normalizeSslMode = (sslMode?: string) => {
+  const normalized = sslMode?.trim().toLowerCase() ?? "";
+  return DISABLED_SSL_MODES.has(normalized) ? "disabled" : normalized;
+};
+
+const hasEnabledSsl = (sslMode?: string) =>
+  normalizeSslMode(sslMode) !== "disabled";
+
 export function ConnectionForm() {
   const {
     editingConnection,
@@ -76,9 +80,10 @@ export function ConnectionForm() {
 
   const [form] = Form.useForm();
   const [sshForm] = Form.useForm();
-  const [connectionType, setConnectionType] = useState<ConnectionType>(
-    editingConnection?.ssh ? "ssh" : "direct"
+  const [useSslTls, setUseSslTls] = useState(
+    hasEnabledSsl(editingConnection?.ssl_mode)
   );
+  const [useSshTunnel, setUseSshTunnel] = useState(!!editingConnection?.ssh);
   const [testResult, setTestResult] = useState<{
     success: boolean;
     message: string;
@@ -99,18 +104,14 @@ export function ConnectionForm() {
           ? "SQL Server"
           : currentDatabaseType === "clickhouse"
             ? "ClickHouse"
-          : "MySQL";
+            : "MySQL";
 
   // editingConnection 变化时同步表单值（解决：先点新建再点编辑时配置不显示的问题）
   useEffect(() => {
     if (editingConnection) {
-      setConnectionType(editingConnection.ssh ? "ssh" : "direct");
-      const sslMode =
-        editingConnection.ssl_mode &&
-        editingConnection.ssl_mode.trim() !== "" &&
-        editingConnection.ssl_mode !== "disabled"
-          ? editingConnection.ssl_mode
-          : "disabled";
+      const sslMode = normalizeSslMode(editingConnection.ssl_mode);
+      setUseSslTls(sslMode !== "disabled");
+      setUseSshTunnel(!!editingConnection.ssh);
       form.setFieldsValue({
         databaseType: normalizeDatabaseType(editingConnection.database_type),
         name: editingConnection.name,
@@ -130,17 +131,26 @@ export function ConnectionForm() {
         readOnlyConn: editingConnection.read_only === true,
         skipDangerousSql: editingConnection.skip_dangerous_sql_confirm === true,
       });
-      if (editingConnection.ssh) {
-        sshForm.setFieldsValue({
-          sshHost: editingConnection.ssh.host,
-          sshPort: editingConnection.ssh.port,
-          sshUsername: editingConnection.ssh.username,
-          sshPassword: editingConnection.ssh.password,
-          sshKeyPath: editingConnection.ssh.private_key_path,
-        });
-      }
+      sshForm.setFieldsValue(
+        editingConnection.ssh
+          ? {
+              sshHost: editingConnection.ssh.host,
+              sshPort: editingConnection.ssh.port,
+              sshUsername: editingConnection.ssh.username,
+              sshPassword: editingConnection.ssh.password,
+              sshKeyPath: editingConnection.ssh.private_key_path,
+            }
+          : {
+              sshHost: undefined,
+              sshPort: 22,
+              sshUsername: undefined,
+              sshPassword: undefined,
+              sshKeyPath: undefined,
+            }
+      );
     } else {
-      setConnectionType("direct");
+      setUseSslTls(false);
+      setUseSshTunnel(false);
       form.setFieldsValue({
         databaseType: "mysql",
         name: undefined,
@@ -150,7 +160,7 @@ export function ConnectionForm() {
         password: undefined,
         database: undefined,
         sqlitePath: undefined,
-        sslMode: "disabled",
+        sslMode: "required",
         sslCaPath: undefined,
         sslPkcs12Path: undefined,
         sslPkcs12Password: undefined,
@@ -202,7 +212,7 @@ export function ConnectionForm() {
       database: values.database || undefined,
     };
 
-    if (connectionType === "ssh") {
+    if (useSshTunnel) {
       const sshValues = sshForm.getFieldsValue();
       config.ssh = {
         host: sshValues.sshHost,
@@ -213,8 +223,10 @@ export function ConnectionForm() {
       };
     }
 
-    const sslMode = (values.sslMode as string | undefined) ?? "disabled";
-    if (sslMode !== "disabled") {
+    const selectedSslMode = normalizeSslMode(values.sslMode);
+    const sslMode =
+      selectedSslMode === "disabled" ? "required" : selectedSslMode;
+    if (useSslTls) {
       config.ssl_mode = sslMode;
       if (sslMode === "verify_ca" || sslMode === "verify_identity") {
         const ca = values.sslCaPath?.trim();
@@ -259,7 +271,7 @@ export function ConnectionForm() {
   const handleTest = async () => {
     try {
       await form.validateFields();
-      if (connectionType === "ssh" && currentDatabaseType !== "sqlite") {
+      if (useSshTunnel && currentDatabaseType !== "sqlite") {
         await sshForm.validateFields();
       }
     } catch {
@@ -279,7 +291,7 @@ export function ConnectionForm() {
   const handleSave = async () => {
     try {
       await form.validateFields();
-      if (connectionType === "ssh" && currentDatabaseType !== "sqlite") {
+      if (useSshTunnel && currentDatabaseType !== "sqlite") {
         await sshForm.validateFields();
       }
     } catch {
@@ -294,7 +306,7 @@ export function ConnectionForm() {
   const handleSaveAndConnect = async () => {
     try {
       await form.validateFields();
-      if (connectionType === "ssh" && currentDatabaseType !== "sqlite") {
+      if (useSshTunnel && currentDatabaseType !== "sqlite") {
         await sshForm.validateFields();
       }
     } catch {
@@ -327,6 +339,71 @@ export function ConnectionForm() {
     </>
   );
 
+  const sslFields = (
+    <div id="ssl-configuration">
+      <Divider orientation="left" style={{ fontSize: 13 }}>
+        SSL / TLS 配置（{databaseBrand}）
+      </Divider>
+
+      <Form.Item name="sslMode" label="SSL 模式">
+        <Select options={SSL_MODE_OPTIONS} />
+      </Form.Item>
+
+      <Form.Item
+        noStyle
+        shouldUpdate={(prev, cur) => prev.sslMode !== cur.sslMode}
+      >
+        {({ getFieldValue }) =>
+          getFieldValue("sslMode") === "required_insecure" ? (
+            <Alert
+              type="warning"
+              showIcon
+              message="当前模式不校验服务端证书，仅建议在可信内网调试。"
+              style={{ marginBottom: 16 }}
+            />
+          ) : null
+        }
+      </Form.Item>
+
+      <Form.Item
+        name="sslCaPath"
+        label="CA 证书路径（PEM）"
+        rules={[
+          ({ getFieldValue }) => ({
+            validator(_, value) {
+              const mode = getFieldValue("sslMode");
+              if (
+                (mode === "verify_ca" || mode === "verify_identity") &&
+                !(value && String(value).trim())
+              ) {
+                return Promise.reject(
+                  new Error(
+                    "VERIFY_CA / VERIFY_IDENTITY 模式下请填写 CA 证书路径"
+                  )
+                );
+              }
+              return Promise.resolve();
+            },
+          }),
+        ]}
+      >
+        <SafeInput placeholder="/path/to/ca.pem（verify_ca / verify_identity 必填）" />
+      </Form.Item>
+
+      <Form.Item name="sslPkcs12Path" label="客户端 PKCS#12 路径（可选）">
+        <SafeInput placeholder="双向 TLS 时的 .p12 / .pfx 文件" />
+      </Form.Item>
+
+      <Form.Item name="sslPkcs12Password" label="PKCS#12 密码（可选）">
+        <SafeInputPassword placeholder="若归档有密码请填写" />
+      </Form.Item>
+
+      <Form.Item name="sslTlsHostname" label="TLS 校验主机名（可选）">
+        <SafeInput placeholder="经 SSH 连接时填 RDS 等在证书上的主机名" />
+      </Form.Item>
+    </div>
+  );
+
   // MySQL 连接表单字段
   const mysqlFields = (
     <>
@@ -339,7 +416,8 @@ export function ConnectionForm() {
           options={DATABASE_TYPE_OPTIONS}
           onChange={(value: DatabaseType) => {
             if (value === "sqlite") {
-              setConnectionType("direct");
+              setUseSslTls(false);
+              setUseSshTunnel(false);
             }
             if (!isEditing) {
               form.setFieldValue("port", defaultPortForDatabaseType(value));
@@ -405,7 +483,7 @@ export function ConnectionForm() {
                     ? "sa"
                     : currentDatabaseType === "clickhouse"
                       ? "default"
-                    : "root"
+                      : "root"
               }
             />
           </Form.Item>
@@ -432,70 +510,9 @@ export function ConnectionForm() {
                     ? "SQL Server 物理 database，例如 master"
                     : currentDatabaseType === "clickhouse"
                       ? "ClickHouse database，例如 default"
-                  : "可选，连接后自动选择的数据库"
+                      : "可选，连接后自动选择的数据库"
               }
             />
-          </Form.Item>
-
-          <Divider orientation="left" style={{ fontSize: 13 }}>
-            SSL / TLS（{databaseBrand}）
-          </Divider>
-
-          <Form.Item name="sslMode" label="SSL 模式" initialValue="disabled">
-            <Select options={SSL_MODE_OPTIONS} />
-          </Form.Item>
-
-          <Form.Item
-            noStyle
-            shouldUpdate={(prev, cur) => prev.sslMode !== cur.sslMode}
-          >
-            {({ getFieldValue }) =>
-              getFieldValue("sslMode") === "required_insecure" ? (
-                <Alert
-                  type="warning"
-                  showIcon
-                  message="当前模式不校验服务端证书，仅建议在可信内网调试。"
-                  style={{ marginBottom: 16 }}
-                />
-              ) : null
-            }
-          </Form.Item>
-
-          <Form.Item
-            name="sslCaPath"
-            label="CA 证书路径（PEM）"
-            rules={[
-              ({ getFieldValue }) => ({
-                validator(_, value) {
-                  const m = getFieldValue("sslMode");
-                  if (
-                    (m === "verify_ca" || m === "verify_identity") &&
-                    !(value && String(value).trim())
-                  ) {
-                    return Promise.reject(
-                      new Error(
-                        "VERIFY_CA / VERIFY_IDENTITY 模式下请填写 CA 证书路径"
-                      )
-                    );
-                  }
-                  return Promise.resolve();
-                },
-              }),
-            ]}
-          >
-            <SafeInput placeholder="/path/to/ca.pem（verify_ca / verify_identity 必填）" />
-          </Form.Item>
-
-          <Form.Item name="sslPkcs12Path" label="客户端 PKCS#12 路径（可选）">
-            <SafeInput placeholder="双向 TLS 时的 .p12 / .pfx 文件" />
-          </Form.Item>
-
-          <Form.Item name="sslPkcs12Password" label="PKCS#12 密码（可选）">
-            <SafeInputPassword placeholder="若归档有密码请填写" />
-          </Form.Item>
-
-          <Form.Item name="sslTlsHostname" label="TLS 校验主机名（可选）">
-            <SafeInput placeholder="经 SSH 连接时填 RDS 等在证书上的主机名" />
           </Form.Item>
         </>
       )}
@@ -543,12 +560,51 @@ export function ConnectionForm() {
           ]}
         />
       )}
+
+      {currentDatabaseType !== "sqlite" && (
+        <>
+          <Divider orientation="left" style={{ fontSize: 13 }}>
+            连接选项
+          </Divider>
+
+          <Form.Item>
+            <Checkbox
+              checked={useSslTls}
+              aria-controls={useSslTls ? "ssl-configuration" : undefined}
+              aria-expanded={useSslTls}
+              onChange={(event) => {
+                const checked = event.target.checked;
+                setUseSslTls(checked);
+                if (checked && !hasEnabledSsl(form.getFieldValue("sslMode"))) {
+                  form.setFieldValue("sslMode", "required");
+                }
+              }}
+            >
+              使用 SSL / TLS
+            </Checkbox>
+          </Form.Item>
+
+          {useSslTls && sslFields}
+
+          <Form.Item style={{ marginBottom: 0 }}>
+            <Checkbox
+              checked={useSshTunnel}
+              aria-controls="ssh-configuration"
+              aria-expanded={useSshTunnel}
+              onChange={(event) => setUseSshTunnel(event.target.checked)}
+            >
+              使用 SSH 隧道
+            </Checkbox>
+          </Form.Item>
+        </>
+      )}
     </>
   );
 
   // SSH 配置表单字段
   const sshFields = (
     <Form
+      id="ssh-configuration"
       form={sshForm}
       layout="vertical"
       initialValues={
@@ -628,17 +684,6 @@ export function ConnectionForm() {
 
       <Card className="connection-form-card">
         <div className="connection-form-scroll">
-          {currentDatabaseType !== "sqlite" && (
-            <Tabs
-              activeKey={connectionType}
-              onChange={(key) => setConnectionType(key as ConnectionType)}
-              items={[
-                { key: "direct", label: "直接连接" },
-                { key: "ssh", label: "SSH 隧道" },
-              ]}
-            />
-          )}
-
           <Form
             form={form}
             layout="vertical"
@@ -655,12 +700,7 @@ export function ConnectionForm() {
                     password: editingConnection.password,
                     database: editingConnection.database,
                     sqlitePath: editingConnection.sqlite_path,
-                    sslMode:
-                      editingConnection.ssl_mode &&
-                      editingConnection.ssl_mode.trim() !== "" &&
-                      editingConnection.ssl_mode !== "disabled"
-                        ? editingConnection.ssl_mode
-                        : "disabled",
+                    sslMode: normalizeSslMode(editingConnection.ssl_mode),
                     sslCaPath: editingConnection.ssl_ca_path,
                     sslPkcs12Path: editingConnection.ssl_pkcs12_path,
                     sslPkcs12Password: editingConnection.ssl_pkcs12_password,
@@ -676,7 +716,7 @@ export function ConnectionForm() {
                     databaseType: "mysql",
                     port: defaultPortForDatabaseType("mysql"),
                     sqlitePath: undefined,
-                    sslMode: "disabled",
+                    sslMode: "required",
                     readOnlyConn: false,
                     skipDangerousSql: false,
                   }
@@ -685,9 +725,9 @@ export function ConnectionForm() {
             {mysqlFields}
           </Form>
 
-          {connectionType === "ssh" &&
-            currentDatabaseType !== "sqlite" &&
-            sshFields}
+          <div hidden={!useSshTunnel || currentDatabaseType === "sqlite"}>
+            {sshFields}
+          </div>
         </div>
 
         <div className="connection-form-actions">
