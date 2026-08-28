@@ -39,6 +39,7 @@ const mockApi = vi.mocked(api);
 
 describe("ConnectionForm database type defaults", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     if (!window.matchMedia) {
       vi.stubGlobal("matchMedia", () => ({
         matches: false,
@@ -287,6 +288,140 @@ describe("ConnectionForm database type defaults", () => {
         username: "postgres",
         password: undefined,
         database: undefined,
+      });
+    });
+  });
+
+  it("开启 SSL 并填写证书配置后保存时提交完整 SSL 字段", async () => {
+    mockApi.saveConnection.mockResolvedValue(undefined);
+    mockApi.listSavedConnections.mockResolvedValue([]);
+    render(<ConnectionForm />);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "连接名称" }), {
+      target: { value: "TLS MySQL" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "主机地址" }), {
+      target: { value: "db.example.com" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "用户名" }), {
+      target: { value: "root" },
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: "使用 SSL / TLS" }));
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "SSL 模式" }));
+    fireEvent.click(
+      await screen.findByText("VERIFY_IDENTITY（自定义 CA + 校验主机名）")
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "CA 证书路径（PEM）" }),
+      { target: { value: " /certs/ca.pem " } }
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "客户端 PKCS#12 路径（可选）" }),
+      { target: { value: " /certs/client.p12 " } }
+    );
+    fireEvent.change(screen.getByLabelText("PKCS#12 密码（可选）"), {
+      target: { value: "secret" },
+    });
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "TLS 校验主机名（可选）" }),
+      { target: { value: " db.internal " } }
+    );
+    fireEvent.click(screen.getByRole("button", { name: /保存$/ }));
+
+    await waitFor(() => {
+      expect(mockApi.saveConnection).toHaveBeenCalledWith({
+        database_type: "mysql",
+        name: "TLS MySQL",
+        host: "db.example.com",
+        port: 3306,
+        username: "root",
+        password: undefined,
+        database: undefined,
+        ssl_mode: "verify_identity",
+        ssl_ca_path: "/certs/ca.pem",
+        ssl_pkcs12_path: "/certs/client.p12",
+        ssl_pkcs12_password: "secret",
+        ssl_tls_hostname: "db.internal",
+      });
+    });
+  });
+
+  it("VERIFY_CA 模式缺少 CA 路径时阻止保存", async () => {
+    render(<ConnectionForm />);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "连接名称" }), {
+      target: { value: "Invalid TLS" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "主机地址" }), {
+      target: { value: "db.example.com" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "用户名" }), {
+      target: { value: "root" },
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: "使用 SSL / TLS" }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "SSL 模式" }));
+    fireEvent.click(
+      await screen.findByText("VERIFY_CA（自定义 CA PEM，不校验证书主机名）")
+    );
+    fireEvent.click(screen.getByRole("button", { name: /保存$/ }));
+
+    expect(
+      await screen.findByText(
+        "VERIFY_CA / VERIFY_IDENTITY 模式下请填写 CA 证书路径"
+      )
+    ).toBeInTheDocument();
+    expect(mockApi.saveConnection).not.toHaveBeenCalled();
+  });
+
+  it("开启 SSH 并填写隧道配置后保存时提交嵌套 SSH 对象", async () => {
+    mockApi.saveConnection.mockResolvedValue(undefined);
+    mockApi.listSavedConnections.mockResolvedValue([]);
+    render(<ConnectionForm />);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "连接名称" }), {
+      target: { value: "SSH MySQL" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "主机地址" }), {
+      target: { value: "db.internal" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "用户名" }), {
+      target: { value: "root" },
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: "使用 SSH 隧道" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "SSH 服务器" }), {
+      target: { value: "jump.example.com" },
+    });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "SSH 端口" }), {
+      target: { value: "2202" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "SSH 用户名" }), {
+      target: { value: "deploy" },
+    });
+    fireEvent.change(screen.getByLabelText("SSH 密码"), {
+      target: { value: "ssh-secret" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "SSH 私钥路径" }), {
+      target: { value: "/keys/id_ed25519" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /保存$/ }));
+
+    await waitFor(() => {
+      expect(mockApi.saveConnection).toHaveBeenCalledWith({
+        database_type: "mysql",
+        name: "SSH MySQL",
+        host: "db.internal",
+        port: 3306,
+        username: "root",
+        password: undefined,
+        database: undefined,
+        ssh: {
+          host: "jump.example.com",
+          port: 2202,
+          username: "deploy",
+          password: "ssh-secret",
+          private_key_path: "/keys/id_ed25519",
+        },
       });
     });
   });

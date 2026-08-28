@@ -2,6 +2,17 @@ import type { ConnectionConfig, DatabaseType } from "../types";
 
 export const DEFAULT_DATABASE_TYPE: DatabaseType = "mysql";
 
+const DISABLED_SSL_MODES = new Set(["", "disabled", "none", "off"]);
+
+export function normalizeSslMode(sslMode?: string): string {
+  const normalized = sslMode?.trim().toLowerCase() ?? "";
+  return DISABLED_SSL_MODES.has(normalized) ? "disabled" : normalized;
+}
+
+export function hasEnabledSsl(sslMode?: string): boolean {
+  return normalizeSslMode(sslMode) !== "disabled";
+}
+
 export function normalizeDatabaseType(
   value: DatabaseType | string | null | undefined
 ): DatabaseType {
