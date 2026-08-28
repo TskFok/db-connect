@@ -9,6 +9,11 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { ConnectionForm } from "../components/connection/ConnectionForm";
 import { useConnectionStore } from "../stores/connectionStore";
 import * as api from "../services/tauriCommands";
+import { open } from "@tauri-apps/plugin-dialog";
+
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  open: vi.fn(),
+}));
 
 vi.mock("../services/tauriCommands", () => ({
   listSavedConnections: vi.fn(),
@@ -36,10 +41,12 @@ vi.mock("../services/tauriCommands", () => ({
 }));
 
 const mockApi = vi.mocked(api);
+const mockOpen = vi.mocked(open);
 
 describe("ConnectionForm database type defaults", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockOpen.mockReset();
     if (!window.matchMedia) {
       vi.stubGlobal("matchMedia", () => ({
         matches: false,
@@ -108,6 +115,48 @@ describe("ConnectionForm database type defaults", () => {
     ).toBeInTheDocument();
   });
 
+  it("选择 CA 证书后将系统文件路径回填到输入框", async () => {
+    mockOpen.mockResolvedValue("/certs/company-ca.pem");
+    render(<ConnectionForm />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "使用 SSL / TLS" }));
+    fireEvent.click(screen.getByRole("button", { name: "选择 CA 证书文件" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("textbox", { name: "CA 证书路径（PEM）" })
+      ).toHaveValue("/certs/company-ca.pem");
+    });
+    expect(mockOpen).toHaveBeenCalledWith({
+      title: "选择 CA 证书文件",
+      multiple: false,
+      directory: false,
+      filters: [{ name: "PEM 证书", extensions: ["pem", "crt"] }],
+    });
+  });
+
+  it("选择 PKCS#12 文件后将系统文件路径回填到输入框", async () => {
+    mockOpen.mockResolvedValue("/certs/client.p12");
+    render(<ConnectionForm />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "使用 SSL / TLS" }));
+    fireEvent.click(screen.getByRole("button", { name: "选择 PKCS#12 文件" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("textbox", {
+          name: "客户端 PKCS#12 路径（可选）",
+        })
+      ).toHaveValue("/certs/client.p12");
+    });
+    expect(mockOpen).toHaveBeenCalledWith({
+      title: "选择 PKCS#12 文件",
+      multiple: false,
+      directory: false,
+      filters: [{ name: "PKCS#12", extensions: ["p12", "pfx"] }],
+    });
+  });
+
   it("勾选使用 SSH 隧道后显示 SSH 配置", () => {
     render(<ConnectionForm />);
 
@@ -119,6 +168,61 @@ describe("ConnectionForm database type defaults", () => {
     expect(screen.getByRole("spinbutton", { name: "SSH 端口" })).toHaveValue(
       "22"
     );
+  });
+
+  it("选择 SSH 私钥后回填路径且不限制文件扩展名", async () => {
+    mockOpen.mockResolvedValue("/Users/demo/.ssh/id_ed25519");
+    render(<ConnectionForm />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "使用 SSH 隧道" }));
+    fireEvent.click(screen.getByRole("button", { name: "选择 SSH 私钥文件" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: "SSH 私钥路径" })).toHaveValue(
+        "/Users/demo/.ssh/id_ed25519"
+      );
+    });
+    expect(mockOpen).toHaveBeenCalledWith({
+      title: "选择 SSH 私钥文件",
+      multiple: false,
+      directory: false,
+    });
+  });
+
+  it("取消系统文件选择时保留手动输入的路径", async () => {
+    mockOpen.mockResolvedValue(null);
+    render(<ConnectionForm />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "使用 SSH 隧道" }));
+    const keyPathInput = screen.getByRole("textbox", {
+      name: "SSH 私钥路径",
+    });
+    fireEvent.change(keyPathInput, {
+      target: { value: "/manually-entered/id_rsa" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "选择 SSH 私钥文件" }));
+
+    await waitFor(() => expect(mockOpen).toHaveBeenCalledTimes(1));
+    expect(keyPathInput).toHaveValue("/manually-entered/id_rsa");
+  });
+
+  it("系统文件选择失败时保留原路径并提示失败原因", async () => {
+    mockOpen.mockRejectedValue(new Error("permission denied"));
+    render(<ConnectionForm />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "使用 SSH 隧道" }));
+    const keyPathInput = screen.getByRole("textbox", {
+      name: "SSH 私钥路径",
+    });
+    fireEvent.change(keyPathInput, {
+      target: { value: "/manually-entered/id_rsa" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "选择 SSH 私钥文件" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "选择 SSH 私钥文件失败：permission denied"
+    );
+    expect(keyPathInput).toHaveValue("/manually-entered/id_rsa");
   });
 
   it("编辑已有 SSL 与 SSH 配置时自动勾选并回填", () => {

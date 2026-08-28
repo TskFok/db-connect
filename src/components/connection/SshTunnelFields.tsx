@@ -1,5 +1,6 @@
 import { Divider, Form, InputNumber, type FormInstance } from "antd";
 import { SafeInput, SafeInputPassword } from "../common/SafeInput";
+import { FilePathInput } from "../common/FilePathInput";
 
 export interface SshTunnelFormValues {
   sshHost: string;
@@ -60,7 +61,11 @@ export function SshTunnelFields({ form, initialValues }: SshTunnelFieldsProps) {
       </Form.Item>
 
       <Form.Item name="sshKeyPath" label="SSH 私钥路径">
-        <SafeInput placeholder="例如: /Users/you/.ssh/id_rsa" />
+        <FilePathInput
+          placeholder="例如: /Users/you/.ssh/id_rsa"
+          dialogTitle="选择 SSH 私钥文件"
+          buttonLabel="选择 SSH 私钥文件"
+        />
       </Form.Item>
     </Form>
   );

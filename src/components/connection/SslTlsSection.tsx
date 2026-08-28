@@ -1,6 +1,7 @@
 import { Alert, Checkbox, Divider, Form, Select } from "antd";
 import { SafeInput, SafeInputPassword } from "../common/SafeInput";
 import { hasEnabledSsl } from "../../utils/connectionConfig";
+import { FilePathInput } from "../common/FilePathInput";
 
 const SSL_MODE_OPTIONS = [
   { value: "required", label: "加密连接（系统信任库 + 校验主机名）" },
@@ -98,11 +99,21 @@ export function SslTlsSection({
               }),
             ]}
           >
-            <SafeInput placeholder="/path/to/ca.pem（verify_ca / verify_identity 必填）" />
+            <FilePathInput
+              placeholder="/path/to/ca.pem（verify_ca / verify_identity 必填）"
+              dialogTitle="选择 CA 证书文件"
+              buttonLabel="选择 CA 证书文件"
+              filters={[{ name: "PEM 证书", extensions: ["pem", "crt"] }]}
+            />
           </Form.Item>
 
           <Form.Item name="sslPkcs12Path" label="客户端 PKCS#12 路径（可选）">
-            <SafeInput placeholder="双向 TLS 时的 .p12 / .pfx 文件" />
+            <FilePathInput
+              placeholder="双向 TLS 时的 .p12 / .pfx 文件"
+              dialogTitle="选择 PKCS#12 文件"
+              buttonLabel="选择 PKCS#12 文件"
+              filters={[{ name: "PKCS#12", extensions: ["p12", "pfx"] }]}
+            />
           </Form.Item>
 
           <Form.Item name="sslPkcs12Password" label="PKCS#12 密码（可选）">
