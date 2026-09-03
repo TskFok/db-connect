@@ -1,6 +1,9 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { LIST_TABLE_IDS } from "../utils/listTableColumns";
+import type { WindowBounds, WindowLaunchMode } from "../utils/windowLaunch";
+
+export type { WindowBounds, WindowLaunchMode } from "../utils/windowLaunch";
 
 /** 空闲超时选项（分钟），0 表示不自动断开 */
 export const IDLE_TIMEOUT_OPTIONS = [
@@ -10,6 +13,12 @@ export const IDLE_TIMEOUT_OPTIONS = [
   { value: 15, label: "15 分钟" },
   { value: 30, label: "30 分钟" },
   { value: 60, label: "1 小时" },
+] as const;
+
+/** 启动窗口行为 */
+export const WINDOW_LAUNCH_OPTIONS = [
+  { value: "maximized", label: "启动时最大化" },
+  { value: "remember", label: "记住窗口大小" },
 ] as const;
 
 /** 侧边栏宽度范围 */
@@ -45,6 +54,12 @@ interface SettingsState {
   ) => void;
   /** 更新列表列顺序 */
   setListTableColumnOrder: (listId: string, order: string[]) => void;
+  /** 启动窗口行为：每次最大化，或记住上次大小 */
+  windowLaunchMode: WindowLaunchMode;
+  setWindowLaunchMode: (mode: WindowLaunchMode) => void;
+  /** 上次窗口尺寸/位置（记住模式下使用） */
+  windowBounds: WindowBounds | null;
+  setWindowBounds: (bounds: WindowBounds | null) => void;
 }
 
 const defaultListTableSettings: ListTableSettings = {
@@ -72,6 +87,8 @@ export const useSettingsStore = create<SettingsState>()(
       idleTimeoutMinutes: 15,
       sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
       listTableSettings: {},
+      windowLaunchMode: "maximized",
+      windowBounds: null,
 
       setIdleTimeoutMinutes: (minutes: number) => {
         set({ idleTimeoutMinutes: minutes });
@@ -107,6 +124,14 @@ export const useSettingsStore = create<SettingsState>()(
             },
           };
         });
+      },
+
+      setWindowLaunchMode: (mode: WindowLaunchMode) => {
+        set({ windowLaunchMode: mode });
+      },
+
+      setWindowBounds: (bounds: WindowBounds | null) => {
+        set({ windowBounds: bounds });
       },
 
       setListTableColumnOrder: (listId: string, order: string[]) => {

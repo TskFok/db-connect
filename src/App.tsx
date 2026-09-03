@@ -15,8 +15,10 @@ import { ProjectIntroTrigger } from "./components/common/ProjectIntroTrigger";
 import { ShortcutsHelpModal } from "./components/common/ShortcutsHelpModal";
 import { ThemeToggle } from "./components/common/ThemeToggle";
 import { IdleTimeoutSetting } from "./components/common/IdleTimeoutSetting";
+import { WindowLaunchSetting } from "./components/common/WindowLaunchSetting";
 import { DatabaseCompareModal } from "./components/databaseCompare/DatabaseCompareModal";
 import { useIdleDisconnect } from "./hooks/useIdleDisconnect";
+import { useWindowLaunchState } from "./hooks/useWindowLaunchState";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useGlobalErrorHandler } from "./hooks/useGlobalErrorHandler";
 import { useConnectionRecovery } from "./hooks/useConnectionRecovery";
@@ -113,6 +115,8 @@ function AppInner() {
     },
     [sidebarWidth, setSidebarWidth]
   );
+
+  useWindowLaunchState();
 
   // 全局错误监听
   useGlobalErrorHandler(messageApi);
@@ -471,6 +475,7 @@ function AppInner() {
             >
               数据库对比
             </Button>
+            <WindowLaunchSetting />
             <IdleTimeoutSetting />
             <ProjectIntroTrigger onOpen={() => setIntroVisible(true)} />
             <ThemeToggle />

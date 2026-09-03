@@ -15,6 +15,8 @@ describe("settingsStore", () => {
       idleTimeoutMinutes: 15,
       sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
       listTableSettings: {},
+      windowLaunchMode: "maximized",
+      windowBounds: null,
     });
   });
 
@@ -54,6 +56,29 @@ describe("settingsStore", () => {
     it("setSidebarWidth 应限制在最大宽度内", () => {
       useSettingsStore.getState().setSidebarWidth(600);
       expect(useSettingsStore.getState().sidebarWidth).toBe(SIDEBAR_WIDTH_MAX);
+    });
+  });
+
+  describe("windowLaunchMode", () => {
+    it("默认应为启动时最大化", () => {
+      expect(useSettingsStore.getState().windowLaunchMode).toBe("maximized");
+    });
+
+    it("setWindowLaunchMode 应更新启动模式", () => {
+      useSettingsStore.getState().setWindowLaunchMode("remember");
+      expect(useSettingsStore.getState().windowLaunchMode).toBe("remember");
+    });
+
+    it("setWindowBounds 应保存窗口尺寸", () => {
+      const bounds = {
+        width: 1280,
+        height: 720,
+        x: 40,
+        y: 50,
+        maximized: false,
+      };
+      useSettingsStore.getState().setWindowBounds(bounds);
+      expect(useSettingsStore.getState().windowBounds).toEqual(bounds);
     });
   });
 
