@@ -182,9 +182,35 @@ export function DatabaseOverview() {
     databaseType,
   ]);
 
-  // 搜索状态
-  const [searchVisible, setSearchVisible] = useState(false);
-  const [searchKeyword, setSearchKeyword] = useState("");
+  // 搜索状态保存在连接缓存中，打开数据表导致概览卸载后仍可恢复。
+  const { searchVisible, searchKeyword, setTableSearch } = useDatabaseStore(
+    useShallow((s) => {
+      const search = selectedDatabase
+        ? s.connectionStates[connId]?.tableSearchByDatabase?.[selectedDatabase]
+        : undefined;
+      return {
+        searchVisible: search?.visible ?? false,
+        searchKeyword: search?.keyword ?? "",
+        setTableSearch: s.setTableSearch,
+      };
+    })
+  );
+  const setSearchVisible = useCallback(
+    (visible: boolean) => {
+      if (connId && selectedDatabase) {
+        setTableSearch(connId, selectedDatabase, { visible });
+      }
+    },
+    [connId, selectedDatabase, setTableSearch]
+  );
+  const setSearchKeyword = useCallback(
+    (keyword: string) => {
+      if (connId && selectedDatabase) {
+        setTableSearch(connId, selectedDatabase, { keyword });
+      }
+    },
+    [connId, selectedDatabase, setTableSearch]
+  );
   const [largeIndexOnly, setLargeIndexOnly] = useState(false);
   const searchInputRef = useRef<InputRef>(null);
   /** 数据库视图：表列表 | 例程 | 事件 */
@@ -211,12 +237,12 @@ export function DatabaseOverview() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [searchVisible]);
+  }, [searchVisible, setSearchVisible, setSearchKeyword]);
 
   const handleCloseSearch = useCallback(() => {
     setSearchVisible(false);
     setSearchKeyword("");
-  }, []);
+  }, [setSearchVisible, setSearchKeyword]);
 
   const handleDropTable = useCallback(
     async (tableName: string, e: React.MouseEvent) => {

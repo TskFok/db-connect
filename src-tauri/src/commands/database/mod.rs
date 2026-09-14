@@ -1,4 +1,5 @@
 pub mod column_ops;
+pub mod structure_preview;
 // 供本模块的 create_table 与单元测试复用列定义构建逻辑
 pub use column_ops::build_column_definition;
 
@@ -941,6 +942,55 @@ pub async fn rename_database(
     Ok(())
 }
 
+fn build_table_properties_sqls(
+    database_type: crate::models::types::DatabaseType,
+    database: &str,
+    table: &str,
+    new_name: &str,
+    engine: Option<&str>,
+) -> Result<Vec<String>, String> {
+    use crate::models::types::DatabaseType;
+    if new_name.trim().is_empty() {
+        return Err("表名不能为空".to_string());
+    }
+    let mut sqls = Vec::new();
+    if table != new_name {
+        let rename_sql = match database_type {
+            DatabaseType::MySql => format!(
+                "ALTER TABLE {}.{} RENAME TO {}.{}",
+                esc_id(database),
+                esc_id(table),
+                esc_id(database),
+                esc_id(new_name),
+            ),
+            DatabaseType::Postgres => {
+                postgres_ddl::build_rename_table_sql(database, table, new_name)
+            }
+            DatabaseType::Sqlite => sqlite::build_rename_table_sql(database, table, new_name),
+            DatabaseType::SqlServer => {
+                sqlserver_ddl::build_rename_table_sql(database, table, new_name)
+            }
+            DatabaseType::ClickHouse => {
+                build_clickhouse_rename_table_sql(database, table, new_name)?
+            }
+        };
+        sqls.push(rename_sql);
+    }
+    if let Some(engine) = engine {
+        match database_type {
+            DatabaseType::MySql => {
+                validate_engine_name(engine)?;
+                sqls.push(format!("ALTER TABLE {}.{} ENGINE = {}", esc_id(database), esc_id(new_name), engine));
+            }
+            DatabaseType::Postgres => return Err("PostgreSQL 不支持修改存储引擎".to_string()),
+            DatabaseType::Sqlite => return Err(DatabasePoolHandle::sqlite_write_unsupported_error()),
+            DatabaseType::SqlServer => return Err(DatabasePoolHandle::sqlserver_write_unsupported_error()),
+            DatabaseType::ClickHouse => return Err("ClickHouse 暂不支持通过表结构面板修改表引擎，请使用 SQL 编辑器执行明确的 ALTER TABLE".to_string()),
+        }
+    }
+    Ok(sqls)
+}
+
 /// 重命名表
 #[tauri::command]
 pub async fn rename_table(
@@ -975,13 +1025,18 @@ pub async fn rename_table(
 
     let mut conn = get_conn_with_retry(&pool).await?;
 
-    let query = format!(
-        "ALTER TABLE {}.{} RENAME TO {}.{}",
-        esc_id(&database),
-        esc_id(&old_name),
-        esc_id(&database),
-        esc_id(&new_name)
-    );
+    let query = build_table_properties_sqls(
+        crate::models::types::DatabaseType::MySql,
+        &database,
+        &old_name,
+        &new_name,
+        None,
+    )?
+    .into_iter()
+    .next();
+    let Some(query) = query else {
+        return Ok(());
+    };
 
     conn.query_drop(&query)
         .await
@@ -1024,12 +1079,14 @@ pub async fn alter_table_engine(
 
     let mut conn = get_conn_with_retry(&pool).await?;
 
-    let query = format!(
-        "ALTER TABLE {}.{} ENGINE = {}",
-        esc_id(&database),
-        esc_id(&table),
-        engine
-    );
+    let query = build_table_properties_sqls(
+        crate::models::types::DatabaseType::MySql,
+        &database,
+        &table,
+        &table,
+        Some(&engine),
+    )?
+    .remove(0);
 
     conn.query_drop(&query)
         .await
@@ -1167,49 +1224,13 @@ pub async fn truncate_table(
     Ok(())
 }
 
-/// 新建表
-#[tauri::command]
-pub async fn create_table(
-    state: State<'_, AppState>,
-    conn_id: String,
-    database: String,
-    request: CreateTableRequest,
-) -> Result<(), String> {
-    if request.columns.is_empty() {
-        return Err("至少需要定义一个列".to_string());
-    }
-    for col in &request.columns {
-        validate_column_type(&col.column_type)?;
-        validate_column_extra(&col.extra)?;
-    }
-
-    let pool_handle = {
-        let mut manager = state.connection_manager.lock().await;
-        manager.get_database_pool_for_write(&conn_id)?
-    };
-
-    let pool = match pool_handle {
-        DatabasePoolHandle::MySql(pool) => pool,
-        DatabasePoolHandle::Postgres(handle) => {
-            return postgres_ddl::create_table(&handle.pool, &database, &request).await;
-        }
-        DatabasePoolHandle::Sqlite(handle) => {
-            return sqlite::create_table(&handle.pool, &database, &request).await;
-        }
-        DatabasePoolHandle::SqlServer(handle) => {
-            return sqlserver_ddl::create_table(&handle.pool, &database, &request).await;
-        }
-        DatabasePoolHandle::ClickHouse(handle) => {
-            let sql = build_clickhouse_create_table_sql(&database, &request)?;
-            return execute_clickhouse_ddl(&handle.client, sql, "新建表失败").await;
-        }
-    };
-
+fn build_mysql_create_table_sql(
+    database: &str,
+    request: &CreateTableRequest,
+) -> Result<String, String> {
     if !request.engine.is_empty() {
         validate_engine_name(&request.engine)?;
     }
-
-    let mut conn = get_conn_with_retry(&pool).await?;
 
     // 构建列定义
     let col_defs: Vec<String> = request
@@ -1249,12 +1270,56 @@ pub async fn create_table(
 
     let query = format!(
         "CREATE TABLE {}.{} (\n{}\n){}{}",
-        esc_id(&database),
+        esc_id(database),
         esc_id(&request.table_name),
         parts.join(",\n"),
         engine_clause,
         comment_clause
     );
+
+    Ok(query)
+}
+
+/// 新建表
+#[tauri::command]
+pub async fn create_table(
+    state: State<'_, AppState>,
+    conn_id: String,
+    database: String,
+    request: CreateTableRequest,
+) -> Result<(), String> {
+    if request.columns.is_empty() {
+        return Err("至少需要定义一个列".to_string());
+    }
+    for col in &request.columns {
+        validate_column_type(&col.column_type)?;
+        validate_column_extra(&col.extra)?;
+    }
+
+    let pool_handle = {
+        let mut manager = state.connection_manager.lock().await;
+        manager.get_database_pool_for_write(&conn_id)?
+    };
+
+    let pool = match pool_handle {
+        DatabasePoolHandle::MySql(pool) => pool,
+        DatabasePoolHandle::Postgres(handle) => {
+            return postgres_ddl::create_table(&handle.pool, &database, &request).await;
+        }
+        DatabasePoolHandle::Sqlite(handle) => {
+            return sqlite::create_table(&handle.pool, &database, &request).await;
+        }
+        DatabasePoolHandle::SqlServer(handle) => {
+            return sqlserver_ddl::create_table(&handle.pool, &database, &request).await;
+        }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            let sql = build_clickhouse_create_table_sql(&database, &request)?;
+            return execute_clickhouse_ddl(&handle.client, sql, "新建表失败").await;
+        }
+    };
+
+    let query = build_mysql_create_table_sql(&database, &request)?;
+    let mut conn = get_conn_with_retry(&pool).await?;
 
     conn.query_drop(&query)
         .await
@@ -1269,6 +1334,42 @@ mod tests {
     use crate::models::types::{
         AddColumnRequest, AlterColumnPlacement, AlterColumnRequest, CreateTableColumnDef,
     };
+
+    #[test]
+    fn preview_table_properties_applies_engine_change_after_rename() {
+        let sqls = build_table_properties_sqls(
+            crate::models::types::DatabaseType::MySql,
+            "app",
+            "old",
+            "new",
+            Some("MyISAM"),
+        )
+        .unwrap();
+        assert_eq!(
+            sqls,
+            vec![
+                "ALTER TABLE `app`.`old` RENAME TO `app`.`new`",
+                "ALTER TABLE `app`.`new` ENGINE = MyISAM",
+            ]
+        );
+        assert!(build_table_properties_sqls(
+            crate::models::types::DatabaseType::MySql,
+            "app",
+            "users",
+            "users",
+            None,
+        )
+        .unwrap()
+        .is_empty());
+        assert!(build_table_properties_sqls(
+            crate::models::types::DatabaseType::Postgres,
+            "public",
+            "users",
+            "users",
+            Some("InnoDB"),
+        )
+        .is_err());
+    }
 
     // 注意: 这些测试验证的是 SQL 查询逻辑的正确性
     // 实际的数据库交互测试需要集成测试环境

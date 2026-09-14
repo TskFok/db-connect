@@ -46,6 +46,141 @@ pub fn build_column_definition(
     parts.join(" ")
 }
 
+/// MySQL 的完整修改列语句，预览和执行共用。
+pub fn build_mysql_alter_column_sqls(
+    database: &str,
+    table: &str,
+    request: &AlterColumnRequest,
+    current_pk_columns: &[String],
+) -> Vec<String> {
+    let col_def = build_column_definition(
+        &request.column_type,
+        request.nullable,
+        &request.default_value,
+        &request.extra,
+        &request.comment,
+    );
+
+    let position_sql = match &request.column_placement {
+        None => String::new(),
+        Some(AlterColumnPlacement::First) => " FIRST".to_string(),
+        Some(AlterColumnPlacement::After { column }) => format!(" AFTER {}", esc_id(column)),
+    };
+
+    let query = if request.old_name != request.new_name {
+        format!(
+            "ALTER TABLE {}.{} CHANGE COLUMN {} {} {}{}",
+            esc_id(database),
+            esc_id(table),
+            esc_id(&request.old_name),
+            esc_id(&request.new_name),
+            col_def,
+            position_sql
+        )
+    } else {
+        format!(
+            "ALTER TABLE {}.{} MODIFY COLUMN {} {}{}",
+            esc_id(database),
+            esc_id(table),
+            esc_id(&request.old_name),
+            col_def,
+            position_sql
+        )
+    };
+
+    let mut sqls = vec![query];
+    if let Some(is_primary) = request.is_primary {
+        let mut target_pk_columns: Vec<String> = current_pk_columns
+            .iter()
+            .map(|c| {
+                if c == &request.old_name {
+                    request.new_name.clone()
+                } else {
+                    c.clone()
+                }
+            })
+            .collect();
+
+        if is_primary {
+            if !target_pk_columns.iter().any(|c| c == &request.new_name) {
+                target_pk_columns.push(request.new_name.clone());
+            }
+        } else {
+            target_pk_columns.retain(|c| c != &request.old_name && c != &request.new_name);
+        }
+
+        let pk_changed = if is_primary {
+            !current_pk_columns.iter().any(|c| c == &request.old_name)
+        } else {
+            current_pk_columns.iter().any(|c| c == &request.old_name)
+        };
+
+        if pk_changed {
+            let pk_query = if target_pk_columns.is_empty() {
+                format!(
+                    "ALTER TABLE {}.{} DROP PRIMARY KEY",
+                    esc_id(database),
+                    esc_id(table)
+                )
+            } else if current_pk_columns.is_empty() {
+                format!(
+                    "ALTER TABLE {}.{} ADD PRIMARY KEY ({})",
+                    esc_id(database),
+                    esc_id(table),
+                    target_pk_columns
+                        .iter()
+                        .map(|c| esc_id(c))
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                )
+            } else {
+                format!(
+                    "ALTER TABLE {}.{} DROP PRIMARY KEY, ADD PRIMARY KEY ({})",
+                    esc_id(database),
+                    esc_id(table),
+                    target_pk_columns
+                        .iter()
+                        .map(|c| esc_id(c))
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                )
+            };
+
+            sqls.push(pk_query);
+        }
+    }
+
+    sqls
+}
+
+pub fn build_mysql_add_column_sql(
+    database: &str,
+    table: &str,
+    request: &AddColumnRequest,
+) -> String {
+    let col_def = build_column_definition(
+        &request.column_type,
+        request.nullable,
+        &request.default_value,
+        &request.extra,
+        &request.comment,
+    );
+
+    let position = match &request.after_column {
+        Some(after) => format!(" AFTER {}", esc_id(after)),
+        None => String::new(),
+    };
+
+    format!(
+        "ALTER TABLE {}.{} ADD COLUMN {} {}{}",
+        esc_id(database),
+        esc_id(table),
+        esc_id(&request.name),
+        col_def,
+        position
+    )
+}
+
 /// 修改列定义
 #[tauri::command]
 pub async fn alter_column(
@@ -94,20 +229,6 @@ pub async fn alter_column(
 
     let mut conn = get_conn_with_retry(&pool).await?;
 
-    let col_def = build_column_definition(
-        &request.column_type,
-        request.nullable,
-        &request.default_value,
-        &request.extra,
-        &request.comment,
-    );
-
-    let position_sql = match &request.column_placement {
-        None => String::new(),
-        Some(AlterColumnPlacement::First) => " FIRST".to_string(),
-        Some(AlterColumnPlacement::After { column }) => format!(" AFTER {}", esc_id(column)),
-    };
-
     let current_pk_columns: Vec<String> = conn
         .query(format!(
             "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS \
@@ -119,92 +240,14 @@ pub async fn alter_column(
         .await
         .map_err(|e| format!("查询主键信息失败: {}", e))?;
 
-    let query = if request.old_name != request.new_name {
-        format!(
-            "ALTER TABLE {}.{} CHANGE COLUMN {} {} {}{}",
-            esc_id(&database),
-            esc_id(&table),
-            esc_id(&request.old_name),
-            esc_id(&request.new_name),
-            col_def,
-            position_sql
-        )
-    } else {
-        format!(
-            "ALTER TABLE {}.{} MODIFY COLUMN {} {}{}",
-            esc_id(&database),
-            esc_id(&table),
-            esc_id(&request.old_name),
-            col_def,
-            position_sql
-        )
-    };
-
-    conn.query_drop(&query)
+    let sqls = build_mysql_alter_column_sqls(&database, &table, &request, &current_pk_columns);
+    conn.query_drop(&sqls[0])
         .await
         .map_err(|e| format!("修改列失败: {}", e))?;
-
-    if let Some(is_primary) = request.is_primary {
-        let mut target_pk_columns: Vec<String> = current_pk_columns
-            .iter()
-            .map(|c| {
-                if c == &request.old_name {
-                    request.new_name.clone()
-                } else {
-                    c.clone()
-                }
-            })
-            .collect();
-
-        if is_primary {
-            if !target_pk_columns.iter().any(|c| c == &request.new_name) {
-                target_pk_columns.push(request.new_name.clone());
-            }
-        } else {
-            target_pk_columns.retain(|c| c != &request.old_name && c != &request.new_name);
-        }
-
-        let pk_changed = if is_primary {
-            !current_pk_columns.iter().any(|c| c == &request.old_name)
-        } else {
-            current_pk_columns.iter().any(|c| c == &request.old_name)
-        };
-
-        if pk_changed {
-            let pk_query = if target_pk_columns.is_empty() {
-                format!(
-                    "ALTER TABLE {}.{} DROP PRIMARY KEY",
-                    esc_id(&database),
-                    esc_id(&table)
-                )
-            } else if current_pk_columns.is_empty() {
-                format!(
-                    "ALTER TABLE {}.{} ADD PRIMARY KEY ({})",
-                    esc_id(&database),
-                    esc_id(&table),
-                    target_pk_columns
-                        .iter()
-                        .map(|c| esc_id(c))
-                        .collect::<Vec<String>>()
-                        .join(", ")
-                )
-            } else {
-                format!(
-                    "ALTER TABLE {}.{} DROP PRIMARY KEY, ADD PRIMARY KEY ({})",
-                    esc_id(&database),
-                    esc_id(&table),
-                    target_pk_columns
-                        .iter()
-                        .map(|c| esc_id(c))
-                        .collect::<Vec<String>>()
-                        .join(", ")
-                )
-            };
-
-            conn.query_drop(&pk_query)
-                .await
-                .map_err(|e| format!("修改主键失败: {}", e))?;
-        }
+    if let Some(pk_sql) = sqls.get(1) {
+        conn.query_drop(pk_sql)
+            .await
+            .map_err(|e| format!("修改主键失败: {}", e))?;
     }
 
     Ok(())
@@ -254,27 +297,7 @@ pub async fn add_column(
 
     let mut conn = get_conn_with_retry(&pool).await?;
 
-    let col_def = build_column_definition(
-        &request.column_type,
-        request.nullable,
-        &request.default_value,
-        &request.extra,
-        &request.comment,
-    );
-
-    let position = match &request.after_column {
-        Some(after) => format!(" AFTER {}", esc_id(after)),
-        None => String::new(),
-    };
-
-    let query = format!(
-        "ALTER TABLE {}.{} ADD COLUMN {} {}{}",
-        esc_id(&database),
-        esc_id(&table),
-        esc_id(&request.name),
-        col_def,
-        position
-    );
+    let query = build_mysql_add_column_sql(&database, &table, &request);
 
     conn.query_drop(&query)
         .await
@@ -330,4 +353,53 @@ pub async fn drop_column(
         .map_err(|e| format!("删除列失败: {}", e))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+
+    #[test]
+    fn mysql_preview_preserves_rename_default_comment_position_and_primary_key_change() {
+        let request = AlterColumnRequest {
+            old_name: "id".into(),
+            new_name: "user`id".into(),
+            column_type: "bigint".into(),
+            nullable: false,
+            default_value: Some("0".into()),
+            extra: String::new(),
+            comment: "用户编号".into(),
+            is_primary: Some(false),
+            column_placement: Some(AlterColumnPlacement::First),
+        };
+        let sqls = build_mysql_alter_column_sqls(
+            "app",
+            "users",
+            &request,
+            &["tenant".into(), "id".into()],
+        );
+        assert_eq!(sqls, vec![
+            "ALTER TABLE `app`.`users` CHANGE COLUMN `id` `user``id` bigint NOT NULL DEFAULT '0' COMMENT '用户编号' FIRST",
+            "ALTER TABLE `app`.`users` DROP PRIMARY KEY, ADD PRIMARY KEY (`tenant`)",
+        ]);
+    }
+
+    #[test]
+    fn mysql_preview_only_renames_an_existing_primary_key_without_rebuilding_it() {
+        let request = AlterColumnRequest {
+            old_name: "id".into(),
+            new_name: "user_id".into(),
+            column_type: "bigint".into(),
+            nullable: false,
+            default_value: None,
+            extra: String::new(),
+            comment: String::new(),
+            is_primary: Some(true),
+            column_placement: None,
+        };
+        assert_eq!(
+            build_mysql_alter_column_sqls("app", "users", &request, &["id".into()]).len(),
+            1
+        );
+    }
 }

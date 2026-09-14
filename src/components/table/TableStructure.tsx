@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   createContext,
   useContext,
   type CSSProperties,
@@ -32,6 +33,7 @@ import {
   PlusOutlined,
   DeleteOutlined,
   HolderOutlined,
+  CodeOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import {
@@ -75,7 +77,10 @@ import {
   SQLSERVER_UNSIGNED_TYPES,
   parseColumnType,
   buildColumnTypeWithConfig,
+  getColumnTypeChangeValues,
 } from "../../utils/columnTypeUtils";
+import * as api from "../../services/tauriCommands";
+import { SqlPreviewModal } from "../common/SqlPreviewModal";
 import {
   columnInfoToReorderAlterRequest,
   computeReorderPlacementAfterMove,
@@ -250,11 +255,30 @@ export function TableStructure() {
   const [editingColumnName, setEditingColumnName] = useState<string>("");
   const [columnForm] = Form.useForm();
   const [columnLoading, setColumnLoading] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewSql, setPreviewSql] = useState<string[]>([]);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const previewRequestId = useRef(0);
+
+  const closePreview = useCallback(() => {
+    previewRequestId.current += 1;
+    setPreviewOpen(false);
+    setPreviewLoading(false);
+  }, []);
 
   const connId = activeConnection?.connId ?? "";
   const database = selectedDatabase ?? "";
   const table = selectedTable ?? "";
   const isView = selectedTableInfo?.table_type === "VIEW";
+  useEffect(() => {
+    closePreview();
+    setColumnModalOpen(false);
+    setEditModalOpen(false);
+    return () => {
+      previewRequestId.current += 1;
+    };
+  }, [connId, database, table, closePreview]);
   const capabilities = useMemo(
     () => getDatabaseCapabilities(activeConnection?.config.database_type),
     [activeConnection?.config.database_type]
@@ -477,53 +501,113 @@ export function TableStructure() {
     setColumnModalOpen(true);
   }, [columnForm, isSqlite, isSqlServer]);
 
+  // 预览和保存共用表单转换，确保生成的列定义一致。
+  const getColumnRequest = useCallback(async () => {
+    const values = await columnForm.validateFields();
+    const defaultVal =
+      values.default_value?.trim() === ""
+        ? null
+        : (values.default_value?.trim() ?? null);
+    const columnType = buildColumnTypeWithConfig(
+      values.data_type,
+      values.length || "",
+      values.scale || "",
+      values.unsigned || false,
+      {
+        scaleTypes: scaleSet,
+        unsignedTypes: unsignedSet,
+      }
+    );
+
+    if (columnModalMode === "edit") {
+      const request: AlterColumnRequest = {
+        old_name: editingColumnName,
+        new_name: values.name.trim(),
+        column_type: columnType,
+        nullable: values.nullable,
+        default_value: defaultVal,
+        extra: values.extra || "",
+        comment: values.comment?.trim() || "",
+        is_primary: isSqlServer ? undefined : values.is_primary === true,
+      };
+      return { mode: "edit" as const, request };
+    } else {
+      const request: AddColumnRequest = {
+        name: values.name.trim(),
+        column_type: columnType,
+        nullable: values.nullable,
+        default_value: defaultVal,
+        extra: values.extra || "",
+        comment: values.comment?.trim() || "",
+        after_column: values.after_column || null,
+      };
+      return { mode: "add" as const, request };
+    }
+  }, [
+    columnForm,
+    columnModalMode,
+    editingColumnName,
+    isSqlServer,
+    scaleSet,
+    unsignedSet,
+  ]);
+
+  const handlePreview = async (source: "column" | "table") => {
+    if (!connId || !database || !table) return;
+    const requestId = ++previewRequestId.current;
+    // 校验失败由表单显示字段错误，不弹出一个空的 SQL 预览。
+    let generate: () => Promise<string[]>;
+    try {
+      if (source === "column") {
+        const change = await getColumnRequest();
+        generate = () =>
+          change.mode === "edit"
+            ? api.previewAlterColumn(connId, database, table, change.request)
+            : api.previewAddColumn(connId, database, table, change.request);
+      } else {
+        const values = await editForm.validateFields();
+        generate = () =>
+          api.previewTableProperties(
+            connId,
+            database,
+            table,
+            values.tableName.trim(),
+            showEngine && values.engine !== selectedTableInfo?.engine
+              ? values.engine
+              : null
+          );
+      }
+    } catch {
+      return;
+    }
+    if (requestId !== previewRequestId.current) return;
+    setPreviewSql([]);
+    setPreviewError(null);
+    setPreviewLoading(true);
+    setPreviewOpen(true);
+    try {
+      const sql = await generate();
+      if (requestId === previewRequestId.current) setPreviewSql(sql);
+    } catch (e) {
+      if (requestId === previewRequestId.current)
+        setPreviewError(toErrorMessage(e));
+    } finally {
+      if (requestId === previewRequestId.current) setPreviewLoading(false);
+    }
+  };
+
   // 保存列 (编辑/新增)
   const handleColumnSave = useCallback(async () => {
     if (!connId || !database || !table) return;
     try {
-      const values = await columnForm.validateFields();
+      const change = await getColumnRequest();
       setColumnLoading(true);
-
-      const defaultVal =
-        values.default_value?.trim() === ""
-          ? null
-          : (values.default_value?.trim() ?? null);
-      const columnType = buildColumnTypeWithConfig(
-        values.data_type,
-        values.length || "",
-        values.scale || "",
-        values.unsigned || false,
-        {
-          scaleTypes: scaleSet,
-          unsignedTypes: unsignedSet,
-        }
-      );
-
-      if (columnModalMode === "edit") {
-        const request: AlterColumnRequest = {
-          old_name: editingColumnName,
-          new_name: values.name.trim(),
-          column_type: columnType,
-          nullable: values.nullable,
-          default_value: defaultVal,
-          extra: values.extra || "",
-          comment: values.comment?.trim() || "",
-          is_primary: isSqlServer ? undefined : values.is_primary === true,
-        };
-        await alterColumn(connId, database, table, request);
+      if (change.mode === "edit") {
+        await alterColumn(connId, database, table, change.request);
         messageApi.success(`列 "${editingColumnName}" 修改成功`);
       } else {
-        const request: AddColumnRequest = {
-          name: values.name.trim(),
-          column_type: columnType,
-          nullable: values.nullable,
-          default_value: defaultVal,
-          extra: values.extra || "",
-          comment: values.comment?.trim() || "",
-          after_column: values.after_column || null,
-        };
-        await addColumn(connId, database, table, request);
-        messageApi.success(`列 "${values.name}" 新增成功`);
+        await addColumn(connId, database, table, change.request);
+        messageApi.success(`列 "${change.request.name}" 新增成功`);
       }
 
       setColumnModalOpen(false);
@@ -536,15 +620,11 @@ export function TableStructure() {
     connId,
     database,
     table,
-    columnForm,
-    columnModalMode,
+    getColumnRequest,
     editingColumnName,
     alterColumn,
     addColumn,
     messageApi,
-    isSqlServer,
-    scaleSet,
-    unsignedSet,
   ]);
 
   // 删除列
@@ -911,6 +991,19 @@ export function TableStructure() {
         okText="保存"
         cancelText="取消"
         destroyOnHidden
+        footer={(_, { OkBtn, CancelBtn }) => (
+          <>
+            <CancelBtn />
+            <Button
+              icon={<CodeOutlined />}
+              disabled={editLoading}
+              onClick={() => void handlePreview("table")}
+            >
+              SQL 预览
+            </Button>
+            <OkBtn />
+          </>
+        )}
       >
         <Form form={editForm} layout="vertical" size="small">
           <Form.Item
@@ -957,6 +1050,27 @@ export function TableStructure() {
         cancelText="取消"
         destroyOnHidden
         width={520}
+        style={{ top: 48, paddingBottom: 32 }}
+        styles={{
+          body: {
+            maxHeight: "calc(100dvh - 220px)",
+            overflowY: "auto",
+            paddingRight: 8,
+          },
+        }}
+        footer={(_, { OkBtn, CancelBtn }) => (
+          <>
+            <CancelBtn />
+            <Button
+              icon={<CodeOutlined />}
+              disabled={columnLoading}
+              onClick={() => void handlePreview("column")}
+            >
+              SQL 预览
+            </Button>
+            <OkBtn />
+          </>
+        )}
       >
         <Form form={columnForm} layout="vertical" size="small">
           <Form.Item
@@ -992,18 +1106,21 @@ export function TableStructure() {
                 }
                 return false;
               }}
-              onChange={() => {
-                const dt = columnForm.getFieldValue("data_type") as string;
-                if (!unsignedSet.has(dt)) {
-                  columnForm.setFieldValue("unsigned", false);
-                }
-              }}
+              onChange={(dataType: string) =>
+                columnForm.setFieldsValue(
+                  getColumnTypeChangeValues(
+                    dataType,
+                    databaseType,
+                    columnForm.getFieldsValue()
+                  )
+                )
+              }
             />
           </Form.Item>
           <Form.Item noStyle dependencies={["data_type"]}>
             {() => {
               const dt = columnForm.getFieldValue("data_type") as string;
-              const showLength = lengthSet.has(dt);
+              const showLength = lengthSet.has(dt) || scaleSet.has(dt);
               const showScale = scaleSet.has(dt);
               const showUnsigned = unsignedSet.has(dt);
               return (
@@ -1080,6 +1197,13 @@ export function TableStructure() {
           )}
         </Form>
       </Modal>
+      <SqlPreviewModal
+        open={previewOpen}
+        loading={previewLoading}
+        sql={previewSql}
+        error={previewError}
+        onClose={closePreview}
+      />
     </div>
   );
 }

@@ -480,15 +480,58 @@ pub async fn drop_column(
     .await
 }
 
-/// 修改列：先按一次查询拿到当前列元数据 + 主键约束，再生成最小 SQL 集执行。
-pub async fn alter_column(
+/// 构建包含主键变更的完整修改语句；约束名来自数据库元数据。
+pub fn build_complete_alter_column_sqls(
+    schema: &str,
+    table: &str,
+    current: &ColumnInfo,
+    request: &AlterColumnRequest,
+    current_pk_columns: &[String],
+    pk_constraint: Option<&str>,
+) -> Vec<String> {
+    // 3) 计算改列 SQL
+    let mut sqls = build_alter_column_sqls(schema, table, current, request);
+
+    // 4) 处理主键调整
+    if let Some(is_primary) = request.is_primary {
+        let target_name = if request.new_name.trim().is_empty() {
+            request.old_name.clone()
+        } else {
+            request.new_name.clone()
+        };
+        let renamed_pk: Vec<String> = current_pk_columns
+            .iter()
+            .map(|c| {
+                if c == &request.old_name {
+                    target_name.clone()
+                } else {
+                    c.clone()
+                }
+            })
+            .collect();
+        let mut target_pk = renamed_pk.clone();
+        if is_primary {
+            if !target_pk.iter().any(|c| c == &target_name) {
+                target_pk.push(target_name.clone());
+            }
+        } else {
+            target_pk.retain(|c| c != &target_name && c != &request.old_name);
+        }
+        let pk_sqls =
+            build_primary_key_change_sqls(schema, table, &renamed_pk, pk_constraint, &target_pk);
+        sqls.extend(pk_sqls);
+    }
+
+    sqls
+}
+
+/// 只读取元数据，不执行 DDL；实际执行复用这份计划。
+pub async fn preview_alter_column(
     pool: &PgPool,
     schema: &str,
     table: &str,
     request: &AlterColumnRequest,
-) -> Result<(), String> {
-    let client = get_client_with_retry(pool).await?;
-
+) -> Result<Vec<String>, String> {
     // 1) 当前列定义
     let cols = crate::db::postgres::get_table_structure(pool, schema, table).await?;
     let current = cols
@@ -497,10 +540,11 @@ pub async fn alter_column(
         .ok_or_else(|| format!("列 `{}` 不存在", request.old_name))?;
 
     // 2) 一次性查当前主键列与约束名
+    let client = get_client_with_retry(pool).await?;
     let pk_row = client
         .query_opt(
             "SELECT tc.constraint_name, \
-                    COALESCE(string_agg(kcu.column_name, ',' ORDER BY kcu.ordinal_position), '') AS cols \
+                    array_agg(kcu.column_name::text ORDER BY kcu.ordinal_position) AS cols \
              FROM information_schema.table_constraints tc \
              LEFT JOIN information_schema.key_column_usage kcu \
                     ON kcu.constraint_schema = tc.constraint_schema \
@@ -518,53 +562,30 @@ pub async fn alter_column(
     let (pk_constraint, current_pk_columns): (Option<String>, Vec<String>) = match pk_row {
         Some(row) => {
             let name: String = row.get::<_, String>(0);
-            let cols_str: String = row.get::<_, String>(1);
-            let cols: Vec<String> = if cols_str.is_empty() {
-                Vec::new()
-            } else {
-                cols_str.split(',').map(|s| s.to_string()).collect()
-            };
+            let cols: Vec<String> = row.get(1);
             (Some(name), cols)
         }
         None => (None, Vec::new()),
     };
 
-    // 3) 计算改列 SQL
-    let mut sqls = build_alter_column_sqls(schema, table, &current, request);
+    Ok(build_complete_alter_column_sqls(
+        schema,
+        table,
+        &current,
+        request,
+        &current_pk_columns,
+        pk_constraint.as_deref(),
+    ))
+}
 
-    // 4) 处理主键调整
-    if let Some(is_primary) = request.is_primary {
-        let target_name = if request.new_name.trim().is_empty() {
-            request.old_name.clone()
-        } else {
-            request.new_name.clone()
-        };
-        let mut target_pk: Vec<String> = current_pk_columns
-            .iter()
-            .map(|c| {
-                if c == &request.old_name {
-                    target_name.clone()
-                } else {
-                    c.clone()
-                }
-            })
-            .collect();
-        if is_primary {
-            if !target_pk.iter().any(|c| c == &target_name) {
-                target_pk.push(target_name.clone());
-            }
-        } else {
-            target_pk.retain(|c| c != &target_name && c != &request.old_name);
-        }
-        let pk_sqls = build_primary_key_change_sqls(
-            schema,
-            table,
-            &current_pk_columns,
-            pk_constraint.as_deref(),
-            &target_pk,
-        );
-        sqls.extend(pk_sqls);
-    }
+/// 修改列：先按一次查询拿到当前列元数据 + 主键约束，再生成最小 SQL 集执行。
+pub async fn alter_column(
+    pool: &PgPool,
+    schema: &str,
+    table: &str,
+    request: &AlterColumnRequest,
+) -> Result<(), String> {
+    let sqls = preview_alter_column(pool, schema, table, request).await?;
 
     // 5) 顺序执行（合并到一个事务，确保部分失败时回滚）
     if sqls.is_empty() {
@@ -575,11 +596,9 @@ pub async fn alter_column(
         .transaction()
         .await
         .map_err(|e| format_pg_error("修改列", e))?;
-    for sql in &sqls {
-        if let Err(e) = tx.simple_query(sql).await {
-            let _ = tx.rollback().await;
-            return Err(format_pg_error("修改列", e));
-        }
+    if let Err(e) = tx.batch_execute(&sqls.join(";\n")).await {
+        let _ = tx.rollback().await;
+        return Err(format_pg_error("修改列", e));
     }
     tx.commit()
         .await
@@ -710,6 +729,39 @@ mod tests {
             extra: String::new(),
             comment: comment.to_string(),
         }
+    }
+
+    #[test]
+    fn preview_alter_column_uses_actual_primary_key_constraint_and_preserves_other_changes() {
+        let current = col("id", "bigint", false, None, "");
+        let request = AlterColumnRequest {
+            old_name: "id".into(),
+            new_name: "user_id".into(),
+            column_type: "bigint".into(),
+            nullable: false,
+            default_value: Some("42".into()),
+            extra: String::new(),
+            comment: "用户编号".into(),
+            is_primary: Some(false),
+            column_placement: None,
+        };
+        let sqls = build_complete_alter_column_sqls(
+            "public",
+            "users",
+            &current,
+            &request,
+            &["id".into()],
+            Some("custom_pk"),
+        );
+        assert_eq!(
+            sqls,
+            vec![
+                "ALTER TABLE \"public\".\"users\" RENAME COLUMN \"id\" TO \"user_id\"",
+                "ALTER TABLE \"public\".\"users\" ALTER COLUMN \"user_id\" SET DEFAULT 42",
+                "COMMENT ON COLUMN \"public\".\"users\".\"user_id\" IS '用户编号'",
+                "ALTER TABLE \"public\".\"users\" DROP CONSTRAINT \"custom_pk\"",
+            ]
+        );
     }
 
     #[test]

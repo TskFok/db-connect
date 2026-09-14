@@ -1925,18 +1925,22 @@ pub async fn drop_table(pool: &Pool, database: &str, table: &str) -> Result<(), 
     execute_table_ddl(pool, "删除表", database, table, sql).await
 }
 
+pub fn build_rename_table_sql(database: &str, old_name: &str, new_name: &str) -> String {
+    format!(
+        "ALTER TABLE {}.{} RENAME TO {}",
+        sqlite_id(database),
+        sqlite_id(old_name),
+        sqlite_id(new_name)
+    )
+}
+
 pub async fn rename_table(
     pool: &Pool,
     database: &str,
     old_name: &str,
     new_name: &str,
 ) -> Result<(), String> {
-    let sql = format!(
-        "ALTER TABLE {}.{} RENAME TO {}",
-        sqlite_id(database),
-        sqlite_id(old_name),
-        sqlite_id(new_name)
-    );
+    let sql = build_rename_table_sql(database, old_name, new_name);
     execute_table_ddl(pool, "重命名表", database, old_name, sql).await
 }
 

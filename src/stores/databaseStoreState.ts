@@ -23,10 +23,17 @@ export type OpenTabEntry =
  */
 export type ViewMode = "overview" | "tab";
 
+export interface TableSearchState {
+  visible: boolean;
+  keyword: string;
+}
+
 /** 单个连接的数据库状态 */
 export interface ConnectionDatabaseState {
   databases: string[];
   tables: Record<string, TableInfo[]>;
+  /** 按数据库保存表列表搜索，切换至数据表或其他连接时保留 */
+  tableSearchByDatabase: Record<string, TableSearchState>;
   /** 打开的多个表（tab 列表）- 保留用于兼容，实际使用 openTabs */
   openTables: OpenTableEntry[];
   /** 当前激活的表 tab 索引 - 保留用于兼容 */
@@ -77,6 +84,7 @@ export interface ConnectionDatabaseState {
 export const emptyConnState = (): ConnectionDatabaseState => ({
   databases: [],
   tables: {},
+  tableSearchByDatabase: {},
   openTables: [],
   activeTableTabIndex: 0,
   openTabs: [],

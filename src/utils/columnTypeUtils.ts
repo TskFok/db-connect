@@ -1,3 +1,5 @@
+import type { DatabaseType } from "../types";
+
 /** MySQL 数据类型分组选项 (用于 Select 下拉框) */
 export const MYSQL_DATA_TYPES = [
   {
@@ -253,6 +255,74 @@ export const CLICKHOUSE_LENGTH_TYPES = new Set<string>();
 export const CLICKHOUSE_SCALE_TYPES = new Set<string>();
 export const CLICKHOUSE_UNSIGNED_TYPES = new Set<string>();
 
+/** 切换列类型时重置类型参数，保留仍然兼容的修饰符。 */
+export function getColumnTypeChangeValues(
+  dataType: string,
+  databaseType: DatabaseType,
+  current: { unsigned?: boolean; extra?: string } = {}
+): {
+  data_type: string;
+  length: string;
+  scale: string;
+  unsigned: boolean;
+  extra: string;
+} {
+  const type = dataType.trim().toLowerCase();
+  let length = "";
+  let scale = "";
+
+  // SQLite 使用亲和性，ClickHouse 在类型文本内维护参数。
+  if (databaseType !== "sqlite" && databaseType !== "clickhouse") {
+    if (type === "decimal" || type === "numeric") {
+      length = databaseType === "sqlserver" ? "18" : "10";
+      scale = "2";
+    } else if (type === "varchar" || type === "nvarchar") {
+      length = "255";
+    } else if (type === "varbinary") {
+      length = databaseType === "sqlserver" ? "max" : "255";
+    } else if (
+      ["char", "nchar", "binary"].includes(type) ||
+      (type === "bit" && databaseType !== "sqlserver") ||
+      (type === "varbit" && databaseType === "postgres")
+    ) {
+      length = "1";
+    }
+  }
+
+  const extra = current.extra?.trim() ?? "";
+  const normalizedExtra = extra.toLowerCase();
+  const timestampUpdate = /^on update current_timestamp(?:\(([0-6]?)\))?$/.exec(
+    normalizedExtra
+  );
+  const preserveTimestampUpdate =
+    databaseType === "mysql" &&
+    (type === "datetime" || type === "timestamp") &&
+    timestampUpdate !== null;
+  if (preserveTimestampUpdate && timestampUpdate[1]) {
+    length = timestampUpdate[1];
+  }
+  const integerType = ["tinyint", "smallint", "int", "bigint"].includes(type);
+  const preserveExtra =
+    (databaseType === "mysql" &&
+      ((normalizedExtra === "auto_increment" &&
+        (integerType || type === "mediumint")) ||
+        preserveTimestampUpdate)) ||
+    (databaseType === "sqlserver" &&
+      normalizedExtra === "identity" &&
+      integerType);
+
+  return {
+    data_type: dataType,
+    length,
+    scale,
+    unsigned:
+      databaseType === "mysql" &&
+      UNSIGNED_TYPES.has(type) &&
+      current.unsigned === true,
+    extra: preserveExtra ? extra : "",
+  };
+}
+
 /** 解析后的列类型结构 */
 export interface ParsedColumnType {
   /** 基础数据类型 (如 varchar, int) */
@@ -298,8 +368,11 @@ export function parseColumnType(columnType: string): ParsedColumnType {
       ? withoutUnsigned.slice(parenStart + 1, parenEnd).trim()
       : "";
 
-  // 对 decimal/float/double 拆分精度和小数位数
-  if (SCALE_TYPES.has(dataType) && rawContent.includes(",")) {
+  // 对精确/浮点数类型拆分精度和小数位数，包含 PostgreSQL/SQL Server 的 numeric。
+  if (
+    (SCALE_TYPES.has(dataType) || POSTGRES_SCALE_TYPES.has(dataType)) &&
+    rawContent.includes(",")
+  ) {
     const parts = rawContent.split(",");
     return {
       dataType,

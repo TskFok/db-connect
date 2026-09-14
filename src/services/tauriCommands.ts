@@ -433,6 +433,66 @@ export async function addColumn(
   return invoke<void>("add_column", { connId, database, table, request });
 }
 
+/** 仅生成新增列 SQL，不执行 DDL。 */
+export async function previewAddColumn(
+  connId: string,
+  database: string,
+  table: string,
+  request: AddColumnRequest
+): Promise<string[]> {
+  return invoke<string[]>("preview_add_column", {
+    connId,
+    database,
+    table,
+    request,
+  });
+}
+
+/** 读取当前元数据，预览修改列及主键的完整 SQL。 */
+export async function previewAlterColumn(
+  connId: string,
+  database: string,
+  table: string,
+  request: AlterColumnRequest
+): Promise<string[]> {
+  return invoke<string[]>("preview_alter_column", {
+    connId,
+    database,
+    table,
+    request,
+  });
+}
+
+/** 预览表重命名与引擎调整；engine 为 null 时不修改引擎。 */
+export async function previewTableProperties(
+  connId: string,
+  database: string,
+  table: string,
+  newName: string,
+  engine: string | null
+): Promise<string[]> {
+  return invoke<string[]>("preview_table_properties", {
+    connId,
+    database,
+    table,
+    newName,
+    engine,
+  });
+}
+
+/** 仅生成新建表 SQL，不执行 DDL。 */
+export async function previewCreateTable(
+  connId: string,
+  database: string,
+  request: CreateTableRequest
+): Promise<string[]> {
+  return invoke<string[]>("preview_create_table", {
+    connId,
+    database,
+    request,
+  });
+}
+
 /**
  * 新建表
  */

@@ -15,6 +15,7 @@ import {
   type ConnectionDatabaseState,
   type OpenTabEntry,
   type OpenTableEntry,
+  type TableSearchState,
   type ViewMode,
 } from "./databaseStoreState";
 import { applyOpenTabDerivedState, syncCurrentView } from "./databaseStoreView";
@@ -200,6 +201,11 @@ interface DatabaseState {
   setExpandedKeys: (keys: string[]) => void;
   setDatabaseSortOrder: (order: "asc" | "desc") => void;
   setTableSortOrder: (order: "asc" | "desc") => void;
+  setTableSearch: (
+    connId: string,
+    database: string,
+    search: Partial<TableSearchState>
+  ) => void;
   setTableContentActiveTab: (tab: string) => void;
   /** 切换到指定连接，恢复其缓存状态 */
   switchToConnection: (connId: string) => void;
@@ -1421,6 +1427,30 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     set({
       connectionStates: newStates,
       tableSortOrder: order,
+    });
+  },
+
+  setTableSearch: (connId, database, search) => {
+    set((s) => {
+      const state = s.connectionStates[connId] ?? emptyConnState();
+      return {
+        connectionStates: {
+          ...s.connectionStates,
+          [connId]: {
+            ...state,
+            tableSearchByDatabase: {
+              ...state.tableSearchByDatabase,
+              [database]: {
+                ...(state.tableSearchByDatabase?.[database] ?? {
+                  visible: false,
+                  keyword: "",
+                }),
+                ...search,
+              },
+            },
+          },
+        },
+      };
     });
   },
 

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Modal,
   Form,
@@ -33,11 +33,14 @@ import {
   CLICKHOUSE_LENGTH_TYPES,
   CLICKHOUSE_SCALE_TYPES,
   CLICKHOUSE_UNSIGNED_TYPES,
+  getColumnTypeChangeValues,
 } from "../../utils/columnTypeUtils";
 import { formColumnToDef } from "../../utils/createTableFormUtils";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { getDatabaseCapabilities } from "../../utils/databaseCapabilities";
 import { normalizeDatabaseType } from "../../utils/connectionConfig";
+import { previewCreateTable } from "../../services/tauriCommands";
+import { SqlPreviewModal } from "../common/SqlPreviewModal";
 
 const { Text } = Typography;
 
@@ -131,8 +134,8 @@ export function CreateTableModal({
     : isClickHouse
       ? CLICKHOUSE_UNSIGNED_TYPES
       : showMysqlEngine
-      ? UNSIGNED_TYPES
-      : new Set<string>();
+        ? UNSIGNED_TYPES
+        : new Set<string>();
   const extraOptions = showMysqlEngine
     ? MYSQL_EXTRA_OPTIONS
     : isSqlServer
@@ -142,9 +145,9 @@ export function CreateTableModal({
     ? "TEXT"
     : isClickHouse
       ? "String"
-    : isSqlServer
-      ? "nvarchar"
-      : "varchar";
+      : isSqlServer
+        ? "nvarchar"
+        : "varchar";
   const idDefault = showMysqlEngine
     ? {
         name: "id",
@@ -171,36 +174,10 @@ export function CreateTableModal({
           extra: "",
           comment: "",
         }
-    : isSqlite
-      ? {
-          name: "id",
-          data_type: "INTEGER",
-          length: "",
-          scale: "",
-          unsigned: false,
-          nullable: false,
-          is_primary: true,
-          default_value: "",
-          extra: "",
-          comment: "",
-        }
-      : isSqlServer
+      : isSqlite
         ? {
             name: "id",
-            data_type: "bigint",
-            length: "",
-            scale: "",
-            unsigned: false,
-            nullable: false,
-            is_primary: true,
-            default_value: "",
-            extra: "identity",
-            comment: "",
-          }
-        : {
-            // PostgreSQL 默认主键使用 bigserial（隐含 NOT NULL + 自动序列）
-            name: "id",
-            data_type: "bigserial",
+            data_type: "INTEGER",
             length: "",
             scale: "",
             unsigned: false,
@@ -209,7 +186,33 @@ export function CreateTableModal({
             default_value: "",
             extra: "",
             comment: "",
-          };
+          }
+        : isSqlServer
+          ? {
+              name: "id",
+              data_type: "bigint",
+              length: "",
+              scale: "",
+              unsigned: false,
+              nullable: false,
+              is_primary: true,
+              default_value: "",
+              extra: "identity",
+              comment: "",
+            }
+          : {
+              // PostgreSQL 默认主键使用 bigserial（隐含 NOT NULL + 自动序列）
+              name: "id",
+              data_type: "bigserial",
+              length: "",
+              scale: "",
+              unsigned: false,
+              nullable: false,
+              is_primary: true,
+              default_value: "",
+              extra: "",
+              comment: "",
+            };
   const [form] = Form.useForm();
   const watchedColumns = Form.useWatch("columns", form) as
     | Record<string, unknown>[]
@@ -224,65 +227,117 @@ export function CreateTableModal({
   );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewSql, setPreviewSql] = useState<string[]>([]);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const previewSequence = useRef(0);
 
-  const handleSubmit = async () => {
-    try {
-      const values = await form.validateFields();
-      setSubmitting(true);
-      setError(null);
+  useEffect(() => {
+    previewSequence.current += 1;
+    setPreviewOpen(false);
+    setPreviewLoading(false);
+    return () => {
+      previewSequence.current += 1;
+    };
+  }, [connId, database, databaseType, open]);
 
-      const typeConfig = {
-        scaleTypes: scaleSet,
-        unsignedTypes: unsignedSet,
-      };
-      const rawColumns: CreateTableColumnDef[] = (
-        values.columns as Record<string, unknown>[]
-      ).map((col) => formColumnToDef(col, typeConfig));
-      const columns = isSqlite
+  const buildValidatedRequest = async (): Promise<CreateTableRequest> => {
+    const values = await form.validateFields();
+
+    const typeConfig = {
+      scaleTypes: scaleSet,
+      unsignedTypes: unsignedSet,
+    };
+    const rawColumns: CreateTableColumnDef[] = (
+      values.columns as Record<string, unknown>[]
+    ).map((col) => formColumnToDef(col, typeConfig));
+    const columns = isSqlite
+      ? rawColumns.map((col) => ({
+          ...col,
+          extra: "",
+          comment: "",
+        }))
+      : isClickHouse
         ? rawColumns.map((col) => ({
             ...col,
             extra: "",
             comment: "",
           }))
-        : isClickHouse
-          ? rawColumns.map((col) => ({
-              ...col,
-              extra: "",
-              comment: "",
-            }))
         : rawColumns;
 
-      const primaryKeys: string[] = isClickHouse
-        ? []
-        : (values.columns || [])
-            .map((col: Record<string, unknown>) => ({
-              name: ((col.name as string) || "").trim(),
-              isPrimary: col.is_primary === true,
-            }))
-            .filter(
-              (col: { name: string; isPrimary: boolean }) =>
-                col.isPrimary && col.name.length > 0
-            )
-            .map((col: { name: string; isPrimary: boolean }) => col.name);
-      const orderBy = ((values.order_by as string[] | undefined) ?? [])
-        .map((name) => name.trim())
-        .filter((name) => name.length > 0);
+    const primaryKeys: string[] = isClickHouse
+      ? []
+      : (values.columns || [])
+          .map((col: Record<string, unknown>) => ({
+            name: ((col.name as string) || "").trim(),
+            isPrimary: col.is_primary === true,
+          }))
+          .filter(
+            (col: { name: string; isPrimary: boolean }) =>
+              col.isPrimary && col.name.length > 0
+          )
+          .map((col: { name: string; isPrimary: boolean }) => col.name);
+    const orderBy = ((values.order_by as string[] | undefined) ?? [])
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0);
 
-      const request: CreateTableRequest = {
-        table_name: values.table_name.trim(),
-        columns,
-        primary_keys: primaryKeys,
-        // PostgreSQL/SQLite 不需要 engine，后端读取此字段在对应路径下被忽略
-        engine: isClickHouse
-          ? values.engine || "MergeTree"
-          : showMysqlEngine
-            ? values.engine || "InnoDB"
-            : "",
-        order_by: isClickHouse ? orderBy : undefined,
-        comment: isSqlite || isClickHouse ? "" : (values.comment || "").trim(),
-      };
+    const request: CreateTableRequest = {
+      table_name: values.table_name.trim(),
+      columns,
+      primary_keys: primaryKeys,
+      // PostgreSQL/SQLite 不需要 engine，后端读取此字段在对应路径下被忽略
+      engine: isClickHouse
+        ? values.engine || "MergeTree"
+        : showMysqlEngine
+          ? values.engine || "InnoDB"
+          : "",
+      order_by: isClickHouse ? orderBy : undefined,
+      comment: isSqlite || isClickHouse ? "" : (values.comment || "").trim(),
+    };
 
+    return request;
+  };
+
+  const handleClosePreview = () => {
+    previewSequence.current += 1;
+    setPreviewOpen(false);
+    setPreviewLoading(false);
+  };
+
+  const handlePreview = async () => {
+    const sequence = ++previewSequence.current;
+    let request: CreateTableRequest;
+    try {
+      request = await buildValidatedRequest();
+    } catch {
+      return;
+    }
+
+    if (sequence !== previewSequence.current) return;
+    setPreviewOpen(true);
+    setPreviewLoading(true);
+    setPreviewSql([]);
+    setPreviewError(null);
+    try {
+      const sql = await previewCreateTable(connId, database, request);
+      if (sequence === previewSequence.current) setPreviewSql(sql);
+    } catch (e) {
+      if (sequence === previewSequence.current) {
+        setPreviewError(e instanceof Error ? e.message : String(e));
+      }
+    } finally {
+      if (sequence === previewSequence.current) setPreviewLoading(false);
+    }
+  };
+
+  const handleSubmit = async () => {
+    try {
+      const request = await buildValidatedRequest();
+      setSubmitting(true);
+      setError(null);
       await onCreateTable(connId, database, request);
+      handleClosePreview();
       form.resetFields();
       onSuccess();
     } catch (e) {
@@ -297,6 +352,7 @@ export function CreateTableModal({
   };
 
   const handleCancel = () => {
+    handleClosePreview();
     form.resetFields();
     setError(null);
     onCancel();
@@ -308,15 +364,28 @@ export function CreateTableModal({
       open={open}
       onCancel={handleCancel}
       width={1120}
+      style={{ top: 48, paddingBottom: 32 }}
+      styles={{
+        body: { maxHeight: "calc(100vh - 220px)", overflowY: "auto" },
+      }}
       destroyOnHidden
       footer={[
         <Button key="cancel" onClick={handleCancel}>
           取消
         </Button>,
         <Button
+          key="preview"
+          onClick={handlePreview}
+          loading={previewLoading}
+          disabled={submitting}
+        >
+          SQL 预览
+        </Button>,
+        <Button
           key="submit"
           type="primary"
           loading={submitting}
+          disabled={previewLoading}
           onClick={handleSubmit}
         >
           创建
@@ -386,7 +455,10 @@ export function CreateTableModal({
                 />
               ) : (
                 <Select
-                  options={ENGINE_OPTIONS.map((e) => ({ label: e, value: e }))}
+                  options={ENGINE_OPTIONS.map((e) => ({
+                    label: e,
+                    value: e,
+                  }))}
                   showSearch
                 />
               )}
@@ -470,7 +542,9 @@ export function CreateTableModal({
                       name,
                       "data_type",
                     ]) as string;
-                    const showLength = lengthSet.has(currentDataType);
+                    const showLength =
+                      lengthSet.has(currentDataType) ||
+                      scaleSet.has(currentDataType);
                     const showScale = scaleSet.has(currentDataType);
                     const showUnsigned = unsignedSet.has(currentDataType);
 
@@ -528,18 +602,19 @@ export function CreateTableModal({
                               }
                               return false;
                             }}
-                            onChange={() => {
-                              const dt = form.getFieldValue([
+                            onChange={(dataType: string) => {
+                              const column = form.getFieldValue([
                                 "columns",
                                 name,
-                                "data_type",
-                              ]) as string;
-                              if (!unsignedSet.has(dt)) {
-                                form.setFieldValue(
-                                  ["columns", name, "unsigned"],
-                                  false
-                                );
-                              }
+                              ]);
+                              form.setFieldValue(["columns", name], {
+                                ...column,
+                                ...getColumnTypeChangeValues(
+                                  dataType,
+                                  databaseType,
+                                  column
+                                ),
+                              });
                             }}
                           />
                         </Form.Item>
@@ -671,14 +746,13 @@ export function CreateTableModal({
                   onClick={() =>
                     add({
                       name: "",
-                      data_type: defaultDataType,
-                      length: isSqlite || isClickHouse ? "" : "255",
-                      scale: "",
-                      unsigned: false,
+                      ...getColumnTypeChangeValues(
+                        defaultDataType,
+                        databaseType
+                      ),
                       nullable: true,
                       is_primary: false,
                       default_value: "",
-                      extra: "",
                       comment: "",
                     })
                   }
@@ -693,6 +767,13 @@ export function CreateTableModal({
           </Form.List>
         </Form.Item>
       </Form>
+      <SqlPreviewModal
+        open={open && previewOpen}
+        loading={previewLoading}
+        sql={previewSql}
+        error={previewError}
+        onClose={handleClosePreview}
+      />
     </Modal>
   );
 }

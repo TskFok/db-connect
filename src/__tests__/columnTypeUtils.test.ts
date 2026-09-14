@@ -15,7 +15,98 @@ import {
   CLICKHOUSE_SCALE_TYPES,
   CLICKHOUSE_UNSIGNED_TYPES,
   buildColumnTypeWithConfig,
+  getColumnTypeChangeValues,
 } from "../utils/columnTypeUtils";
+
+describe("切换数据类型的数据库兼容性", () => {
+  it.each([
+    ["sqlite", "NUMERIC"],
+    ["clickhouse", "Decimal(18,2)"],
+    ["clickhouse", "Nullable(String)"],
+    ["sqlserver", "bit"],
+    ["mysql", "enum"],
+    ["mysql", "set"],
+    ["mysql", "float"],
+    ["mysql", "double"],
+  ] as const)(
+    "%s 的 %s 不继承旧类型的长度与修饰符",
+    (databaseType, dataType) => {
+      expect(
+        getColumnTypeChangeValues(dataType, databaseType, {
+          unsigned: false,
+          extra: "auto_increment",
+        })
+      ).toEqual({
+        data_type: dataType,
+        length: "",
+        scale: "",
+        unsigned: false,
+        extra: "",
+      });
+    }
+  );
+
+  it("MySQL 整数仍保留自增和 unsigned，不自动加入显示宽度", () => {
+    expect(
+      getColumnTypeChangeValues("bigint", "mysql", {
+        unsigned: true,
+        extra: "auto_increment",
+      })
+    ).toEqual({
+      data_type: "bigint",
+      length: "",
+      scale: "",
+      unsigned: true,
+      extra: "auto_increment",
+    });
+  });
+
+  it("MySQL ON UPDATE 仅在 timestamp/datetime 间切换时保留", () => {
+    expect(
+      getColumnTypeChangeValues("timestamp", "mysql", {
+        extra: "ON UPDATE CURRENT_TIMESTAMP",
+      }).extra
+    ).toBe("ON UPDATE CURRENT_TIMESTAMP");
+    expect(
+      getColumnTypeChangeValues("date", "mysql", {
+        extra: "ON UPDATE CURRENT_TIMESTAMP",
+      }).extra
+    ).toBe("");
+  });
+
+  it("保留 MySQL ON UPDATE 小数秒时同步设置时间列精度", () => {
+    expect(
+      getColumnTypeChangeValues("timestamp", "mysql", {
+        extra: "ON UPDATE CURRENT_TIMESTAMP(3)",
+      })
+    ).toEqual({
+      data_type: "timestamp",
+      length: "3",
+      scale: "",
+      unsigned: false,
+      extra: "ON UPDATE CURRENT_TIMESTAMP(3)",
+    });
+  });
+
+  it("SQL Server 整型保留 identity，但字符类型清空 identity 和 unsigned", () => {
+    expect(
+      getColumnTypeChangeValues("bigint", "sqlserver", { extra: "identity" })
+        .extra
+    ).toBe("identity");
+    expect(
+      getColumnTypeChangeValues("nvarchar", "sqlserver", {
+        unsigned: true,
+        extra: "identity",
+      })
+    ).toEqual({
+      data_type: "nvarchar",
+      length: "255",
+      scale: "",
+      unsigned: false,
+      extra: "",
+    });
+  });
+});
 
 describe("parseColumnType", () => {
   it("解析简单类型 (无长度, 无 unsigned)", () => {
@@ -77,6 +168,15 @@ describe("parseColumnType", () => {
       dataType: "decimal",
       length: "10",
       scale: "",
+      unsigned: false,
+    });
+  });
+
+  it("解析 PostgreSQL/SQL Server numeric 时拆分总位数与小数位", () => {
+    expect(parseColumnType("numeric(12,4)")).toEqual({
+      dataType: "numeric",
+      length: "12",
+      scale: "4",
       unsigned: false,
     });
   });
