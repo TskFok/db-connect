@@ -12,6 +12,7 @@ pub fn esc_pg_str_external(value: &str) -> String {
 use crate::models::types::{
     ColumnInfo, ConnectionConfig, QueryResult, SqlExecuteResult, TableInfo,
 };
+use bytes::BytesMut;
 use deadpool_postgres::{Config as PgPoolConfig, Pool as PgPool, PoolConfig, Runtime, SslMode};
 use native_tls::{Certificate, Identity, TlsConnector};
 use postgres_native_tls::MakeTlsConnector;
@@ -20,7 +21,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
-use tokio_postgres::types::{ToSql, Type};
+use tokio_postgres::types::{Format, IsNull, ToSql, Type};
 use tokio_postgres::{CancelToken, NoTls, SimpleQueryMessage};
 
 #[derive(Clone)]
@@ -649,16 +650,37 @@ impl PgInputValue {
             other => PgInputValue::Text(other.to_string()),
         }
     }
-
-    pub fn as_owned_text(&self) -> Option<String> {
-        match self {
-            PgInputValue::Null => None,
-            PgInputValue::Text(s) => Some(s.clone()),
-        }
-    }
 }
 
-/// 以 UNKNOWN 类型预编译 SQL，再以 `&Option<String>` 形式绑定文本参数。
+impl ToSql for PgInputValue {
+    fn to_sql(
+        &self,
+        _ty: &Type,
+        out: &mut BytesMut,
+    ) -> Result<IsNull, Box<dyn std::error::Error + Sync + Send>> {
+        match self {
+            PgInputValue::Null => Ok(IsNull::Yes),
+            PgInputValue::Text(value) => {
+                out.extend_from_slice(value.as_bytes());
+                Ok(IsNull::No)
+            }
+        }
+    }
+
+    fn accepts(_ty: &Type) -> bool {
+        // 参数的实际类型由预编译推断，文本内容交给该类型的服务端输入函数校验。
+        true
+    }
+
+    fn encode_format(&self, _ty: &Type) -> Format {
+        // UNKNOWN 只负责类型推断；必须显式声明 Text，才能提交非文本列的文本表示。
+        Format::Text
+    }
+
+    tokio_postgres::types::to_sql_checked!();
+}
+
+/// 以 UNKNOWN 类型预编译 SQL，再绑定显式使用文本传输格式的参数。
 async fn execute_with_text_params(
     client: &deadpool_postgres::Client,
     sql: &str,
@@ -668,14 +690,15 @@ async fn execute_with_text_params(
     let stmt = client
         .prepare_typed(sql, &param_types)
         .await
-        .map_err(|e| format!("准备 SQL 失败: {}", e))?;
-    let owned: Vec<Option<String>> = values.iter().map(|v| v.as_owned_text()).collect();
-    let params: Vec<&(dyn ToSql + Sync)> =
-        owned.iter().map(|opt| opt as &(dyn ToSql + Sync)).collect();
+        .map_err(|e| format_pg_error("准备 SQL", e))?;
+    let params: Vec<&(dyn ToSql + Sync)> = values
+        .iter()
+        .map(|value| value as &(dyn ToSql + Sync))
+        .collect();
     client
         .execute(&stmt, &params)
         .await
-        .map_err(|e| format!("执行写操作失败: {}", e))
+        .map_err(|e| format_pg_error("执行写操作", e))
 }
 
 /// 在事务中执行带 UNKNOWN 参数的 SQL，复用同一份 prepare_typed 逻辑。
@@ -688,13 +711,14 @@ async fn execute_with_text_params_in_tx(
     let stmt = tx
         .prepare_typed(sql, &param_types)
         .await
-        .map_err(|e| format!("准备 SQL 失败: {}", e))?;
-    let owned: Vec<Option<String>> = values.iter().map(|v| v.as_owned_text()).collect();
-    let params: Vec<&(dyn ToSql + Sync)> =
-        owned.iter().map(|opt| opt as &(dyn ToSql + Sync)).collect();
+        .map_err(|e| format_pg_error("准备 SQL", e))?;
+    let params: Vec<&(dyn ToSql + Sync)> = values
+        .iter()
+        .map(|value| value as &(dyn ToSql + Sync))
+        .collect();
     tx.execute(&stmt, &params)
         .await
-        .map_err(|e| format!("执行写操作失败: {}", e))
+        .map_err(|e| format_pg_error("执行写操作", e))
 }
 
 /// 构建 PostgreSQL 单行 INSERT 语句与参数。
@@ -986,15 +1010,16 @@ pub async fn query_full_rows(
     let stmt = client
         .prepare_typed(&sql, &param_types)
         .await
-        .map_err(|e| format!("准备 SQL 失败: {}", e))?;
-    let owned: Vec<Option<String>> = values.iter().map(|v| v.as_owned_text()).collect();
-    let params: Vec<&(dyn ToSql + Sync)> =
-        owned.iter().map(|opt| opt as &(dyn ToSql + Sync)).collect();
+        .map_err(|e| format_pg_error("准备 SQL", e))?;
+    let params: Vec<&(dyn ToSql + Sync)> = values
+        .iter()
+        .map(|value| value as &(dyn ToSql + Sync))
+        .collect();
 
     let rows = client
         .query(&stmt, &params)
         .await
-        .map_err(|e| format!("查询完整行数据失败: {}", e))?;
+        .map_err(|e| format_pg_error("查询完整行数据", e))?;
 
     let columns: Vec<String> = stmt
         .columns()
@@ -1201,12 +1226,82 @@ mod tests {
     }
 
     #[test]
-    fn pg_input_value_owned_text_keeps_null_distinct() {
-        assert_eq!(PgInputValue::Null.as_owned_text(), None);
-        assert_eq!(
-            PgInputValue::Text("x".into()).as_owned_text(),
-            Some("x".to_string())
-        );
+    fn pg_input_value_serializes_inferred_types_as_text() {
+        let cases = [
+            (Type::INT2, serde_json::json!(42), "42"),
+            (Type::INT4, serde_json::json!(42), "42"),
+            (
+                Type::INT8,
+                serde_json::json!("3258946454736595494"),
+                "3258946454736595494",
+            ),
+            (Type::BOOL, serde_json::json!(true), "true"),
+            (Type::BOOL, serde_json::json!(false), "false"),
+            (
+                Type::NUMERIC,
+                serde_json::json!("1234567890.123456789"),
+                "1234567890.123456789",
+            ),
+            (Type::FLOAT8, serde_json::json!(1.5), "1.5"),
+            (Type::DATE, serde_json::json!("2026-09-14"), "2026-09-14"),
+            (
+                Type::TIMESTAMP,
+                serde_json::json!("2026-09-14 10:20:30"),
+                "2026-09-14 10:20:30",
+            ),
+            (
+                Type::TIMESTAMPTZ,
+                serde_json::json!("2026-09-14 10:20:30+08"),
+                "2026-09-14 10:20:30+08",
+            ),
+            (
+                Type::UUID,
+                serde_json::json!("00000000-0000-0000-0000-000000000001"),
+                "00000000-0000-0000-0000-000000000001",
+            ),
+            (Type::JSON, serde_json::json!({"k": 1}), "{\"k\":1}"),
+            (Type::JSONB, serde_json::json!({"k": 1}), "{\"k\":1}"),
+            (Type::INT4_ARRAY, serde_json::json!("{1,2,3}"), "{1,2,3}"),
+            (Type::BYTEA, serde_json::json!("\\x00ff"), "\\x00ff"),
+            (
+                Type::TEXT,
+                serde_json::json!("中文 ' $1 \\"),
+                "中文 ' $1 \\",
+            ),
+            (Type::VARCHAR, serde_json::json!(""), ""),
+        ];
+
+        for (ty, value, expected) in cases {
+            let param = PgInputValue::from_json(&value);
+            let mut bytes = BytesMut::new();
+            let result = param
+                .to_sql_checked(&ty, &mut bytes)
+                .unwrap_or_else(|error| panic!("{ty}: {error}"));
+            assert!(matches!(result, IsNull::No), "{ty}");
+            assert!(matches!(param.encode_format(&ty), Format::Text), "{ty}");
+            assert_eq!(&bytes[..], expected.as_bytes(), "{ty}");
+        }
+    }
+
+    #[test]
+    fn pg_input_value_serializes_typed_null_without_writing_bytes() {
+        for ty in [
+            Type::INT4,
+            Type::BOOL,
+            Type::TIMESTAMP,
+            Type::JSONB,
+            Type::UUID,
+            Type::TEXT,
+        ] {
+            let param = PgInputValue::Null;
+            let mut bytes = BytesMut::from(&b"prefix"[..]);
+            let result = param
+                .to_sql_checked(&ty, &mut bytes)
+                .unwrap_or_else(|error| panic!("{ty}: {error}"));
+            assert!(matches!(result, IsNull::Yes), "{ty}");
+            assert!(matches!(param.encode_format(&ty), Format::Text), "{ty}");
+            assert_eq!(&bytes[..], b"prefix");
+        }
     }
 
     #[test]

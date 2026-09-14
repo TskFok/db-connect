@@ -1251,6 +1251,7 @@ dependencies = [
  "base64 0.21.7",
  "bb8",
  "bb8-tiberius",
+ "bytes",
  "clickhouse",
  "deadpool-postgres",
  "deadpool-sqlite",

@@ -1,23 +1,27 @@
 //! PostgreSQL 错误格式化：把 SQLState 映射为中文场景化描述。
 
+use std::error::Error as _;
 use tokio_postgres::error::SqlState;
 
 /// PostgreSQL 错误格式化：把 SQLState 映射为中文场景化描述。
-/// 非数据库错误（连接失败等）保留原始信息。
+/// 非数据库错误（连接失败、参数序列化失败等）保留完整错误链。
 pub fn format_pg_error(action: &str, e: tokio_postgres::Error) -> String {
     if let Some(db_err) = e.as_db_error() {
         format_pg_db_error_message(action, db_err.code(), db_err.message())
     } else {
-        format!("{}失败: {}", action, e)
+        let mut detail = e.to_string();
+        let mut source = e.source();
+        while let Some(cause) = source {
+            detail.push_str(": ");
+            detail.push_str(&cause.to_string());
+            source = cause.source();
+        }
+        format!("{}失败: {}", action, detail)
     }
 }
 
 /// 将 SQLState + message 映射为可读错误（便于单测，无需构造真实 `tokio_postgres::Error`）。
-pub(crate) fn format_pg_db_error_message(
-    action: &str,
-    code: &SqlState,
-    detail: &str,
-) -> String {
+pub(crate) fn format_pg_db_error_message(action: &str, code: &SqlState, detail: &str) -> String {
     if *code == SqlState::DUPLICATE_TABLE
         || *code == SqlState::DUPLICATE_SCHEMA
         || *code == SqlState::DUPLICATE_OBJECT
@@ -54,6 +58,7 @@ pub(crate) fn format_pg_db_error_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn format_pg_db_error_includes_syntax_detail_instead_of_generic_db_error() {
@@ -62,10 +67,7 @@ mod tests {
             &SqlState::SYNTAX_ERROR,
             "syntax error at or near \"`\"",
         );
-        assert_eq!(
-            msg,
-            "执行 SQL失败 [42601]: syntax error at or near \"`\""
-        );
+        assert_eq!(msg, "执行 SQL失败 [42601]: syntax error at or near \"`\"");
         assert!(!msg.contains("db error"));
     }
 
@@ -84,11 +86,21 @@ mod tests {
 
     #[test]
     fn format_pg_error_non_db_keeps_kind_message() {
-        let msg = format_pg_error(
-            "执行 SQL",
-            tokio_postgres::Error::__private_api_timeout(),
-        );
+        let msg = format_pg_error("执行 SQL", tokio_postgres::Error::__private_api_timeout());
         assert_eq!(msg, "执行 SQL失败: timeout waiting for server");
         assert!(!msg.contains("db error"));
+    }
+
+    #[test]
+    fn format_pg_error_non_db_includes_source_reason() {
+        let error = tokio_postgres::Config::from_str("sslmode=invalid")
+            .expect_err("无效 sslmode 应返回配置解析错误");
+
+        let msg = format_pg_error("连接 PostgreSQL", error);
+
+        assert_eq!(
+            msg,
+            "连接 PostgreSQL失败: invalid connection string: invalid value for option `sslmode`"
+        );
     }
 }
