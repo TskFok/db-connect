@@ -7,7 +7,7 @@ import type { OpenTabEntry } from "../../stores/databaseStore";
 
 export function TableTabsBar() {
   const { activeConnection } = useConnectionStore();
-  const { removeTableFromCache } = useTableDataStore();
+  const removeTableFromCache = useTableDataStore((s) => s.removeTableFromCache);
   const {
     openTabs,
     activeTabIndex,

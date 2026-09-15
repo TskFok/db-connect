@@ -26,6 +26,87 @@ function makeRows(rowCount: number, colCount: number): Row[] {
 }
 
 describe("VirtualDataTable", () => {
+  it("窗口变大使内容无需滚动时，恢复被夹断到零仍显示首行首列", () => {
+    const columns = makeColumns(20);
+    const props = {
+      columns,
+      dataSource: makeRows(20, 20),
+      rowKey: (r: Row) => String(r._key),
+      height: 400,
+      testId: "clamped-scroll-table",
+      initialScrollPosition: { top: 480, left: 1200 },
+      scrollRestoreReady: false,
+    };
+    const { getByTestId, rerender } = render(<VirtualDataTable {...props} />);
+    const table = getByTestId("clamped-scroll-table");
+    // jsdom 没有布局：模拟浏览器将超出内容范围的偏移夹断，且值未变时不发 scroll。
+    for (const [offset, dimension, viewport] of [
+      ["scrollTop", "height", "offsetHeight"],
+      ["scrollLeft", "width", "offsetWidth"],
+    ] as const) {
+      let value = 0;
+      Object.defineProperty(table, offset, {
+        configurable: true,
+        get: () => value,
+        set: (next: number) => {
+          const content = table.firstElementChild as HTMLElement;
+          const max = Math.max(0, parseFloat(content.style[dimension]) - table[viewport]);
+          value = Math.max(0, Math.min(next, max));
+        },
+      });
+    }
+
+    rerender(
+      <VirtualDataTable
+        {...props}
+        columns={columns.map((column) => ({ ...column, width: 40 }))}
+        height={800}
+        scrollRestoreReady
+      />
+    );
+
+    expect(table.scrollTop).toBe(0);
+    expect(table.scrollLeft).toBe(0);
+    expect(table.querySelector('[data-row-key="r0"]')).toBeInTheDocument();
+    expect(table).toHaveTextContent("v0_0");
+  });
+
+  it("等待目标表数据就绪后恢复滚动，后续渲染不覆盖用户的新位置", () => {
+    const columns = makeColumns(20);
+    const dataSource = makeRows(100, 20);
+    const props = {
+      columns,
+      dataSource: makeRows(1, 20),
+      rowKey: (r: Row) => String(r._key),
+      height: 400,
+      testId: "scroll-table",
+      initialScrollPosition: { top: 960, left: 600 },
+      scrollRestoreReady: false,
+    };
+    const { getByTestId, rerender } = render(<VirtualDataTable {...props} />);
+
+    rerender(
+      <VirtualDataTable {...props} dataSource={dataSource} scrollRestoreReady />
+    );
+    const table = getByTestId("scroll-table");
+    expect(table.scrollTop).toBe(960);
+    expect(table.scrollLeft).toBe(600);
+    expect(table.querySelector('[data-row-key="r30"]')).toBeInTheDocument();
+
+    fireEvent.scroll(table, { target: { scrollTop: 1280, scrollLeft: 720 } });
+    rerender(
+      <VirtualDataTable
+        {...props}
+        dataSource={[...dataSource]}
+        scrollRestoreReady
+        height={450}
+      />
+    );
+    expect(table.scrollTop).toBe(1280);
+    expect(table.scrollLeft).toBe(720);
+    expect(table.querySelector('[data-row-key="r40"]')).toBeInTheDocument();
+  });
+
   it("基本渲染：列头 / 数据 cell / 空数据占位", () => {
     const columns = makeColumns(3);
     const dataSource = makeRows(2, 3);

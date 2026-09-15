@@ -5,6 +5,12 @@ import type { WhereFilterConfig } from "../utils/whereFilterUtils";
 
 export type { TableSortField };
 
+/** 单表数据区域的纵向和横向滚动偏移 */
+export interface TableScrollPosition {
+  top: number;
+  left: number;
+}
+
 /** 单表的快照数据，用于切换时恢复 */
 interface TableDataSnapshot {
   columns: string[];
@@ -47,6 +53,8 @@ interface TableDataState {
   pendingChangesCache: Record<string, Record<string, PendingChange>>;
   /** 按表缓存的行勾选 key，避免组件重挂载后丢失 */
   rowSelectionCache: Record<string, string[]>;
+  /** 按表缓存的滚动位置，避免切换表后回到顶部 */
+  scrollPositionCache: Record<string, TableScrollPosition>;
   /** count 缓存：key=tableKey|whereClause，换页/排序时复用，不重复请求 */
   countCache: Record<string, number>;
   /** 列名列表 */
@@ -179,6 +187,13 @@ interface TableDataState {
   setRowSelection: (connId: string, database: string, table: string, rowKeys: string[]) => void;
   /** 清空指定表的行勾选缓存 */
   clearRowSelection: (connId: string, database: string, table: string) => void;
+  /** 更新指定表的滚动位置 */
+  setScrollPosition: (
+    connId: string,
+    database: string,
+    table: string,
+    position: TableScrollPosition
+  ) => void;
 }
 
 function tableKey(connId: string, database: string, table: string): string {
@@ -337,6 +352,7 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
   tableDataCache: {},
   pendingChangesCache: {},
   rowSelectionCache: {},
+  scrollPositionCache: {},
   countCache: {},
   ...initialSlice,
   dataLoading: false,
@@ -645,6 +661,7 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
       tableDataCache: {},
       pendingChangesCache: {},
       rowSelectionCache: {},
+      scrollPositionCache: {},
       countCache: {},
       ...initialSlice,
       dataLoading: false,
@@ -742,13 +759,22 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
 
   removeTableFromCache: (connId: string, database: string, table: string) => {
     const key = tableKey(connId, database, table);
-    const { tableDataCache, pendingChangesCache, rowSelectionCache, countCache, activeTableKey } = get();
+    const {
+      tableDataCache,
+      pendingChangesCache,
+      rowSelectionCache,
+      scrollPositionCache,
+      countCache,
+      activeTableKey,
+    } = get();
     const newCache = { ...tableDataCache };
     const newPendingChangesCache = { ...pendingChangesCache };
     const newRowSelectionCache = { ...rowSelectionCache };
+    const newScrollPositionCache = { ...scrollPositionCache };
     delete newCache[key];
     delete newPendingChangesCache[key];
     delete newRowSelectionCache[key];
+    delete newScrollPositionCache[key];
     const prefix = `${key}|`;
     const newCountCache = Object.fromEntries(
       Object.entries(countCache).filter(([k]) => !k.startsWith(prefix))
@@ -757,6 +783,7 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
       tableDataCache: newCache,
       pendingChangesCache: newPendingChangesCache,
       rowSelectionCache: newRowSelectionCache,
+      scrollPositionCache: newScrollPositionCache,
       countCache: newCountCache,
     });
     if (activeTableKey === key) {
@@ -777,6 +804,9 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
       const nextRowSelectionCache = Object.fromEntries(
         Object.entries(s.rowSelectionCache).filter(([k]) => !k.startsWith(prefix))
       );
+      const nextScrollPositionCache = Object.fromEntries(
+        Object.entries(s.scrollPositionCache).filter(([k]) => !k.startsWith(prefix))
+      );
       const nextCountCache = Object.fromEntries(
         Object.entries(s.countCache).filter(([k]) => !k.startsWith(prefix))
       );
@@ -787,6 +817,7 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
             tableDataCache: nextTableCache,
             pendingChangesCache: nextPendingChangesCache,
             rowSelectionCache: nextRowSelectionCache,
+            scrollPositionCache: nextScrollPositionCache,
             countCache: nextCountCache,
             ...initialSlice,
             dataLoading: false,
@@ -796,6 +827,7 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
             tableDataCache: nextTableCache,
             pendingChangesCache: nextPendingChangesCache,
             rowSelectionCache: nextRowSelectionCache,
+            scrollPositionCache: nextScrollPositionCache,
             countCache: nextCountCache,
           };
     });
@@ -863,6 +895,19 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
       const nextRowSelectionCache = { ...s.rowSelectionCache };
       delete nextRowSelectionCache[key];
       return { rowSelectionCache: nextRowSelectionCache };
+    });
+  },
+
+  setScrollPosition: (connId, database, table, position) => {
+    const key = tableKey(connId, database, table);
+    set((s) => {
+      const previous = s.scrollPositionCache[key];
+      if (previous?.top === position.top && previous.left === position.left) {
+        return s;
+      }
+      return {
+        scrollPositionCache: { ...s.scrollPositionCache, [key]: position },
+      };
     });
   },
 }));

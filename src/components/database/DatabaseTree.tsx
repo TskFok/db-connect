@@ -67,7 +67,7 @@ export function DatabaseTree() {
     connectionStates,
     openSqlTab,
   } = useDatabaseStore();
-  const { removeTableFromCache } = useTableDataStore();
+  const removeTableFromCache = useTableDataStore((s) => s.removeTableFromCache);
 
   const connId = activeConnection?.connId ?? "";
   const clientReadOnly = useClientReadOnly();

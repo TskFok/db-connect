@@ -68,6 +68,89 @@ describe("tableDataStore", () => {
     });
   });
 
+  describe("scrollPositionCache", () => {
+    it("按连接、数据库和表分别保留最后一次滚动位置", () => {
+      const { setScrollPosition } = useTableDataStore.getState();
+      expect(setScrollPosition).toBeTypeOf("function");
+
+      setScrollPosition("conn-1", "db1", "users", { top: 320, left: 120 });
+      setScrollPosition("conn-1", "db1", "posts", { top: 640, left: 240 });
+      setScrollPosition("conn-1", "db2", "users", { top: 960, left: 360 });
+      setScrollPosition("conn-2", "db1", "users", { top: 1280, left: 480 });
+      setScrollPosition("conn-1", "db1", "users", { top: 160, left: 0 });
+
+      expect(useTableDataStore.getState().scrollPositionCache).toEqual({
+        "conn-1|db1|users": { top: 160, left: 0 },
+        "conn-1|db1|posts": { top: 640, left: 240 },
+        "conn-1|db2|users": { top: 960, left: 360 },
+        "conn-2|db1|users": { top: 1280, left: 480 },
+      });
+    });
+
+    it("相同滚动位置不会再次更新状态", () => {
+      const { setScrollPosition } = useTableDataStore.getState();
+      expect(setScrollPosition).toBeTypeOf("function");
+      setScrollPosition("conn-1", "mydb", "users", { top: 320, left: 120 });
+      const state = useTableDataStore.getState();
+
+      setScrollPosition("conn-1", "mydb", "users", { top: 320, left: 120 });
+
+      expect(useTableDataStore.getState()).toBe(state);
+    });
+
+    it("关闭表时仅清理该表滚动位置", () => {
+      useTableDataStore.setState({
+        activeTableKey: "conn-1|mydb|users",
+        scrollPositionCache: {
+          "conn-1|mydb|users": { top: 320, left: 120 },
+          "conn-1|mydb|posts": { top: 640, left: 240 },
+        },
+      });
+
+      useTableDataStore.getState().removeTableFromCache("conn-1", "mydb", "users");
+
+      expect(useTableDataStore.getState().scrollPositionCache).toEqual({
+        "conn-1|mydb|posts": { top: 640, left: 240 },
+      });
+    });
+
+    it.each([
+      ["当前连接", "conn-1|db1|users", null],
+      ["后台连接", "conn-2|db1|users", "conn-2|db1|users"],
+    ])("断开%s时清理其全部滚动位置并保留其他连接", (_label, activeKey, expectedActiveKey) => {
+      useTableDataStore.setState({
+        activeTableKey: activeKey,
+        scrollPositionCache: {
+          "conn-1|db1|users": { top: 320, left: 120 },
+          "conn-1|db2|posts": { top: 640, left: 240 },
+          "conn-2|db1|users": { top: 960, left: 360 },
+          "conn-10|db1|users": { top: 1280, left: 480 },
+        },
+      });
+
+      useTableDataStore.getState().removeConnectionCache("conn-1");
+
+      expect(useTableDataStore.getState().scrollPositionCache).toEqual({
+        "conn-2|db1|users": { top: 960, left: 360 },
+        "conn-10|db1|users": { top: 1280, left: 480 },
+      });
+      expect(useTableDataStore.getState().activeTableKey).toBe(expectedActiveKey);
+    });
+
+    it("重置时清空所有滚动位置", () => {
+      useTableDataStore.setState({
+        scrollPositionCache: {
+          "conn-1|mydb|users": { top: 320, left: 120 },
+          "conn-2|mydb|posts": { top: 640, left: 240 },
+        },
+      });
+
+      useTableDataStore.getState().reset();
+
+      expect(useTableDataStore.getState().scrollPositionCache).toEqual({});
+    });
+  });
+
   describe("pendingChangesCache", () => {
     const pendingKey = 'id=1|col="name"';
     const pendingChange = {

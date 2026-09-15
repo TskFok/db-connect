@@ -50,6 +50,7 @@ import { useShallow } from "zustand/react/shallow";
 import {
   useTableDataStore,
   type PendingChange,
+  type TableScrollPosition,
 } from "../../stores/tableDataStore";
 import { useDatabaseStore } from "../../stores/databaseStore";
 import { useConnectionStore } from "../../stores/connectionStore";
@@ -358,6 +359,20 @@ export function TableData() {
   const rowOperationsAllowed = baseDataEditingAllowed && hasRowLocatorForEdits;
   const rowSelectionScopeKey =
     connId && database && table ? `${connId}|${database}|${table}` : "";
+  // 只在切表时读取初始位置，不订阅滚动更新，避免每次滚动重渲染整个数据面板。
+  const initialScrollPosition = useMemo(
+    () => useTableDataStore.getState().scrollPositionCache[rowSelectionScopeKey],
+    [rowSelectionScopeKey]
+  );
+  const handleScrollPositionChange = useCallback(
+    (position: TableScrollPosition) => {
+      if (!connId || !database || !table) return;
+      useTableDataStore
+        .getState()
+        .setScrollPosition(connId, database, table, position);
+    },
+    [connId, database, table]
+  );
   const selectedRowKeys = useMemo(
     () =>
       rowSelectionScopeKey
@@ -2113,7 +2128,7 @@ export function TableData() {
           }
         >
           <VirtualDataTable
-            key={tableKey || "no-table"}
+            key={rowSelectionScopeKey || "no-table"}
             columns={tableColumns}
             dataSource={dataSource}
             rowKey={vdtRowKey}
@@ -2125,6 +2140,11 @@ export function TableData() {
             }
             rowSelection={vdtRowSelection}
             renderRevision={pendingChanges}
+            initialScrollPosition={initialScrollPosition}
+            scrollRestoreReady={
+              activeTableKey === rowSelectionScopeKey && !dataLoading
+            }
+            onScrollPositionChange={handleScrollPositionChange}
           />
         </div>
         {/* 高度调节条：拖拽改变表格高度，双击重置为自动撑满模式 */}

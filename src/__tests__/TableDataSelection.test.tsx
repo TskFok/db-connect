@@ -312,6 +312,58 @@ describe("TableData 行勾选隔离", () => {
     vi.unstubAllGlobals();
   });
 
+  it("切换表后恢复各表的纵向和横向滚动位置", () => {
+    useTableDataStore.setState({
+      tableDataCache: {
+        "conn-1|mydb|users": {
+          ...usersSnapshot,
+          rows: Array.from({ length: 50 }, (_, i) => [i, `User ${i}`]),
+          total: 50,
+        },
+        "conn-1|mydb|posts": {
+          ...postsSnapshot,
+          rows: Array.from({ length: 30 }, (_, i) => [i, `Post ${i}`]),
+          total: 30,
+        },
+      },
+    });
+    useTableColumnSettingsStore.setState({
+      settings: {
+        "saved-conn-1|mydb|users": {
+          columnWidths: { id: 800, name: 800 },
+          hiddenColumns: [],
+        },
+        "saved-conn-1|mydb|posts": {
+          columnWidths: { id: 800, title: 800 },
+          hiddenColumns: [],
+        },
+      },
+    });
+    const { getByTestId } = render(<TableContent />);
+    const usersTable = getByTestId("table-vdt-mydb-users");
+    fireEvent.scroll(usersTable, {
+      target: { scrollTop: 960, scrollLeft: 240 },
+    });
+
+    act(() => switchToTable("posts", postsStructure));
+    const postsTable = getByTestId("table-vdt-mydb-posts");
+    expect(postsTable.scrollTop).toBe(0);
+    expect(postsTable.scrollLeft).toBe(0);
+    fireEvent.scroll(postsTable, {
+      target: { scrollTop: 320, scrollLeft: 120 },
+    });
+
+    act(() => switchToTable("users", usersStructure));
+    const restoredUsersTable = getByTestId("table-vdt-mydb-users");
+    expect(restoredUsersTable).not.toBe(usersTable);
+    expect(restoredUsersTable.scrollTop).toBe(960);
+    expect(restoredUsersTable.scrollLeft).toBe(240);
+
+    act(() => switchToTable("posts", postsStructure));
+    expect(getByTestId("table-vdt-mydb-posts").scrollTop).toBe(320);
+    expect(getByTestId("table-vdt-mydb-posts").scrollLeft).toBe(120);
+  });
+
   it("切换到其他表标签时不应保留前一个表的勾选，切回后应恢复原勾选", async () => {
     const { container } = render(<TableData />);
 

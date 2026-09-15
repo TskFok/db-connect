@@ -51,6 +51,11 @@ export interface VirtualDataTableProps {
   rowClassName?: (record: Record<string, unknown>, index: number) => string;
   /** 用于附加额外属性，比如 data-testid */
   testId?: string;
+  /** 本次挂载要恢复的滚动位置 */
+  initialScrollPosition?: { top: number; left: number };
+  /** 目标表的数据就绪后再恢复，避免被上一表或加载中的内容截断 */
+  scrollRestoreReady?: boolean;
+  onScrollPositionChange?: (position: { top: number; left: number }) => void;
 }
 
 interface ResolvedColumn {
@@ -198,8 +203,13 @@ function VirtualDataTableInner({
   emptyText,
   rowClassName,
   testId,
+  initialScrollPosition,
+  scrollRestoreReady = true,
+  onScrollPositionChange,
 }: VirtualDataTableProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const initialScrollPositionRef = useRef(initialScrollPosition);
+  const scrollRestoredRef = useRef(false);
   const { token } = antdTheme.useToken();
 
   // 解析列；行选择列作为虚拟列固定在最左，参与虚拟化但其宽度由 rowSelection 决定
@@ -232,6 +242,7 @@ function VirtualDataTableInner({
     getScrollElement: () => containerRef.current,
     estimateSize: () => rowHeight,
     overscan: 6,
+    initialOffset: initialScrollPositionRef.current?.top ?? 0,
   });
 
   // 列虚拟化
@@ -241,6 +252,7 @@ function VirtualDataTableInner({
     getScrollElement: () => containerRef.current,
     estimateSize: (index) => resolvedColumns[index]?.width ?? defaultColWidth,
     overscan: 4,
+    initialOffset: initialScrollPositionRef.current?.left ?? 0,
   });
 
   // 列宽变化时重新测量列虚拟化的尺寸（否则旧 estimateSize 缓存依然生效）
@@ -248,6 +260,23 @@ function VirtualDataTableInner({
     columnVirtualizer.measure();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolvedColumns]);
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container || !scrollRestoreReady || scrollRestoredRef.current) return;
+
+    const position = initialScrollPositionRef.current;
+    if (position) {
+      // 虚拟器初始化早于父组件恢复表缓存；数据就绪后重新设置实际 DOM 偏移。
+      container.scrollTop = position.top;
+      container.scrollLeft = position.left;
+    }
+    scrollRestoredRef.current = true;
+    if (position) {
+      // 偏移被浏览器夹到原值时不会触发原生事件，需同步两个虚拟器的实际偏移。
+      container.dispatchEvent(new Event("scroll"));
+    }
+  }, [scrollRestoreReady]);
 
   // 选中态：将 selectedRowKeys 转 Set 以便快速查询
   const selectedKeySet = useMemo(
@@ -354,6 +383,13 @@ function VirtualDataTableInner({
         ref={containerRef}
         data-testid={testId}
         className="virtual-data-table-container"
+        onScroll={(event) => {
+          if (!scrollRestoreReady || !scrollRestoredRef.current) return;
+          onScrollPositionChange?.({
+            top: event.currentTarget.scrollTop,
+            left: event.currentTarget.scrollLeft,
+          });
+        }}
         style={{
           ...themeVars,
           position: "relative",
