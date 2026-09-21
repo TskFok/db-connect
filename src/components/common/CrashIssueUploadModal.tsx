@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, Input, Modal, Typography } from "antd";
 import { invoke } from "@tauri-apps/api/core";
 import { copyTextWithBreadcrumb } from "../../utils/crashBreadcrumbs";
@@ -67,12 +67,22 @@ export function CrashIssueUploadModal({
   onSubmitted,
 }: CrashIssueUploadModalProps) {
   const [token, setToken] = useState("");
+  const [title, setTitle] = useState(issueTitle);
+  const [body, setBody] = useState(issueBody);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const tauri = isLikelyTauri();
 
+  useEffect(() => {
+    setToken("");
+    setTitle(issueTitle);
+    setBody(issueBody);
+    setError(null);
+  }, [open, issueTitle, issueBody]);
+
   const handleOk = async () => {
+    if (busy) return;
     setError(null);
     if (tauri) {
       const t = token.trim();
@@ -82,13 +92,7 @@ export function CrashIssueUploadModal({
       }
       setBusy(true);
       try {
-        const url = await invokeCreateGithubIssue(
-          owner,
-          repo,
-          t,
-          issueTitle,
-          issueBody
-        );
+        const url = await invokeCreateGithubIssue(owner, repo, t, title, body);
         onSubmitted?.(url);
         setToken("");
         onClose();
@@ -102,14 +106,14 @@ export function CrashIssueUploadModal({
 
     setBusy(true);
     try {
-      await copyTextWithBreadcrumb(issueBody, "crash-report-open-issue", {
+      await copyTextWithBreadcrumb(body, "crash-report-open-issue", {
         owner,
         repo,
       });
-      openGithubNewIssuePage(owner, repo, issueTitle, issueBody);
+      openGithubNewIssuePage(owner, repo, title, body);
       onClose();
     } catch {
-      openGithubNewIssuePage(owner, repo, issueTitle, issueBody);
+      openGithubNewIssuePage(owner, repo, title, body);
       onClose();
     } finally {
       setBusy(false);
@@ -121,6 +125,7 @@ export function CrashIssueUploadModal({
       title="上传崩溃报告到 GitHub"
       open={open}
       onCancel={() => {
+        if (busy) return;
         setError(null);
         setToken("");
         onClose();
@@ -129,31 +134,54 @@ export function CrashIssueUploadModal({
       okText={tauri ? "提交 Issue" : "复制正文并打开 Issue 页面"}
       cancelText="取消"
       confirmLoading={busy}
+      cancelButtonProps={{ disabled: busy }}
+      closable={!busy}
+      maskClosable={!busy}
+      keyboard={!busy}
       centered
       width={520}
-      destroyOnClose
+      destroyOnHidden
     >
       <Alert
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="将与本次崩溃相关的信息发往该仓库的 Issues。"
+        message="请检查下方实际将发送的标题和正文。"
         description={
           <span>
             仓库：
             <Text code>
               {owner}/{repo}
             </Text>
-            。请勿在报告中粘贴密码或连接串等敏感信息。
+            。确认其中不含密码、连接串或其他不希望公开的信息后再提交。
           </span>
         }
+      />
+      <label htmlFor="crash-issue-title">
+        <Text strong>Issue 标题</Text>
+      </label>
+      <Input
+        id="crash-issue-title"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        disabled={busy}
+        style={{ marginTop: 6, marginBottom: 12 }}
+      />
+      <label htmlFor="crash-issue-body">
+        <Text strong>Issue 正文</Text>
+      </label>
+      <Input.TextArea
+        id="crash-issue-body"
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+        disabled={busy}
+        autoSize={{ minRows: 8, maxRows: 14 }}
+        style={{ marginTop: 6, marginBottom: 12, fontFamily: "monospace" }}
       />
       {tauri ? (
         <>
           <Text type="secondary" style={{ display: "block", marginBottom: 8 }}>
-            需使用具备该仓库{" "}
-            <Text strong>issues: write</Text>{" "}
-            权限的
+            需使用具备该仓库 <Text strong>issues: write</Text> 权限的
             <Link
               href="https://github.com/settings/tokens"
               target="_blank"
@@ -167,17 +195,23 @@ export function CrashIssueUploadModal({
             placeholder="请输入 GitHub 个人访问令牌"
             value={token}
             onChange={(e) => setToken(e.target.value)}
-            autoComplete="off"
+            disabled={busy}
+            autoComplete="new-password"
           />
         </>
       ) : (
         <Text type="secondary">
-          当前为浏览器预览模式：将复制完整报告到剪贴板，并打开 GitHub
-          新建 Issue 页面（若 URL 过长则仅预填标题，请粘贴正文）。
+          当前为浏览器预览模式：将复制完整报告到剪贴板，并打开 GitHub 新建 Issue
+          页面（若 URL 过长则仅预填标题，请粘贴正文）。
         </Text>
       )}
       {error && (
-        <Alert type="error" message={error} style={{ marginTop: 12 }} showIcon />
+        <Alert
+          type="error"
+          message={error}
+          style={{ marginTop: 12 }}
+          showIcon
+        />
       )}
     </Modal>
   );

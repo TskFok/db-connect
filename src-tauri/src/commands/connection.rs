@@ -17,6 +17,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::Sha256;
 use std::collections::HashMap;
+use std::io::Write;
+use std::path::Path;
 use tauri::{AppHandle, Manager, State};
 
 const CONNECTION_EXPORT_FORMAT: &str = "db-connect.connections";
@@ -278,10 +280,17 @@ fn get_connections_file(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     Ok(data_dir.join("connections.json"))
 }
 
-/// 从文件加载已保存的连接配置（内部使用，返回解密后的完整配置）
-fn load_connection_storage_internal(app: &AppHandle) -> Result<ConnectionStorageData, String> {
-    let file_path = get_connections_file(app)?;
-
+fn load_connection_storage_from_path_with<D, E, W>(
+    file_path: &Path,
+    decrypt: D,
+    encrypt: E,
+    replace_file: W,
+) -> Result<ConnectionStorageData, String>
+where
+    D: Fn(&str) -> Result<Vec<u8>, String>,
+    E: Fn(&[u8]) -> Result<String, String>,
+    W: Fn(&Path, &[u8]) -> Result<(), String>,
+{
     if !file_path.exists() {
         return Ok(ConnectionStorageData {
             connections: Vec::new(),
@@ -290,7 +299,7 @@ fn load_connection_storage_internal(app: &AppHandle) -> Result<ConnectionStorage
     }
 
     let content =
-        std::fs::read_to_string(&file_path).map_err(|e| format!("读取配置文件失败: {}", e))?;
+        std::fs::read_to_string(file_path).map_err(|e| format!("读取配置文件失败: {}", e))?;
     let content = content.trim();
 
     if content.is_empty() {
@@ -300,18 +309,126 @@ fn load_connection_storage_internal(app: &AppHandle) -> Result<ConnectionStorage
         });
     }
 
-    // 尝试解析为存储格式
-    if let Ok(storage) = serde_json::from_str::<StorageFile>(content) {
-        if storage.version == 2 {
-            let decrypted = crypto::decrypt(&storage.data)?;
-            let decrypted_str =
-                String::from_utf8(decrypted).map_err(|e| format!("解密数据编码错误: {}", e))?;
-            return parse_connection_storage_json(&decrypted_str);
+    let value =
+        serde_json::from_str::<Value>(content).map_err(|e| format!("解析配置文件失败: {}", e))?;
+    let (looks_encrypted, is_legacy) = match &value {
+        Value::Array(_) => (false, true),
+        Value::Object(object) => {
+            let has_nonlegacy_version = match object.get("version") {
+                None => false,
+                Some(Value::Number(version)) if version.as_u64() == Some(1) => false,
+                Some(_) => true,
+            };
+            (
+                object.contains_key("data") || has_nonlegacy_version,
+                object.contains_key("connections") || object.contains_key("groups"),
+            )
         }
+        _ => (false, false),
+    };
+
+    if looks_encrypted {
+        let storage = serde_json::from_value::<StorageFile>(value)
+            .map_err(|e| format!("解析配置文件失败: {}", e))?;
+        if storage.version != 2 {
+            return Err(format!("不支持的配置文件版本: {}", storage.version));
+        }
+
+        let decrypted = decrypt(&storage.data)?;
+        let decrypted_str =
+            String::from_utf8(decrypted).map_err(|e| format!("解密数据编码错误: {}", e))?;
+        return parse_connection_storage_json(&decrypted_str);
+    }
+    if !is_legacy {
+        return Err("配置文件格式不正确".to_string());
     }
 
     // 兼容旧版明文格式 (version 1)
-    parse_connection_storage_json(content).map_err(|e| format!("解析配置文件失败: {}", e))
+    let legacy =
+        parse_connection_storage_json(content).map_err(|e| format!("解析配置文件失败: {}", e))?;
+    let plaintext = serde_json::to_vec(&legacy).map_err(|e| format!("序列化配置失败: {}", e))?;
+    let encrypted = encrypt(&plaintext)?;
+    let migrated = StorageFile {
+        version: 2,
+        data: encrypted,
+    };
+    let migrated_content =
+        serde_json::to_vec_pretty(&migrated).map_err(|e| format!("序列化存储文件失败: {}", e))?;
+    replace_file(file_path, &migrated_content)?;
+    Ok(legacy)
+}
+
+fn atomic_replace_file(path: &Path, content: &[u8]) -> Result<(), String> {
+    atomic_replace_file_with(path, content, |from, to| std::fs::rename(from, to))
+}
+
+fn atomic_replace_file_with<R>(path: &Path, content: &[u8], rename: R) -> Result<(), String>
+where
+    R: Fn(&Path, &Path) -> std::io::Result<()>,
+{
+    let parent = path
+        .parent()
+        .ok_or_else(|| "配置文件路径缺少父目录".to_string())?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "配置文件名无效".to_string())?;
+    let temp_path = parent.join(format!(".{}.{}.tmp", file_name, uuid::Uuid::new_v4()));
+    atomic_replace_file_at_temp_with(path, &temp_path, content, rename)
+}
+
+fn atomic_replace_file_at_temp_with<R>(
+    path: &Path,
+    temp_path: &Path,
+    content: &[u8],
+    rename: R,
+) -> Result<(), String>
+where
+    R: Fn(&Path, &Path) -> std::io::Result<()>,
+{
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+
+    let mut temp_file = options
+        .open(temp_path)
+        .map_err(|e| format!("创建临时配置文件失败: {}", e))?;
+    let write_result = (|| -> Result<(), String> {
+        #[cfg(not(unix))]
+        set_secure_file_permissions(temp_path)?;
+        temp_file
+            .write_all(content)
+            .map_err(|e| format!("写入临时配置文件失败: {}", e))?;
+        temp_file
+            .sync_all()
+            .map_err(|e| format!("同步临时配置文件失败: {}", e))?;
+        drop(temp_file);
+
+        // std::fs::rename 在 Windows 使用替换现有文件的语义，目标与临时文件位于同一目录。
+        rename(temp_path, path).map_err(|e| format!("替换配置文件失败: {}", e))?;
+        Ok(())
+    })();
+
+    if write_result.is_err() {
+        let _ = std::fs::remove_file(temp_path);
+    }
+    write_result
+}
+
+/// 从文件加载已保存的连接配置（内部使用，返回解密后的完整配置）
+fn load_connection_storage_internal(app: &AppHandle) -> Result<ConnectionStorageData, String> {
+    let file_path = get_connections_file(app)?;
+    load_connection_storage_from_path_with(
+        &file_path,
+        crypto::decrypt,
+        crypto::encrypt,
+        atomic_replace_file,
+    )
 }
 
 pub(crate) fn load_saved_connections_internal(
@@ -765,6 +882,7 @@ pub async fn import_connections(
 mod tests {
     use super::*;
     use crate::models::types::{DatabaseType, SshConfig};
+    use std::fs;
 
     #[test]
     fn test_mask_passwords() {
@@ -858,6 +976,272 @@ mod tests {
         assert_eq!(storage.connections[0].id.as_deref(), Some("conn-1"));
         assert!(storage.connections[0].group_id.is_none());
         assert!(storage.groups.is_empty());
+    }
+
+    #[test]
+    fn legacy_storage_is_migrated_atomically_without_losing_connections_or_groups() {
+        let dir = std::env::temp_dir().join(format!(
+            "db-connect-legacy-migration-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir(&dir).unwrap();
+        let path = dir.join("connections.json");
+        let legacy = r#"{
+            "version": 1,
+            "connections": [
+                {
+                    "id": "conn-1",
+                    "name": "Local",
+                    "host": "localhost",
+                    "port": 3306,
+                    "username": "root",
+                    "password": "secret-1",
+                    "database": "app",
+                    "ssh": null,
+                    "group_id": "group-1"
+                },
+                {
+                    "id": "conn-2",
+                    "database_type": "postgres",
+                    "name": "Remote",
+                    "host": "db.example.com",
+                    "port": 5432,
+                    "username": "admin",
+                    "password": "secret-2",
+                    "database": "analytics",
+                    "ssh": null,
+                    "group_id": "group-2"
+                }
+            ],
+            "groups": [
+                { "id": "group-1", "name": "开发", "collapsed": false },
+                { "id": "group-2", "name": "生产", "collapsed": true }
+            ]
+        }"#;
+        fs::write(&path, legacy).unwrap();
+
+        let loaded = load_connection_storage_from_path_with(
+            &path,
+            |_| panic!("legacy storage must not be decrypted"),
+            |plaintext| Ok(BASE64.encode(plaintext)),
+            atomic_replace_file,
+        )
+        .expect("legacy storage should migrate");
+
+        assert_eq!(loaded.connections.len(), 2);
+        assert_eq!(loaded.groups.len(), 2);
+        assert_eq!(loaded.connections[0].password.as_deref(), Some("secret-1"));
+        assert_eq!(loaded.connections[1].group_id.as_deref(), Some("group-2"));
+        assert_eq!(loaded.groups[1].name, "生产");
+
+        let migrated: StorageFile =
+            serde_json::from_slice(&fs::read(&path).unwrap()).expect("file should be version 2");
+        assert_eq!(migrated.version, 2);
+        let persisted_plaintext = BASE64.decode(migrated.data).unwrap();
+        let persisted: ConnectionStorageData = serde_json::from_slice(&persisted_plaintext)
+            .expect("encrypted payload should be complete");
+        assert_eq!(persisted.connections.len(), 2);
+        assert_eq!(persisted.groups.len(), 2);
+        assert_eq!(
+            persisted.connections[1].password.as_deref(),
+            Some("secret-2")
+        );
+        assert!(!String::from_utf8(fs::read(&path).unwrap())
+            .unwrap()
+            .contains("secret-1"));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn legacy_storage_encryption_failure_keeps_original_plaintext_unchanged() {
+        let dir = std::env::temp_dir().join(format!(
+            "db-connect-legacy-encrypt-failure-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir(&dir).unwrap();
+        let path = dir.join("connections.json");
+        let legacy = r#"{
+            "connections": [],
+            "groups": [{ "id": "group-1", "name": "开发", "collapsed": false }]
+        }"#;
+        fs::write(&path, legacy).unwrap();
+
+        let result = load_connection_storage_from_path_with(
+            &path,
+            |_| panic!("legacy storage must not be decrypted"),
+            |_| Err("测试加密失败".to_string()),
+            |_, _| panic!("failed encryption must not write"),
+        );
+
+        assert_eq!(result.unwrap_err(), "测试加密失败");
+        assert_eq!(fs::read_to_string(&path).unwrap(), legacy);
+
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn legacy_storage_replace_failure_keeps_original_plaintext_and_cleans_temp_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "db-connect-legacy-write-failure-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir(&dir).unwrap();
+        let path = dir.join("connections.json");
+        let legacy = r#"{
+            "connections": [],
+            "groups": [{ "id": "group-1", "name": "开发", "collapsed": false }]
+        }"#;
+        fs::write(&path, legacy).unwrap();
+
+        let result = load_connection_storage_from_path_with(
+            &path,
+            |_| panic!("legacy storage must not be decrypted"),
+            |plaintext| Ok(BASE64.encode(plaintext)),
+            |path, content| {
+                atomic_replace_file_with(path, content, |_, _| {
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "测试替换失败",
+                    ))
+                })
+            },
+        );
+
+        assert!(result.unwrap_err().contains("测试替换失败"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), legacy);
+        let entries: Vec<_> = fs::read_dir(&dir).unwrap().collect();
+        assert_eq!(
+            entries.len(),
+            1,
+            "failed replacement should clean temp file"
+        );
+
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn version_2_storage_is_read_without_reencrypting_or_rewriting() {
+        let dir = std::env::temp_dir().join(format!(
+            "db-connect-version-2-read-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir(&dir).unwrap();
+        let path = dir.join("connections.json");
+        let current = r#"{"version":2,"data":"existing-ciphertext"}"#;
+        fs::write(&path, current).unwrap();
+        let plaintext = r#"{
+            "connections": [],
+            "groups": [{ "id": "group-1", "name": "开发", "collapsed": true }]
+        }"#;
+
+        let loaded = load_connection_storage_from_path_with(
+            &path,
+            |ciphertext| {
+                assert_eq!(ciphertext, "existing-ciphertext");
+                Ok(plaintext.as_bytes().to_vec())
+            },
+            |_| panic!("version 2 storage must not be re-encrypted"),
+            |_, _| panic!("version 2 storage must not be rewritten"),
+        )
+        .expect("version 2 storage should load");
+
+        assert_eq!(loaded.groups.len(), 1);
+        assert_eq!(loaded.groups[0].id, "group-1");
+        assert_eq!(fs::read_to_string(&path).unwrap(), current);
+
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn unknown_encrypted_storage_version_is_rejected_without_rewriting() {
+        let dir = std::env::temp_dir().join(format!(
+            "db-connect-unknown-storage-version-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir(&dir).unwrap();
+        let path = dir.join("connections.json");
+        let unsupported =
+            r#"{"version":3,"data":"future-ciphertext","connections":[],"groups":[]}"#;
+        fs::write(&path, unsupported).unwrap();
+
+        let result = load_connection_storage_from_path_with(
+            &path,
+            |_| panic!("unsupported storage must not be decrypted"),
+            |_| panic!("unsupported storage must not be encrypted"),
+            |_, _| panic!("unsupported storage must not be rewritten"),
+        );
+
+        assert!(result.unwrap_err().contains("版本"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), unsupported);
+
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn malformed_version_2_storage_is_rejected_without_rewriting() {
+        let dir = std::env::temp_dir().join(format!(
+            "db-connect-malformed-storage-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir(&dir).unwrap();
+        let path = dir.join("connections.json");
+        let malformed = r#"{"version":2,"groups":[]}"#;
+        fs::write(&path, malformed).unwrap();
+
+        let result = load_connection_storage_from_path_with(
+            &path,
+            |_| panic!("malformed storage must not be decrypted"),
+            |_| panic!("malformed storage must not be encrypted"),
+            |_, _| panic!("malformed storage must not be rewritten"),
+        );
+
+        assert!(result.unwrap_err().contains("配置文件"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), malformed);
+
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn atomic_replace_create_new_collision_does_not_delete_existing_temp_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "db-connect-temp-collision-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir(&dir).unwrap();
+        let path = dir.join("connections.json");
+        let temp_path = dir.join("occupied.tmp");
+        fs::write(&path, "original").unwrap();
+        fs::write(&temp_path, "belongs to another writer").unwrap();
+
+        let result = atomic_replace_file_at_temp_with(&path, &temp_path, b"replacement", |_, _| {
+            panic!("create_new collision must not attempt rename")
+        });
+
+        assert!(result.unwrap_err().contains("创建临时配置文件失败"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "original");
+        assert_eq!(
+            fs::read_to_string(&temp_path).unwrap(),
+            "belongs to another writer"
+        );
+
+        fs::remove_file(&temp_path).unwrap();
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(&dir).unwrap();
     }
 
     #[test]

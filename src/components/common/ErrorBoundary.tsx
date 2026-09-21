@@ -75,7 +75,8 @@ export class ErrorBoundary extends React.Component<Props, State> {
     const title = buildCrashIssueTitle(
       err.name || "Error",
       err.message || String(err),
-      appVersion
+      appVersion,
+      breadcrumbs
     );
     const body = buildCrashReportBody({
       appVersion,
@@ -126,7 +127,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
           />
           <h2 style={{ color: "var(--text-primary)" }}>应用遇到了错误</h2>
           <Paragraph type="secondary" style={{ marginBottom: 16 }}>
-            发生了意外渲染错误。您可复制详细日志，或选择将匿名诊断信息上传到 GitHub
+            发生了意外渲染错误。您可复制详细日志，或选择将诊断信息上传到 GitHub
             Issue（需确认并自行提供令牌）。
           </Paragraph>
           <Space wrap style={{ marginBottom: 20 }}>

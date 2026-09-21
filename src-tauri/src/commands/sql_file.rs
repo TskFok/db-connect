@@ -2925,10 +2925,6 @@ async fn export_clickhouse_database_to_file_impl(
         .map_err(|e| format_fs_err("写入导出文件失败", e))?;
     drop(file);
 
-    let path = Path::new(&file_path);
-    crate::util::secure_fs::set_secure_file_permissions(path)
-        .map_err(|e| format!("设置文件权限失败: {}", e))?;
-
     let _ = app.emit(
         "sql-export-progress",
         SqlExportProgress {
@@ -2993,10 +2989,6 @@ async fn export_postgres_database_to_file_impl(
         .map_err(|e| format_fs_err("写入导出文件失败", e))?;
     drop(file);
 
-    let path = Path::new(&file_path);
-    crate::util::secure_fs::set_secure_file_permissions(path)
-        .map_err(|e| format!("设置文件权限失败: {}", e))?;
-
     let _ = app.emit(
         "sql-export-progress",
         SqlExportProgress {
@@ -3053,10 +3045,6 @@ async fn export_sqlite_database_to_file_impl(
     file.flush()
         .map_err(|e| format_fs_err("写入导出文件失败", e))?;
     drop(file);
-
-    let path = Path::new(&file_path);
-    crate::util::secure_fs::set_secure_file_permissions(path)
-        .map_err(|e| format!("设置文件权限失败: {}", e))?;
 
     let _ = app.emit(
         "sql-export-progress",
@@ -3133,10 +3121,6 @@ async fn export_sqlserver_database_to_file_impl(
         .map_err(|e| format_fs_err("写入导出文件失败", e))?;
     drop(file);
 
-    let path = Path::new(&file_path);
-    crate::util::secure_fs::set_secure_file_permissions(path)
-        .map_err(|e| format!("设置文件权限失败: {}", e))?;
-
     let _ = app.emit(
         "sql-export-progress",
         SqlExportProgress {
@@ -3193,9 +3177,11 @@ pub async fn export_database_to_file(
     let max_rows = max_rows_per_table.clamp(1, 1_000_000u32) as u64;
 
     let path = Path::new(&file_path);
+    // 写入前限制文件权限，确保失败或取消后留下的部分数据仍仅当前用户可读。
     // 用 BufWriter 包裹：导出大量 INSERT 时合并写入，避免每条 writeln! 都触发一次系统调用
     let mut file = BufWriter::new(
-        std::fs::File::create(path).map_err(|e| format_fs_err("创建导出文件失败", e))?,
+        crate::util::secure_fs::create_secure_file(path)
+            .map_err(|e| format!("创建导出文件失败: {}", e))?,
     );
 
     let pool_handle = {
@@ -3556,9 +3542,6 @@ pub async fn export_database_to_file(
     file.flush()
         .map_err(|e| format_fs_err("写入导出文件失败", e))?;
     drop(file);
-
-    crate::util::secure_fs::set_secure_file_permissions(path)
-        .map_err(|e| format!("设置文件权限失败: {}", e))?;
 
     Ok(ExportSqlFileResult {
         tables_exported,

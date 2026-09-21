@@ -1,6 +1,7 @@
 //! macOS / Linux：系统 OpenSSH（`ssh -L`）。
 
 use crate::models::types::SshConfig;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
@@ -13,15 +14,17 @@ use super::{ensure_db_connect_data_dir, expand_ssh_private_key_path};
 pub struct SshTunnel {
     local_port: u16,
     child: Arc<Mutex<Option<tokio::process::Child>>>,
-    _cleanup: CleanupPaths,
 }
 
+#[derive(Default)]
 struct CleanupPaths(Vec<PathBuf>);
 
 impl Drop for CleanupPaths {
     fn drop(&mut self) {
-        for p in &self.0 {
-            let _ = std::fs::remove_file(p);
+        for path in self.0.iter().rev() {
+            if std::fs::remove_file(path).is_err() {
+                let _ = std::fs::remove_dir(path);
+            }
         }
     }
 }
@@ -65,11 +68,11 @@ impl SshTunnel {
             })?;
 
         wait_for_local_forward(local_port, &mut child).await?;
+        drop(cleanup);
 
         Ok(SshTunnel {
             local_port,
             child: Arc::new(Mutex::new(Some(child))),
-            _cleanup: CleanupPaths(cleanup),
         })
     }
 
@@ -144,36 +147,83 @@ fn shell_single_quoted_path(p: &Path) -> String {
     format!("'{}'", s.replace('\'', "'\"'\"'"))
 }
 
-fn prepare_askpass(password: &str) -> Result<(PathBuf, Vec<PathBuf>), String> {
+fn prepare_askpass(password: &str) -> Result<(PathBuf, CleanupPaths), String> {
     let id = uuid::Uuid::new_v4();
-    let pass_path = std::env::temp_dir().join(format!("db-connect-ssh-pass-{id}"));
-    let script_path = std::env::temp_dir().join(format!("db-connect-ssh-askpass-{id}.sh"));
+    let temp_dir = std::env::temp_dir().join(format!("db-connect-ssh-askpass-{id}"));
+    let pass_path = temp_dir.join("password");
+    let script_path = temp_dir.join("askpass.sh");
+    let mut cleanup = CleanupPaths::default();
 
-    std::fs::write(&pass_path, password.as_bytes())
-        .map_err(|e| format!("写入 SSH askpass 数据失败: {}", e))?;
+    let mut dir_builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        dir_builder.mode(0o700);
+    }
+    dir_builder
+        .create(&temp_dir)
+        .map_err(|e| format!("创建 SSH askpass 临时目录失败: {}", e))?;
+    cleanup.0.push(temp_dir.clone());
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&pass_path, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| format!("设置 askpass 文件权限失败: {}", e))?;
+        std::fs::set_permissions(&temp_dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("设置 askpass 临时目录权限失败: {}", e))?;
     }
+
+    let mut pass_file = create_new_askpass_file(&pass_path, 0o600)?;
+    cleanup.0.push(pass_path.clone());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        pass_file
+            .set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("设置 askpass 数据权限失败: {}", e))?;
+    }
+    pass_file
+        .write_all(password.as_bytes())
+        .map_err(|e| format!("写入 SSH askpass 数据失败: {}", e))?;
+    drop(pass_file);
 
     let body = format!(
         "#!/bin/sh\nexec cat {}\n",
         shell_single_quoted_path(&pass_path)
     );
-    std::fs::write(&script_path, &body).map_err(|e| format!("写入 SSH_ASKPASS 脚本失败: {}", e))?;
+    let mut script_file = create_new_askpass_file(&script_path, 0o700)?;
+    cleanup.0.push(script_path.clone());
+    script_file
+        .write_all(body.as_bytes())
+        .map_err(|e| format!("写入 SSH_ASKPASS 脚本失败: {}", e))?;
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o700))
+        script_file
+            .set_permissions(std::fs::Permissions::from_mode(0o700))
             .map_err(|e| format!("设置 askpass 脚本权限失败: {}", e))?;
     }
+    drop(script_file);
 
-    let cleanup = vec![pass_path, script_path.clone()];
     Ok((script_path, cleanup))
+}
+
+fn create_new_askpass_file(path: &Path, mode: u32) -> Result<std::fs::File, String> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(mode);
+    }
+
+    #[cfg(not(unix))]
+    let _ = mode;
+
+    options
+        .open(path)
+        .map_err(|e| format!("创建 SSH askpass 临时文件失败: {}", e))
 }
 
 fn build_ssh_command(
@@ -182,10 +232,10 @@ fn build_ssh_command(
     remote_mysql_port: u16,
     local_port: u16,
     known_hosts: &Path,
-) -> Result<(Vec<PathBuf>, Command), String> {
+) -> Result<(CleanupPaths, Command), String> {
     let remote = ssh_forward_remote_target(remote_host, remote_mysql_port);
     let forward = format!("127.0.0.1:{local_port}:{remote}");
-    let mut cleanup = Vec::new();
+    let mut cleanup = CleanupPaths::default();
 
     let mut cmd = Command::new(ssh_program());
     cmd.arg("-N");
@@ -213,7 +263,7 @@ fn build_ssh_command(
     if need_askpass {
         let pwd = cfg.password.as_ref().unwrap();
         let (script, mut paths) = prepare_askpass(pwd)?;
-        cleanup.append(&mut paths);
+        cleanup.0.append(&mut paths.0);
         cmd.env("SSH_ASKPASS", &script);
         cmd.env("SSH_ASKPASS_REQUIRE", "force");
         cmd.env("DISPLAY", "");
@@ -256,6 +306,7 @@ async fn wait_for_local_forward(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn test_ssh_forward_remote_target_ipv4() {
@@ -284,5 +335,31 @@ mod tests {
             ssh_forward_remote_target("[2001:db8::1]", 3306),
             "[2001:db8::1]:3306"
         );
+    }
+
+    #[test]
+    fn dropping_askpass_cleanup_removes_the_secret_and_script() {
+        let (script_path, cleanup) = prepare_askpass("temporary secret").unwrap();
+        let script = fs::read_to_string(&script_path).unwrap();
+        let pass_path = PathBuf::from(
+            script
+                .strip_prefix("#!/bin/sh\nexec cat '")
+                .and_then(|value| value.strip_suffix("'\n"))
+                .expect("askpass 脚本应引用口令文件"),
+        );
+        assert!(script_path.exists());
+        assert!(pass_path.exists());
+
+        drop(cleanup);
+
+        let script_remained = script_path.exists();
+        let password_remained = pass_path.exists();
+        fs::remove_file(&script_path).ok();
+        fs::remove_file(&pass_path).ok();
+        if let Some(parent) = script_path.parent() {
+            fs::remove_dir(parent).ok();
+        }
+        assert!(!script_remained, "清理守卫释放后 askpass 脚本仍然存在");
+        assert!(!password_remained, "清理守卫释放后明文口令仍然存在");
     }
 }

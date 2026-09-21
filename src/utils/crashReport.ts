@@ -35,10 +35,88 @@ export interface CrashReportBuildInput {
   breadcrumbs?: BreadcrumbEntry | null;
 }
 
+const INTERNAL_CONTEXT_KEY =
+  /connection|database|schema|table|column|tab|label|(?:^|_)id(?:_|$)|name/i;
+
+function getKnownInternalValues(
+  breadcrumbs?: BreadcrumbEntry | null
+): string[] {
+  if (!breadcrumbs) return [];
+  const detailGroups = [
+    breadcrumbs.last_active_view?.details,
+    breadcrumbs.last_copy_action?.details,
+  ];
+  const values = new Set<string>();
+
+  for (const details of detailGroups) {
+    if (!details) continue;
+    for (const [key, rawValue] of Object.entries(details)) {
+      if (!INTERNAL_CONTEXT_KEY.test(key)) continue;
+      const value = String(rawValue).trim();
+      // 极短值（如表别名 "t"）无法安全地在普通错误文本中全局替换。
+      if (value.length >= 3) values.add(value);
+    }
+  }
+
+  return [...values].sort((a, b) => b.length - a.length);
+}
+
+function redactKnownInternalValues(
+  text: string,
+  breadcrumbs?: BreadcrumbEntry | null
+): string {
+  return getKnownInternalValues(breadcrumbs).reduce(
+    (result, value) => result.split(value).join("[REDACTED]"),
+    text
+  );
+}
+
+/**
+ * 崩溃面包屑来自 localStorage，可能包含旧版本保存的自由文本。
+ * 外发时仅挑选稳定的诊断字段，绝不直接序列化原对象。
+ */
+function buildSafeBreadcrumbs(breadcrumbs: BreadcrumbEntry): BreadcrumbEntry {
+  const safe: BreadcrumbEntry = {
+    schema_version: breadcrumbs.schema_version,
+    last_updated_at: breadcrumbs.last_updated_at,
+  };
+
+  if (breadcrumbs.runtime) {
+    safe.runtime = {
+      os_name: breadcrumbs.runtime.os_name,
+      os_version: breadcrumbs.runtime.os_version,
+      webkit_version: breadcrumbs.runtime.webkit_version,
+      arch: breadcrumbs.runtime.arch,
+      platform: breadcrumbs.runtime.platform,
+      user_agent: breadcrumbs.runtime.user_agent,
+      captured_at: breadcrumbs.runtime.captured_at,
+    };
+  }
+
+  if (breadcrumbs.last_active_view) {
+    safe.last_active_view = {
+      view: breadcrumbs.last_active_view.view,
+      captured_at: breadcrumbs.last_active_view.captured_at,
+    };
+  }
+
+  if (breadcrumbs.last_copy_action) {
+    safe.last_copy_action = {
+      source: breadcrumbs.last_copy_action.source,
+      status: breadcrumbs.last_copy_action.status,
+      captured_at: breadcrumbs.last_copy_action.captured_at,
+    };
+  }
+
+  return safe;
+}
+
 /**
  * 生成符合 GitHub Issue 规范的崩溃报告正文（Markdown）
  */
 export function buildCrashReportBody(input: CrashReportBuildInput): string {
+  const redact = (text: string) =>
+    redactKnownInternalValues(text, input.breadcrumbs);
   const lines: string[] = [
     "## 摘要",
     "",
@@ -53,12 +131,19 @@ export function buildCrashReportBody(input: CrashReportBuildInput): string {
     "## 错误",
     "",
     `- **类型**: \`${input.errorName}\``,
-    `- **消息**: ${input.errorMessage}`,
+    `- **消息**: ${redact(input.errorMessage)}`,
     "",
   ];
 
   if (input.stack?.trim()) {
-    lines.push("### Stack trace", "", "```", input.stack.trim(), "```", "");
+    lines.push(
+      "### Stack trace",
+      "",
+      "```",
+      redact(input.stack.trim()),
+      "```",
+      ""
+    );
   }
 
   if (input.componentStack?.trim()) {
@@ -66,7 +151,7 @@ export function buildCrashReportBody(input: CrashReportBuildInput): string {
       "### React 组件栈",
       "",
       "```",
-      input.componentStack.trim(),
+      redact(input.componentStack.trim()),
       "```",
       ""
     );
@@ -77,7 +162,7 @@ export function buildCrashReportBody(input: CrashReportBuildInput): string {
       "### 诊断面包屑（本地）",
       "",
       "```json",
-      JSON.stringify(input.breadcrumbs, null, 2),
+      JSON.stringify(buildSafeBreadcrumbs(input.breadcrumbs), null, 2),
       "```",
       ""
     );
@@ -91,11 +176,13 @@ export function buildCrashReportBody(input: CrashReportBuildInput): string {
 export function buildCrashIssueTitle(
   errorName: string,
   errorMessage: string,
-  appVersion: string
+  appVersion: string,
+  breadcrumbs?: BreadcrumbEntry | null
 ): string {
+  const redactedMessage = redactKnownInternalValues(errorMessage, breadcrumbs);
   const msg =
-    errorMessage.length > 120
-      ? `${errorMessage.slice(0, 119)}…`
-      : errorMessage;
+    redactedMessage.length > 120
+      ? `${redactedMessage.slice(0, 119)}…`
+      : redactedMessage;
   return truncateIssueTitle(`[Crash] v${appVersion} ${errorName}: ${msg}`);
 }
