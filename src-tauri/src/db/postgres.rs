@@ -1,3 +1,4 @@
+use crate::db::batch_update::{build_batch_update_statements, BatchDialect};
 use crate::db::postgres_error::format_pg_error;
 use crate::db::result_budget::ResultBudget;
 use crate::db::sql_utils::{
@@ -19,7 +20,7 @@ use futures_util::TryStreamExt;
 use native_tls::{Certificate, Identity, TlsConnector};
 use postgres_native_tls::MakeTlsConnector;
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
@@ -29,6 +30,10 @@ use tokio_postgres::{CancelToken, NoTls, SimpleQueryMessage};
 #[cfg(test)]
 #[path = "postgres_query_tests.rs"]
 mod query_tests;
+
+#[cfg(test)]
+#[path = "postgres_batch_tests.rs"]
+mod batch_tests;
 
 #[derive(Clone)]
 pub enum PostgresCancelTls {
@@ -695,12 +700,7 @@ async fn fetch_column_names_on_client(
     Ok(rows.iter().map(|r| r.get::<_, String>(0)).collect())
 }
 
-/// 单行 UPDATE：根据主键列定位，更新指定列。
-#[derive(Debug, Clone)]
-pub struct PgRowUpdate {
-    pub primary_keys: HashMap<String, JsonValue>,
-    pub updates: HashMap<String, JsonValue>,
-}
+pub use crate::db::batch_update::RowUpdate as PgRowUpdate;
 
 /// 写操作参数：要么是 SQL NULL，要么是 UTF-8 文本。
 ///
@@ -790,7 +790,7 @@ async fn execute_with_text_params_in_tx(
 ) -> Result<u64, String> {
     let param_types: Vec<Type> = vec![Type::UNKNOWN; values.len()];
     let stmt = tx
-        .prepare_typed(sql, &param_types)
+        .prepare_typed_cached(sql, &param_types)
         .await
         .map_err(|e| format_pg_error("准备 SQL", e))?;
     let params: Vec<&(dyn ToSql + Sync)> = values
@@ -800,6 +800,35 @@ async fn execute_with_text_params_in_tx(
     tx.execute(&stmt, &params)
         .await
         .map_err(|e| format_pg_error("执行写操作", e))
+}
+
+async fn validate_batch_targets_in_tx(
+    tx: &deadpool_postgres::Transaction<'_>,
+    sql: &str,
+    values: &[PgInputValue],
+    seen: &mut HashSet<String>,
+) -> Result<usize, String> {
+    let stmt = tx
+        .prepare_typed_cached(sql, &vec![Type::UNKNOWN; values.len()])
+        .await
+        .map_err(|e| format_pg_error("准备批量更新校验", e))?;
+    let params: Vec<&(dyn ToSql + Sync)> = values
+        .iter()
+        .map(|value| value as &(dyn ToSql + Sync))
+        .collect();
+    let rows = tx
+        .query(&stmt, &params)
+        .await
+        .map_err(|e| format_pg_error("校验批量更新目标", e))?;
+    let matched_rows = rows.len();
+    for row in rows {
+        let identity: String = row.get(0);
+        let matches: i32 = row.get(1);
+        if matches > 1 || !seen.insert(identity) {
+            return Err("批量更新存在重复目标行".to_string());
+        }
+    }
+    Ok(matched_rows)
 }
 
 /// 构建 PostgreSQL 单行 INSERT 语句与参数。
@@ -1018,25 +1047,61 @@ pub async fn batch_update_rows(
     }
 
     let mut client = get_client_with_retry(pool).await?;
+    let primary_key_columns = fetch_primary_keys_on_client(&client, schema, table).await?;
+    let statements = build_batch_update_statements(
+        BatchDialect::Postgres,
+        schema,
+        table,
+        &primary_key_columns,
+        &rows,
+    )?;
+    // 固定预校验与 UPDATE 的可见行，避免校验后插入的新行被后续块误更新。
     let tx = client
-        .transaction()
+        .build_transaction()
+        .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
+        .start()
         .await
         .map_err(|e| format!("开启事务失败: {}", e))?;
 
-    let mut total: u64 = 0;
-    for r in &rows {
-        let pk_entries = map_entries(&r.primary_keys);
-        let upd_entries = map_entries(&r.updates);
-        let (sql, params) = build_update_statement(schema, table, &pk_entries, &upd_entries);
-        match execute_with_text_params_in_tx(&tx, &sql, &params).await {
-            Ok(n) => total += n,
-            Err(e) => {
-                // tx 在 drop 时自动回滚，显式 rollback 仅为表达清晰
-                let _ = tx.rollback().await;
-                return Err(format!("批量更新失败，已回滚（未提交任何修改）: {}", e));
+    let result: Result<u64, String> = async {
+        let mut seen = HashSet::new();
+        // 按字段组和参数上限分块校验，所有块通过后才开始写入。
+        for statement in &statements {
+            let values: Vec<_> = statement
+                .validation_params
+                .iter()
+                .map(PgInputValue::from_json)
+                .collect();
+            let matched_rows =
+                validate_batch_targets_in_tx(&tx, &statement.validation_sql, &values, &mut seen)
+                    .await?;
+            if statement
+                .expected_matches
+                .is_some_and(|expected| expected != matched_rows)
+            {
+                return Err("待更新行已变更，请刷新数据后重试".to_string());
             }
         }
+        let mut total = 0;
+        for statement in &statements {
+            let values: Vec<_> = statement
+                .params
+                .iter()
+                .map(PgInputValue::from_json)
+                .collect();
+            total += execute_with_text_params_in_tx(&tx, &statement.sql, &values).await?;
+        }
+        Ok(total)
     }
+    .await;
+
+    let total = match result {
+        Ok(total) => total,
+        Err(error) => {
+            let _ = tx.rollback().await;
+            return Err(format!("批量更新失败，已回滚（未提交任何修改）: {}", error));
+        }
+    };
 
     tx.commit()
         .await

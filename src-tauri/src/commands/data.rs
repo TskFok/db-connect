@@ -1,3 +1,5 @@
+pub use crate::db::batch_update::RowUpdate;
+use crate::db::batch_update::{build_batch_update_statements, BatchDialect};
 use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
 use crate::db::result_budget::ResultBudget;
 use crate::db::sql_utils::{
@@ -12,9 +14,13 @@ use mysql_async::Row;
 use mysql_async::Value as MyValue;
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 use tauri::State;
+
+#[cfg(test)]
+#[path = "data_batch_tests.rs"]
+mod batch_tests;
 
 // ─── 辅助函数 ──────────────────────────────────────────────────────────
 
@@ -845,7 +851,7 @@ pub async fn insert_row(
     Ok(conn.affected_rows())
 }
 
-/// 构建按主键定位的单行 UPDATE 语句与位置参数（`update_row` 与 `batch_update_rows` 共用）。
+/// 构建按主键定位的单行 UPDATE 语句与位置参数。
 /// 调用方需自行保证 `updates` 与 `primary_keys` 均非空。
 fn build_update_statement(
     database: &str,
@@ -1003,13 +1009,6 @@ pub async fn update_row(
     Ok(conn.affected_rows())
 }
 
-/// 批量提交的单行更新：主键定位 + 待更新列。
-#[derive(Debug, Clone, Deserialize)]
-pub struct RowUpdate {
-    pub primary_keys: HashMap<String, JsonValue>,
-    pub updates: HashMap<String, JsonValue>,
-}
-
 /// 在单个事务中批量更新多行：任一行失败立即回滚整批，全部成功才提交。
 ///
 /// 取代前端逐行 `update_row` 的做法，消除「成功 N 行 / 失败 M 行」的部分提交不一致状态。
@@ -1030,41 +1029,28 @@ pub async fn batch_update_rows(
     let pool = match pool_handle {
         DatabasePoolHandle::MySql(pool) => pool,
         DatabasePoolHandle::Postgres(handle) => {
-            let pg_rows: Vec<postgres::PgRowUpdate> = rows
-                .into_iter()
-                .map(|r| postgres::PgRowUpdate {
-                    primary_keys: r.primary_keys,
-                    updates: r.updates,
-                })
-                .collect();
-            return postgres::batch_update_rows(&handle.pool, &database, &table, pg_rows).await;
+            return postgres::batch_update_rows(&handle.pool, &database, &table, rows).await;
         }
         DatabasePoolHandle::Sqlite(handle) => {
-            let sqlite_rows: Vec<sqlite::SqliteRowUpdate> = rows
-                .into_iter()
-                .map(|r| sqlite::SqliteRowUpdate {
-                    primary_keys: r.primary_keys,
-                    updates: r.updates,
-                })
-                .collect();
-            return sqlite::batch_update_rows(&handle.pool, &database, &table, sqlite_rows).await;
+            return sqlite::batch_update_rows(&handle.pool, &database, &table, rows).await;
         }
         DatabasePoolHandle::SqlServer(handle) => {
-            let sqlserver_rows: Vec<sqlserver::SqlServerRowUpdate> = rows
-                .into_iter()
-                .map(|r| sqlserver::SqlServerRowUpdate {
-                    primary_keys: r.primary_keys,
-                    updates: r.updates,
-                })
-                .collect();
-            return sqlserver::batch_update_rows(&handle.pool, &database, &table, sqlserver_rows)
-                .await;
+            return sqlserver::batch_update_rows(&handle.pool, &database, &table, rows).await;
         }
         DatabasePoolHandle::ClickHouse(_) => {
             return Err(clickhouse_row_mutation_unsupported_error());
         }
     };
 
+    mysql_batch_update_rows(&pool, &database, &table, rows).await
+}
+
+async fn mysql_batch_update_rows(
+    pool: &mysql_async::Pool,
+    database: &str,
+    table: &str,
+    rows: Vec<RowUpdate>,
+) -> Result<u64, String> {
     if rows.is_empty() {
         return Err("没有提供要更新的数据".to_string());
     }
@@ -1077,25 +1063,69 @@ pub async fn batch_update_rows(
         }
     }
 
-    let mut conn = get_conn_with_retry(&pool).await?;
+    let mut conn = get_conn_with_retry(pool).await?;
+    let primary_key_columns = fetch_primary_keys(&mut conn, database, table).await?;
+    let statements = build_batch_update_statements(
+        BatchDialect::MySql,
+        database,
+        table,
+        &primary_key_columns,
+        &rows,
+    )?;
+    // 固定 RR，使 FOR UPDATE 也保护尚不存在定位键的间隙；不能依赖会话默认隔离级别。
+    let mut tx_options = mysql_async::TxOpts::default();
+    tx_options.with_isolation_level(mysql_async::IsolationLevel::RepeatableRead);
     let mut tx = conn
-        .start_transaction(mysql_async::TxOpts::default())
+        .start_transaction(tx_options)
         .await
         .map_err(|e| format!("开启事务失败: {}", e))?;
 
-    let mut total: u64 = 0;
-    for r in &rows {
-        let (sql, params) = build_update_statement(&database, &table, &r.primary_keys, &r.updates);
-        if let Err(e) = tx
-            .exec_drop(&sql, mysql_async::Params::Positional(params))
-            .await
-        {
-            // 显式回滚；即使回滚自身出错，事务也会在 Transaction drop 时隐式回滚
-            let _ = tx.rollback().await;
-            return Err(format!("批量更新失败，已回滚（未提交任何修改）: {}", e));
+    let result: Result<u64, String> = async {
+        let mut seen = HashSet::new();
+        // 所有块先校验，避免跨字段组/跨块的数据库等价主键被更新多次。
+        for statement in &statements {
+            let params: Vec<_> = statement
+                .validation_params
+                .iter()
+                .map(json_to_mysql_value)
+                .collect();
+            let targets: Vec<(String, i64)> = tx
+                .exec(
+                    &statement.validation_sql,
+                    mysql_async::Params::Positional(params),
+                )
+                .await
+                .map_err(|e| format!("校验批量更新目标失败: {}", e))?;
+            if statement
+                .expected_matches
+                .is_some_and(|expected| targets.len() != expected)
+            {
+                return Err("待更新行已变更，请刷新数据后重试".into());
+            }
+            for (identity, matches) in targets {
+                if matches > 1 || !seen.insert(identity) {
+                    return Err("批量更新存在重复目标行".into());
+                }
+            }
         }
-        total += tx.affected_rows();
+        let mut total = 0;
+        for statement in &statements {
+            let params: Vec<_> = statement.params.iter().map(json_to_mysql_value).collect();
+            tx.exec_drop(&statement.sql, mysql_async::Params::Positional(params))
+                .await
+                .map_err(|e| format!("执行集合更新失败: {}", e))?;
+            total += tx.affected_rows();
+        }
+        Ok(total)
     }
+    .await;
+    let total = match result {
+        Ok(total) => total,
+        Err(error) => {
+            let _ = tx.rollback().await;
+            return Err(format!("批量更新失败，已回滚（未提交任何修改）: {}", error));
+        }
+    };
 
     tx.commit()
         .await

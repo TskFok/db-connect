@@ -1,3 +1,5 @@
+pub use crate::db::batch_update::RowUpdate as SqlServerRowUpdate;
+use crate::db::batch_update::{build_batch_update_statements, BatchDialect};
 use crate::db::dialect::SQLSERVER_DIALECT;
 use crate::db::result_budget::ResultBudget;
 use crate::db::sql_utils::{
@@ -12,7 +14,7 @@ use bb8::{ManageConnection, Pool, PooledConnection};
 use bb8_tiberius::ConnectionManager as InnerSqlServerConnectionManager;
 use futures_util::TryStreamExt;
 use serde_json::Value as JsonValue;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
 use std::time::{Duration, Instant};
 use tiberius::{AuthMethod, ColumnData, Config as TiberiusConfig, EncryptionLevel, Row};
@@ -505,12 +507,6 @@ impl SqlServerInputValue {
     fn is_null(&self) -> bool {
         matches!(self, SqlServerInputValue::Null)
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SqlServerRowUpdate {
-    pub primary_keys: HashMap<String, JsonValue>,
-    pub updates: HashMap<String, JsonValue>,
 }
 
 #[derive(Debug, Clone)]
@@ -1447,28 +1443,105 @@ pub async fn update_row(
     execute_with_text_params(&mut client, &sql, &params).await
 }
 
+#[derive(Debug)]
+struct SqlServerBatchUpdateStatement {
+    sql: String,
+    params: Vec<SqlServerInputValue>,
+    validation_sql: String,
+    validation_params: Vec<SqlServerInputValue>,
+    expected_matches: Option<usize>,
+}
+
 fn prepare_batch_update_statements(
     schema: &str,
     table: &str,
     locator_columns: &[String],
     rows: &[SqlServerRowUpdate],
-) -> Result<Vec<(String, Vec<SqlServerInputValue>)>, String> {
-    rows.iter()
-        .map(|row| {
-            let pk_entries = ordered_locator_entries(
-                locator_columns,
-                &row.primary_keys,
-                "存在缺少主键信息的行",
-            )?;
-            let upd_entries = map_entries(&row.updates);
-            Ok(build_update_statement(
-                schema,
-                table,
-                &pk_entries,
-                &upd_entries,
-            ))
-        })
-        .collect()
+) -> Result<Vec<SqlServerBatchUpdateStatement>, String> {
+    if locator_columns.is_empty() {
+        return Err(SQLSERVER_NO_ROW_LOCATOR_EDIT_ERROR.to_string());
+    }
+    Ok(build_batch_update_statements(
+        BatchDialect::SqlServer,
+        schema,
+        table,
+        locator_columns,
+        rows,
+    )?
+    .into_iter()
+    .map(|statement| SqlServerBatchUpdateStatement {
+        sql: statement.sql,
+        params: statement
+            .params
+            .iter()
+            .map(SqlServerInputValue::from_json)
+            .collect(),
+        expected_matches: statement.expected_matches,
+        validation_sql: statement.validation_sql,
+        validation_params: statement
+            .validation_params
+            .iter()
+            .map(SqlServerInputValue::from_json)
+            .collect(),
+    })
+    .collect())
+}
+
+fn register_batch_update_target(
+    seen: &mut HashSet<String>,
+    identity: String,
+    matches: i32,
+) -> Result<(), String> {
+    if matches > 1 || !seen.insert(identity) {
+        return Err("批量更新存在重复目标行".to_string());
+    }
+    Ok(())
+}
+
+fn validate_batch_update_target_count(
+    expected: Option<usize>,
+    actual: usize,
+) -> Result<(), String> {
+    if expected.is_some_and(|expected| expected != actual) {
+        return Err("待更新行已变更，请刷新数据后重试".to_string());
+    }
+    Ok(())
+}
+
+async fn validate_batch_update_targets(
+    client: &mut SqlServerPooledConnection<'_>,
+    statement: &SqlServerBatchUpdateStatement,
+    seen: &mut HashSet<String>,
+) -> Result<(), String> {
+    let owned: Vec<Option<String>> = statement
+        .validation_params
+        .iter()
+        .map(SqlServerInputValue::as_owned_text)
+        .collect();
+    let params: Vec<&dyn tiberius::ToSql> = owned
+        .iter()
+        .map(|value| value as &dyn tiberius::ToSql)
+        .collect();
+    let targets = client
+        .query(&statement.validation_sql, &params)
+        .await
+        .map_err(|err| normalize_sqlserver_error("校验批量更新目标失败", err.to_string()))?
+        .into_first_result()
+        .await
+        .map_err(|err| normalize_sqlserver_error("读取批量更新目标失败", err.to_string()))?;
+    validate_batch_update_target_count(statement.expected_matches, targets.len())?;
+    for row in targets {
+        let identity = row
+            .try_get::<&str, _>(0)
+            .map_err(|err| normalize_sqlserver_error("读取批量更新定位键失败", err.to_string()))?
+            .ok_or("批量更新目标缺少定位键")?;
+        let matches = row
+            .try_get::<i32, _>(1)
+            .map_err(|err| normalize_sqlserver_error("读取批量更新匹配数失败", err.to_string()))?
+            .ok_or("批量更新目标缺少匹配数")?;
+        register_batch_update_target(seen, identity.to_string(), matches)?;
+    }
+    Ok(())
 }
 
 pub async fn batch_update_rows(
@@ -1494,20 +1567,56 @@ pub async fn batch_update_rows(
     let statements = prepare_batch_update_statements(schema, table, &locator.columns, &rows)?;
     drain_simple_query(&mut client, "BEGIN TRANSACTION", "开启事务失败").await?;
 
-    let mut total = 0u64;
-    for (sql, params) in &statements {
-        match execute_with_text_params(&mut client, sql, params).await {
-            Ok(affected) => total += affected,
-            Err(err) => {
-                let _ =
-                    drain_simple_query(&mut client, "ROLLBACK TRANSACTION", "回滚事务失败").await;
-                return Err(format!("批量更新失败，已回滚（未提交任何修改）: {}", err));
+    let result = async {
+        let mut seen = HashSet::new();
+        // 分块完成所有目标校验后才开始写入，避免后续分组才发现重复目标。
+        for statement in &statements {
+            validate_batch_update_targets(&mut client, statement, &mut seen).await?;
+        }
+
+        let mut total = 0u64;
+        for statement in &statements {
+            total +=
+                execute_with_text_params(&mut client, &statement.sql, &statement.params).await?;
+        }
+        Ok::<u64, String>(total)
+    }
+    .await;
+
+    match result {
+        Ok(total) => {
+            if let Err(err) =
+                drain_simple_query(&mut client, "COMMIT TRANSACTION", "提交事务失败").await
+            {
+                let _ = drain_simple_query(
+                    &mut client,
+                    "IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION",
+                    "回滚事务失败",
+                )
+                .await;
+                // 连接中断可能发生在服务端提交之后，不能声称没有提交。
+                drop(client.inner.take());
+                return Err(format!("批量更新提交失败，请刷新数据确认提交结果: {}", err));
             }
+            Ok(total)
+        }
+        Err(err) => {
+            if let Err(rollback_err) = drain_simple_query(
+                &mut client,
+                "IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION",
+                "回滚事务失败",
+            )
+            .await
+            {
+                drop(client.inner.take());
+                return Err(format!(
+                    "批量更新失败，回滚失败后已关闭连接: {}; {}",
+                    err, rollback_err
+                ));
+            }
+            Err(format!("批量更新失败，已回滚（未提交任何修改）: {}", err))
         }
     }
-
-    drain_simple_query(&mut client, "COMMIT TRANSACTION", "提交事务失败").await?;
-    Ok(total)
 }
 
 pub async fn delete_rows(
@@ -2089,6 +2198,244 @@ mod tests {
         assert!(sql.contains("uq.rank_no = 1"));
         assert!(sql.contains("pk_exists"));
         assert!(sql.contains("pk_exists.object_id IS NULL"));
+    }
+
+    #[test]
+    fn sqlserver_batch_update_requires_all_targets_before_changing_a_locator() {
+        let rows = vec![
+            SqlServerRowUpdate {
+                primary_keys: HashMap::from([("id".to_string(), serde_json::json!(1))]),
+                updates: HashMap::from([("id".to_string(), serde_json::json!(3))]),
+            },
+            SqlServerRowUpdate {
+                primary_keys: HashMap::from([("id".to_string(), serde_json::json!(2))]),
+                updates: HashMap::from([("name".to_string(), serde_json::json!("Ada"))]),
+            },
+        ];
+        let statements =
+            prepare_batch_update_statements("dbo", "items", &["id".to_string()], &rows).unwrap();
+
+        assert_eq!(statements.len(), 2);
+        assert!(statements
+            .iter()
+            .all(|statement| statement.expected_matches == Some(1)));
+    }
+
+    #[test]
+    fn sqlserver_batch_update_rejects_missing_targets_when_changing_a_locator() {
+        assert_eq!(validate_batch_update_target_count(None, 0), Ok(()));
+        assert_eq!(validate_batch_update_target_count(Some(1), 1), Ok(()));
+        assert_eq!(
+            validate_batch_update_target_count(Some(1), 0),
+            Err("待更新行已变更，请刷新数据后重试".to_string())
+        );
+    }
+
+    #[test]
+    fn sqlserver_batch_update_rejects_database_equivalent_targets_in_one_chunk() {
+        let mut seen = HashSet::new();
+
+        assert_eq!(
+            register_batch_update_target(&mut seen, "target-1".to_string(), 2),
+            Err("批量更新存在重复目标行".to_string())
+        );
+    }
+
+    #[test]
+    fn sqlserver_batch_update_rejects_database_equivalent_targets_across_chunks() {
+        let mut seen = HashSet::new();
+        register_batch_update_target(&mut seen, "target-1".to_string(), 1).unwrap();
+        register_batch_update_target(&mut seen, "target-2".to_string(), 1).unwrap();
+
+        assert_eq!(
+            register_batch_update_target(&mut seen, "target-1".to_string(), 1),
+            Err("批量更新存在重复目标行".to_string())
+        );
+    }
+
+    #[test]
+    fn sqlserver_batch_update_combines_rows_with_the_same_columns() {
+        let rows = vec![
+            SqlServerRowUpdate {
+                primary_keys: HashMap::from([("id".to_string(), serde_json::json!(1))]),
+                updates: HashMap::from([("name".to_string(), serde_json::json!("Ada"))]),
+            },
+            SqlServerRowUpdate {
+                primary_keys: HashMap::from([("id".to_string(), serde_json::json!(2))]),
+                updates: HashMap::from([("name".to_string(), serde_json::json!("Grace"))]),
+            },
+        ];
+
+        let statements =
+            prepare_batch_update_statements("dbo", "items", &["id".to_string()], &rows).unwrap();
+
+        assert_eq!(statements.len(), 1, "相同更新字段的行应合并为集合更新");
+        assert_eq!(statements[0].expected_matches, None);
+        assert!(statements[0].sql.contains("CASE"));
+        assert!(!statements[0].sql.contains("ELSE [name]"));
+    }
+
+    #[test]
+    fn sqlserver_batch_update_groups_different_update_columns() {
+        let rows = vec![
+            SqlServerRowUpdate {
+                primary_keys: HashMap::from([("id".to_string(), serde_json::json!(1))]),
+                updates: HashMap::from([("name".to_string(), serde_json::json!("Ada"))]),
+            },
+            SqlServerRowUpdate {
+                primary_keys: HashMap::from([("id".to_string(), serde_json::json!(2))]),
+                updates: HashMap::from([("active".to_string(), serde_json::json!(true))]),
+            },
+            SqlServerRowUpdate {
+                primary_keys: HashMap::from([("id".to_string(), serde_json::json!(3))]),
+                updates: HashMap::from([("name".to_string(), serde_json::json!("Grace"))]),
+            },
+        ];
+
+        let statements =
+            prepare_batch_update_statements("dbo", "items", &["id".to_string()], &rows).unwrap();
+
+        assert_eq!(statements.len(), 2);
+        let names = statements
+            .iter()
+            .find(|statement| statement.sql.contains("[name] ="))
+            .unwrap();
+        assert!(!names.sql.contains("[active] ="));
+        assert_eq!(names.params.len(), 6);
+        let active = statements
+            .iter()
+            .find(|statement| statement.sql.contains("[active] ="))
+            .unwrap();
+        assert!(!active.sql.contains("[name] ="));
+        assert_eq!(active.params.len(), 3);
+    }
+
+    #[test]
+    fn sqlserver_batch_update_preserves_composite_null_locators_and_text_parameter_order() {
+        let rows = vec![
+            SqlServerRowUpdate {
+                primary_keys: HashMap::from([
+                    ("tenant_id".to_string(), serde_json::json!(4)),
+                    ("code".to_string(), JsonValue::Null),
+                ]),
+                updates: HashMap::from([
+                    ("active".to_string(), serde_json::json!(true)),
+                    ("label".to_string(), JsonValue::Null),
+                ]),
+            },
+            SqlServerRowUpdate {
+                primary_keys: HashMap::from([
+                    ("tenant_id".to_string(), serde_json::json!(4)),
+                    ("code".to_string(), serde_json::json!("A")),
+                ]),
+                updates: HashMap::from([
+                    ("active".to_string(), serde_json::json!(false)),
+                    ("label".to_string(), serde_json::json!({"nested": 2})),
+                ]),
+            },
+        ];
+
+        let statements = prepare_batch_update_statements(
+            "db]o",
+            "items]",
+            &["tenant_id".to_string(), "code".to_string()],
+            &rows,
+        )
+        .unwrap();
+
+        assert_eq!(statements.len(), 1);
+        let sql = &statements[0].sql;
+        let params = &statements[0].params;
+        assert!(sql.starts_with("UPDATE [db]]o].[items]]] SET "));
+        assert!(sql.contains("[tenant_id] = @P1 AND [code] IS NULL"));
+        assert!(sql.contains("[tenant_id] = @P3 AND [code] = @P4"));
+        assert!(!sql.contains("[code] = NULL"));
+        assert_eq!(
+            statements[0].validation_params,
+            vec![
+                SqlServerInputValue::Text("4".to_string()),
+                SqlServerInputValue::Text("4".to_string()),
+                SqlServerInputValue::Text("A".to_string()),
+                SqlServerInputValue::Text("4".to_string()),
+                SqlServerInputValue::Text("4".to_string()),
+                SqlServerInputValue::Text("A".to_string()),
+            ]
+        );
+        assert_eq!(
+            params,
+            &vec![
+                SqlServerInputValue::Text("4".to_string()),
+                SqlServerInputValue::Text("1".to_string()),
+                SqlServerInputValue::Text("4".to_string()),
+                SqlServerInputValue::Text("A".to_string()),
+                SqlServerInputValue::Text("0".to_string()),
+                SqlServerInputValue::Text("4".to_string()),
+                SqlServerInputValue::Null,
+                SqlServerInputValue::Text("4".to_string()),
+                SqlServerInputValue::Text("A".to_string()),
+                SqlServerInputValue::Text("{\"nested\":2}".to_string()),
+                SqlServerInputValue::Text("4".to_string()),
+                SqlServerInputValue::Text("4".to_string()),
+                SqlServerInputValue::Text("A".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn sqlserver_batch_update_splits_before_the_parameter_limit() {
+        let rows = (1..=100)
+            .map(|id| SqlServerRowUpdate {
+                primary_keys: HashMap::from([("id".to_string(), serde_json::json!(id))]),
+                updates: (0..20)
+                    .map(|column| (format!("field_{column:02}"), serde_json::json!(id)))
+                    .collect(),
+            })
+            .collect::<Vec<_>>();
+
+        let statements =
+            prepare_batch_update_statements("dbo", "items", &["id".to_string()], &rows).unwrap();
+
+        assert_eq!(statements.len(), 3);
+        assert_eq!(
+            statements
+                .iter()
+                .map(|statement| statement.params.len())
+                .collect::<Vec<_>>(),
+            vec![1968, 1968, 164]
+        );
+        for statement in &statements {
+            let sql = &statement.sql;
+            let params = &statement.params;
+            assert!(params.len() <= 2000);
+            assert!(statement.validation_params.len() <= 2000);
+            assert!(sql.contains("[id] = @P1"));
+            assert!(sql.contains(&format!("@P{}", params.len())));
+            assert!(!sql.contains(&format!("@P{}", params.len() + 1)));
+        }
+    }
+
+    #[test]
+    fn sqlserver_batch_update_splits_large_batches_by_row_count() {
+        let rows = (1..=129)
+            .map(|id| SqlServerRowUpdate {
+                primary_keys: HashMap::from([("id".to_string(), serde_json::json!(id))]),
+                updates: HashMap::from([("name".to_string(), serde_json::json!("Ada"))]),
+            })
+            .collect::<Vec<_>>();
+
+        let statements =
+            prepare_batch_update_statements("dbo", "items", &["id".to_string()], &rows).unwrap();
+
+        assert_eq!(statements.len(), 2);
+        assert_eq!(statements[0].params.len(), 384);
+        assert_eq!(
+            statements[1].params,
+            vec![
+                SqlServerInputValue::Text("129".to_string()),
+                SqlServerInputValue::Text("Ada".to_string()),
+                SqlServerInputValue::Text("129".to_string()),
+            ]
+        );
     }
 
     #[test]

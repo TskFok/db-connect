@@ -1,4 +1,5 @@
 pub mod adapter;
+pub mod batch_update;
 pub mod clickhouse;
 pub mod connection;
 pub mod dialect;

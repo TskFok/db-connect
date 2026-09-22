@@ -1,3 +1,5 @@
+pub use crate::db::batch_update::RowUpdate as SqliteRowUpdate;
+use crate::db::batch_update::{build_batch_update_statements, BatchDialect, BatchUpdateStatement};
 use crate::db::dialect::SQLITE_DIALECT;
 use crate::db::result_budget::ResultBudget;
 use crate::db::sql_utils::{
@@ -1544,12 +1546,6 @@ pub async fn update_row(
     execute_write(pool, "更新数据", sql, params).await
 }
 
-#[derive(Debug, Clone)]
-pub struct SqliteRowUpdate {
-    pub primary_keys: HashMap<String, JsonValue>,
-    pub updates: HashMap<String, JsonValue>,
-}
-
 pub async fn batch_update_rows(
     pool: &Pool,
     database: &str,
@@ -1559,35 +1555,16 @@ pub async fn batch_update_rows(
     if rows.is_empty() {
         return Err("没有提供要更新的数据".to_string());
     }
-    for row in &rows {
-        if row.updates.is_empty() {
-            return Err("存在没有更新内容的行".to_string());
-        }
-        if row.primary_keys.is_empty() {
-            return Err("存在缺少主键信息的行".to_string());
-        }
-    }
-
     let primary_key_columns = get_primary_keys(pool, database, table).await?;
     ensure_primary_key_table(&primary_key_columns)?;
-    let statements = rows
-        .iter()
-        .map(|row| {
-            let pk_entries = ordered_primary_key_entries(
-                &primary_key_columns,
-                &row.primary_keys,
-                "存在缺少主键信息的行",
-            )?;
-            let update_entries = map_entries(&row.updates);
-            Ok(build_update_statement(
-                database,
-                table,
-                &pk_entries,
-                &update_entries,
-            ))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    execute_writes_in_transaction(pool, "批量更新", statements).await
+    let statements = build_batch_update_statements(
+        BatchDialect::Sqlite,
+        database,
+        table,
+        &primary_key_columns,
+        &rows,
+    )?;
+    execute_batch_updates_in_transaction(pool, statements).await
 }
 
 pub async fn delete_rows(
@@ -1750,6 +1727,80 @@ async fn execute_write(
         conn.execute(&sql, params_from_iter(params.iter()))
             .map(|affected| affected as u64)
             .map_err(|e| format!("{}失败: {}", action, e))
+    })
+    .await
+    .map_err(|e| format!("SQLite 写入任务失败: {}", e))?
+}
+
+async fn execute_batch_updates_in_transaction(
+    pool: &Pool,
+    statements: Vec<BatchUpdateStatement>,
+) -> Result<u64, String> {
+    let conn = pool
+        .get()
+        .await
+        .map_err(|e| format!("获取 SQLite 连接失败: {}", e))?;
+    conn.interact(move |conn| {
+        let tx = conn
+            .transaction()
+            .map_err(|e| format!("开启事务失败: {}", e))?;
+        let result = (|| -> Result<u64, String> {
+            let mut seen = std::collections::HashSet::new();
+            // 先校验全部分组和分块，数据库按实际类型及排序规则识别重复目标。
+            for statement in &statements {
+                let params = statement
+                    .validation_params
+                    .iter()
+                    .map(json_to_sqlite_value)
+                    .collect::<Vec<_>>();
+                let mut query = tx
+                    .prepare(&statement.validation_sql)
+                    .map_err(|e| e.to_string())?;
+                let targets = query
+                    .query_map(params_from_iter(params.iter()), |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?))
+                    })
+                    .map_err(|e| e.to_string())?;
+                let mut target_count = 0;
+                for target in targets {
+                    let (identity, matches) = target.map_err(|e| e.to_string())?;
+                    if matches > 1 || !seen.insert(identity) {
+                        return Err("批量更新存在重复目标行".to_string());
+                    }
+                    target_count += 1;
+                }
+                if statement
+                    .expected_matches
+                    .is_some_and(|expected| target_count != expected)
+                {
+                    return Err("批量更新目标数据已变更，请刷新后重试".to_string());
+                }
+            }
+
+            let mut total = 0;
+            // 一次执行一个集合 UPDATE 块，不按输入行执行 SQL。
+            for statement in &statements {
+                let params = statement
+                    .params
+                    .iter()
+                    .map(json_to_sqlite_value)
+                    .collect::<Vec<_>>();
+                total += tx
+                    .execute(&statement.sql, params_from_iter(params.iter()))
+                    .map_err(|e| e.to_string())? as u64;
+            }
+            Ok(total)
+        })();
+        match result {
+            Ok(total) => {
+                tx.commit().map_err(|e| format!("提交事务失败: {}", e))?;
+                Ok(total)
+            }
+            Err(error) => {
+                let _ = tx.rollback();
+                Err(format!("批量更新失败，已回滚（未提交任何修改）: {}", error))
+            }
+        }
     })
     .await
     .map_err(|e| format!("SQLite 写入任务失败: {}", e))?
@@ -2660,6 +2711,707 @@ mod tests {
             .await
             .expect("remaining count");
         assert_eq!(remaining, 2);
+
+        let _ = fs::remove_file(path);
+    }
+
+    fn sqlite_batch_test_update(
+        primary_keys: &[(&str, JsonValue)],
+        updates: &[(&str, JsonValue)],
+    ) -> SqliteRowUpdate {
+        SqliteRowUpdate {
+            primary_keys: primary_keys
+                .iter()
+                .map(|(column, value)| ((*column).to_string(), value.clone()))
+                .collect(),
+            updates: updates
+                .iter()
+                .map(|(column, value)| ((*column).to_string(), value.clone()))
+                .collect(),
+        }
+    }
+
+    async fn sqlite_batch_test_seed(pool: &Pool, sql: &str) {
+        let sql = sql.to_string();
+        pool.get()
+            .await
+            .expect("get sqlite connection")
+            .interact(move |conn| conn.execute_batch(&sql))
+            .await
+            .expect("sqlite interact")
+            .expect("seed batch update fixture");
+    }
+
+    async fn sqlite_batch_test_rows(pool: &Pool, sql: &str) -> Vec<Vec<JsonValue>> {
+        run_sql_on_pool(pool, sql, true, Instant::now())
+            .await
+            .expect("query batch update result")
+            .rows
+            .expect("select rows")
+    }
+
+    #[tokio::test]
+    async fn sqlite_batch_update_rejects_duplicate_locators_without_writes() {
+        let (pool, path) = test_pool_with_schema().await;
+        let rows = vec![
+            sqlite_batch_test_update(
+                &[("id", serde_json::json!(1))],
+                &[("name", serde_json::json!("changed"))],
+            ),
+            sqlite_batch_test_update(
+                &[("id", serde_json::json!(1))],
+                &[("age", serde_json::json!(99))],
+            ),
+        ];
+
+        let result = batch_update_rows(&pool, "main", "users", rows).await;
+        assert!(result.is_err(), "duplicate locators must be rejected");
+        assert_eq!(
+            sqlite_batch_test_rows(&pool, "SELECT name, age FROM users WHERE id = 1").await,
+            vec![vec![serde_json::json!("Alice"), serde_json::json!(30)]]
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_batch_update_distinguishes_integer_and_text_keys_without_affinity() {
+        let (pool, path) = test_pool_with_schema().await;
+        sqlite_batch_test_seed(
+            &pool,
+            "CREATE TABLE flexible_keys (id BLOB PRIMARY KEY, value TEXT);
+             INSERT INTO flexible_keys VALUES (1, 'integer'), ('1', 'text');",
+        )
+        .await;
+        let rows = vec![
+            sqlite_batch_test_update(
+                &[("id", serde_json::json!(1))],
+                &[("value", serde_json::json!("updated integer"))],
+            ),
+            sqlite_batch_test_update(
+                &[("id", serde_json::json!("1"))],
+                &[("value", serde_json::json!("updated text"))],
+            ),
+        ];
+
+        assert_eq!(
+            batch_update_rows(&pool, "main", "flexible_keys", rows)
+                .await
+                .expect("different stored key types identify different rows"),
+            2
+        );
+        assert_eq!(
+            sqlite_batch_test_rows(
+                &pool,
+                "SELECT typeof(id), value FROM flexible_keys ORDER BY typeof(id)",
+            )
+            .await,
+            vec![
+                vec![
+                    serde_json::json!("integer"),
+                    serde_json::json!("updated integer")
+                ],
+                vec![serde_json::json!("text"), serde_json::json!("updated text")],
+            ]
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_batch_update_distinguishes_text_keys_after_embedded_nul() {
+        let (pool, path) = test_pool_with_schema().await;
+        sqlite_batch_test_seed(
+            &pool,
+            "CREATE TABLE nul_keys (id TEXT PRIMARY KEY, value INTEGER);
+             INSERT INTO nul_keys VALUES (CAST(X'610078' AS TEXT), 0), (CAST(X'610079' AS TEXT), 0);",
+        )
+        .await;
+        let rows = vec![
+            sqlite_batch_test_update(
+                &[("id", serde_json::json!("a\u{0000}x"))],
+                &[("value", serde_json::json!(1))],
+            ),
+            sqlite_batch_test_update(
+                &[("id", serde_json::json!("a\u{0000}y"))],
+                &[("value", serde_json::json!(2))],
+            ),
+        ];
+
+        assert_eq!(
+            batch_update_rows(&pool, "main", "nul_keys", rows)
+                .await
+                .expect("text key identities retain bytes after NUL"),
+            2
+        );
+        assert_eq!(
+            sqlite_batch_test_rows(&pool, "SELECT hex(id), value FROM nul_keys ORDER BY id").await,
+            vec![
+                vec![serde_json::json!("610078"), serde_json::json!(1)],
+                vec![serde_json::json!("610079"), serde_json::json!(2)],
+            ]
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_batch_update_rejects_affinity_equivalent_locators() {
+        let (pool, path) = test_pool_with_schema().await;
+        let rows = vec![
+            sqlite_batch_test_update(
+                &[("id", serde_json::json!(1))],
+                &[("age", serde_json::json!(90))],
+            ),
+            sqlite_batch_test_update(
+                &[("id", serde_json::json!("01"))],
+                &[("age", serde_json::json!(99))],
+            ),
+        ];
+
+        assert!(batch_update_rows(&pool, "main", "users", rows)
+            .await
+            .is_err());
+        assert_eq!(
+            sqlite_batch_test_rows(&pool, "SELECT age FROM users ORDER BY id").await,
+            vec![vec![serde_json::json!(30)], vec![serde_json::json!(20)]]
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_batch_update_rejects_collation_equivalent_locators() {
+        let (pool, path) = test_pool_with_schema().await;
+        sqlite_batch_test_seed(
+            &pool,
+            "CREATE TABLE case_keys (code TEXT PRIMARY KEY COLLATE NOCASE, value INTEGER);
+             INSERT INTO case_keys VALUES ('Alpha', 0);",
+        )
+        .await;
+        let rows = vec![
+            sqlite_batch_test_update(
+                &[("code", serde_json::json!("alpha"))],
+                &[("value", serde_json::json!(1))],
+            ),
+            sqlite_batch_test_update(
+                &[("code", serde_json::json!("ALPHA"))],
+                &[("value", serde_json::json!(2))],
+            ),
+        ];
+
+        assert!(batch_update_rows(&pool, "main", "case_keys", rows)
+            .await
+            .is_err());
+        assert_eq!(
+            sqlite_batch_test_rows(&pool, "SELECT code, value FROM case_keys").await,
+            vec![vec![serde_json::json!("Alpha"), serde_json::json!(0)]]
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_batch_update_rejects_equivalent_locators_across_column_groups() {
+        let (pool, path) = test_pool_with_schema().await;
+        sqlite_batch_test_seed(
+            &pool,
+            "CREATE TABLE case_keys (code TEXT PRIMARY KEY COLLATE NOCASE, value INTEGER, note TEXT);
+             INSERT INTO case_keys VALUES ('Alpha', 0, 'original');",
+        )
+        .await;
+        let rows = vec![
+            sqlite_batch_test_update(
+                &[("code", serde_json::json!("alpha"))],
+                &[("value", serde_json::json!(1))],
+            ),
+            sqlite_batch_test_update(
+                &[("code", serde_json::json!("ALPHA"))],
+                &[("note", serde_json::json!("changed"))],
+            ),
+        ];
+
+        assert!(batch_update_rows(&pool, "main", "case_keys", rows)
+            .await
+            .is_err());
+        assert_eq!(
+            sqlite_batch_test_rows(&pool, "SELECT value, note FROM case_keys").await,
+            vec![vec![serde_json::json!(0), serde_json::json!("original")]]
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_batch_update_rejects_equivalent_locators_across_chunks() {
+        let (pool, path) = test_pool_with_schema().await;
+        sqlite_batch_test_seed(
+            &pool,
+            "CREATE TABLE case_keys (code TEXT PRIMARY KEY COLLATE NOCASE, value INTEGER);
+             WITH RECURSIVE ids(id) AS (VALUES (1) UNION ALL SELECT id + 1 FROM ids WHERE id < 130)
+             INSERT INTO case_keys SELECT printf('key-%04d', id), 0 FROM ids;",
+        )
+        .await;
+        let mut rows = (1..=130)
+            .map(|id| {
+                sqlite_batch_test_update(
+                    &[("code", serde_json::json!(format!("key-{id:04}")))],
+                    &[("value", serde_json::json!(id))],
+                )
+            })
+            .collect::<Vec<_>>();
+        rows.push(sqlite_batch_test_update(
+            &[("code", serde_json::json!("KEY-0001"))],
+            &[("value", serde_json::json!(999))],
+        ));
+
+        assert!(batch_update_rows(&pool, "main", "case_keys", rows)
+            .await
+            .is_err());
+        assert_eq!(
+            sqlite_batch_test_rows(&pool, "SELECT COUNT(*), SUM(value) FROM case_keys").await,
+            vec![vec![serde_json::json!(130), serde_json::json!(0)]]
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_batch_update_rejects_missing_original_target_when_primary_keys_change() {
+        let (pool, path) = test_pool_with_schema().await;
+        let rows = vec![
+            sqlite_batch_test_update(
+                &[("id", serde_json::json!(1))],
+                &[("id", serde_json::json!("09"))],
+            ),
+            sqlite_batch_test_update(
+                &[("id", serde_json::json!(9))],
+                &[("name", serde_json::json!("wrong target"))],
+            ),
+        ];
+
+        assert!(batch_update_rows(&pool, "main", "users", rows)
+            .await
+            .is_err());
+        assert_eq!(
+            sqlite_batch_test_rows(&pool, "SELECT id, name FROM users ORDER BY id").await,
+            vec![
+                vec![serde_json::json!(1), serde_json::json!("Alice")],
+                vec![serde_json::json!(2), serde_json::json!("Bob")],
+            ]
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_batch_update_allows_unmatched_locators_without_primary_key_edits() {
+        let (pool, path) = test_pool_with_schema().await;
+        let rows = vec![sqlite_batch_test_update(
+            &[("id", serde_json::json!(99))],
+            &[("age", serde_json::json!(80))],
+        )];
+
+        assert_eq!(
+            batch_update_rows(&pool, "main", "users", rows)
+                .await
+                .expect("missing rows are allowed without primary key edits"),
+            0
+        );
+        assert_eq!(
+            sqlite_batch_test_rows(&pool, "SELECT age FROM users ORDER BY id").await,
+            vec![vec![serde_json::json!(30)], vec![serde_json::json!(20)]]
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_batch_update_matches_nullable_composite_primary_keys() {
+        let (pool, path) = test_pool_with_schema().await;
+        sqlite_batch_test_seed(
+            &pool,
+            "CREATE TABLE nullable_keys (tenant INTEGER, code TEXT, value TEXT,
+                PRIMARY KEY (tenant, code));
+             INSERT INTO nullable_keys VALUES
+                (NULL, 'a', 'first'), (NULL, 'b', 'second'), (7, 'a', 'untouched');",
+        )
+        .await;
+        let rows = vec![
+            sqlite_batch_test_update(
+                &[
+                    ("tenant", JsonValue::Null),
+                    ("code", serde_json::json!("a")),
+                ],
+                &[("value", JsonValue::Null)],
+            ),
+            sqlite_batch_test_update(
+                &[
+                    ("tenant", JsonValue::Null),
+                    ("code", serde_json::json!("b")),
+                ],
+                &[("value", serde_json::json!("updated"))],
+            ),
+        ];
+
+        assert_eq!(
+            batch_update_rows(&pool, "main", "nullable_keys", rows)
+                .await
+                .expect("update nullable composite keys"),
+            2
+        );
+        assert_eq!(
+            sqlite_batch_test_rows(
+                &pool,
+                "SELECT tenant, code, value FROM nullable_keys ORDER BY tenant, code",
+            )
+            .await,
+            vec![
+                vec![JsonValue::Null, serde_json::json!("a"), JsonValue::Null],
+                vec![
+                    JsonValue::Null,
+                    serde_json::json!("b"),
+                    serde_json::json!("updated")
+                ],
+                vec![
+                    serde_json::json!(7),
+                    serde_json::json!("a"),
+                    serde_json::json!("untouched")
+                ],
+            ]
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_batch_update_rejects_equivalent_nullable_key_migration_without_writes() {
+        let (pool, path) = test_pool_with_schema().await;
+        sqlite_batch_test_seed(
+            &pool,
+            "CREATE TABLE nullable_moves (tenant INTEGER, id INTEGER, value TEXT,
+                PRIMARY KEY (tenant, id));
+             INSERT INTO nullable_moves VALUES (NULL, 1, 'first'), (NULL, 2, 'second');",
+        )
+        .await;
+        let rows = vec![
+            sqlite_batch_test_update(
+                &[("tenant", JsonValue::Null), ("id", serde_json::json!(1))],
+                &[("id", serde_json::json!("02"))],
+            ),
+            sqlite_batch_test_update(
+                &[("tenant", JsonValue::Null), ("id", serde_json::json!(2))],
+                &[("value", serde_json::json!("changed second"))],
+            ),
+        ];
+
+        assert!(batch_update_rows(&pool, "main", "nullable_moves", rows)
+            .await
+            .is_err());
+        assert_eq!(
+            sqlite_batch_test_rows(
+                &pool,
+                "SELECT tenant, id, value FROM nullable_moves ORDER BY id"
+            )
+            .await,
+            vec![
+                vec![
+                    JsonValue::Null,
+                    serde_json::json!(1),
+                    serde_json::json!("first")
+                ],
+                vec![
+                    JsonValue::Null,
+                    serde_json::json!(2),
+                    serde_json::json!("second")
+                ],
+            ]
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_batch_update_allows_independent_nullable_key_migrations() {
+        let (pool, path) = test_pool_with_schema().await;
+        sqlite_batch_test_seed(
+            &pool,
+            "CREATE TABLE nullable_moves (tenant INTEGER, id INTEGER, value TEXT,
+                PRIMARY KEY (tenant, id));
+             INSERT INTO nullable_moves VALUES (NULL, 1, 'first'), (NULL, 2, 'second');",
+        )
+        .await;
+        let rows = vec![
+            sqlite_batch_test_update(
+                &[("tenant", JsonValue::Null), ("id", serde_json::json!(1))],
+                &[
+                    ("id", serde_json::json!("03")),
+                    ("value", serde_json::json!("changed first")),
+                ],
+            ),
+            sqlite_batch_test_update(
+                &[("tenant", JsonValue::Null), ("id", serde_json::json!(2))],
+                &[
+                    ("id", serde_json::json!("04")),
+                    ("value", serde_json::json!("changed second")),
+                ],
+            ),
+        ];
+
+        assert_eq!(
+            batch_update_rows(&pool, "main", "nullable_moves", rows)
+                .await
+                .expect("unoccupied destinations allow independent nullable key changes"),
+            2
+        );
+        assert_eq!(
+            sqlite_batch_test_rows(
+                &pool,
+                "SELECT tenant, id, value FROM nullable_moves ORDER BY id"
+            )
+            .await,
+            vec![
+                vec![
+                    JsonValue::Null,
+                    serde_json::json!(3),
+                    serde_json::json!("changed first")
+                ],
+                vec![
+                    JsonValue::Null,
+                    serde_json::json!(4),
+                    serde_json::json!("changed second")
+                ],
+            ]
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_batch_update_preserves_heterogeneous_columns_and_null_values() {
+        let (pool, path) = test_pool_with_schema().await;
+        let rows = vec![
+            sqlite_batch_test_update(
+                &[("id", serde_json::json!(1))],
+                &[
+                    ("name", serde_json::json!("O'Reilly")),
+                    ("age", JsonValue::Null),
+                ],
+            ),
+            sqlite_batch_test_update(
+                &[("id", serde_json::json!(2))],
+                &[("age", serde_json::json!(21))],
+            ),
+        ];
+
+        assert_eq!(
+            batch_update_rows(&pool, "main", "users", rows)
+                .await
+                .expect("update heterogeneous columns"),
+            2
+        );
+        assert_eq!(
+            sqlite_batch_test_rows(&pool, "SELECT id, name, age FROM users ORDER BY id").await,
+            vec![
+                vec![
+                    serde_json::json!(1),
+                    serde_json::json!("O'Reilly"),
+                    JsonValue::Null
+                ],
+                vec![
+                    serde_json::json!(2),
+                    serde_json::json!("Bob"),
+                    serde_json::json!(21)
+                ],
+            ]
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_batch_update_matches_complete_composite_primary_keys() {
+        let (pool, path) = test_pool_with_schema().await;
+        sqlite_batch_test_seed(
+            &pool,
+            "INSERT INTO order_items VALUES (10, 1, 2), (10, 2, 5), (11, 1, 8);",
+        )
+        .await;
+        let rows = vec![
+            sqlite_batch_test_update(
+                &[
+                    ("order_id", serde_json::json!(10)),
+                    ("item_id", serde_json::json!(1)),
+                ],
+                &[("qty", serde_json::json!(20))],
+            ),
+            sqlite_batch_test_update(
+                &[
+                    ("order_id", serde_json::json!(10)),
+                    ("item_id", serde_json::json!(2)),
+                ],
+                &[("qty", serde_json::json!(50))],
+            ),
+        ];
+
+        assert_eq!(
+            batch_update_rows(&pool, "main", "order_items", rows)
+                .await
+                .expect("update composite primary keys"),
+            2
+        );
+        assert_eq!(
+            sqlite_batch_test_rows(
+                &pool,
+                "SELECT qty FROM order_items ORDER BY order_id, item_id"
+            )
+            .await,
+            vec![
+                vec![serde_json::json!(20)],
+                vec![serde_json::json!(50)],
+                vec![serde_json::json!(8)]
+            ]
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_batch_update_handles_more_than_one_thousand_rows() {
+        let (pool, path) = test_pool_with_schema().await;
+        sqlite_batch_test_seed(
+            &pool,
+            "CREATE TABLE batch_items (id INTEGER PRIMARY KEY, value INTEGER NOT NULL);
+             WITH RECURSIVE ids(id) AS (VALUES (1) UNION ALL SELECT id + 1 FROM ids WHERE id < 1100)
+             INSERT INTO batch_items SELECT id, 0 FROM ids;",
+        )
+        .await;
+        let rows = (1..=1100)
+            .map(|id| {
+                sqlite_batch_test_update(
+                    &[("id", serde_json::json!(id))],
+                    &[("value", serde_json::json!(id * 2))],
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            batch_update_rows(&pool, "main", "batch_items", rows)
+                .await
+                .expect("update across statement parameter and row limits"),
+            1100
+        );
+        assert_eq!(
+            sqlite_batch_test_rows(
+                &pool,
+                "SELECT COUNT(*), SUM(value), SUM(value != id * 2) FROM batch_items"
+            )
+            .await,
+            vec![vec![
+                serde_json::json!(1100),
+                serde_json::json!(1211100),
+                serde_json::json!(0)
+            ]]
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_batch_update_rolls_back_prior_chunks_when_later_chunk_fails() {
+        let (pool, path) = test_pool_with_schema().await;
+        sqlite_batch_test_seed(
+            &pool,
+            "CREATE TABLE batch_items (id INTEGER PRIMARY KEY, value INTEGER CHECK (value >= 0));
+             WITH RECURSIVE ids(id) AS (VALUES (1) UNION ALL SELECT id + 1 FROM ids WHERE id < 300)
+             INSERT INTO batch_items SELECT id, 0 FROM ids;",
+        )
+        .await;
+        let rows = (1..=300)
+            .map(|id| {
+                sqlite_batch_test_update(
+                    &[("id", serde_json::json!(id))],
+                    &[("value", serde_json::json!(if id == 300 { -1 } else { id }))],
+                )
+            })
+            .collect();
+
+        let error = batch_update_rows(&pool, "main", "batch_items", rows)
+            .await
+            .expect_err("last chunk must fail its check constraint");
+        assert!(error.contains("CHECK constraint failed"), "{error}");
+        assert_eq!(
+            sqlite_batch_test_rows(&pool, "SELECT COUNT(*), SUM(value != 0) FROM batch_items")
+                .await,
+            vec![vec![serde_json::json!(300), serde_json::json!(0)]]
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_batch_update_changes_both_primary_key_columns_using_original_locator() {
+        let (pool, path) = test_pool_with_schema().await;
+        sqlite_batch_test_seed(
+            &pool,
+            "INSERT INTO order_items VALUES (10, 1, 2), (20, 2, 5), (30, 3, 8);",
+        )
+        .await;
+        let rows = vec![
+            sqlite_batch_test_update(
+                &[
+                    ("order_id", serde_json::json!(10)),
+                    ("item_id", serde_json::json!(1)),
+                ],
+                &[
+                    ("order_id", serde_json::json!(11)),
+                    ("item_id", serde_json::json!(4)),
+                    ("qty", serde_json::json!(20)),
+                ],
+            ),
+            sqlite_batch_test_update(
+                &[
+                    ("order_id", serde_json::json!(20)),
+                    ("item_id", serde_json::json!(2)),
+                ],
+                &[
+                    ("order_id", serde_json::json!(21)),
+                    ("item_id", serde_json::json!(5)),
+                    ("qty", serde_json::json!(50)),
+                ],
+            ),
+        ];
+
+        assert_eq!(
+            batch_update_rows(&pool, "main", "order_items", rows)
+                .await
+                .expect("update both primary key columns"),
+            2
+        );
+        assert_eq!(
+            sqlite_batch_test_rows(
+                &pool,
+                "SELECT order_id, item_id, qty FROM order_items ORDER BY order_id"
+            )
+            .await,
+            vec![
+                vec![
+                    serde_json::json!(11),
+                    serde_json::json!(4),
+                    serde_json::json!(20)
+                ],
+                vec![
+                    serde_json::json!(21),
+                    serde_json::json!(5),
+                    serde_json::json!(50)
+                ],
+                vec![
+                    serde_json::json!(30),
+                    serde_json::json!(3),
+                    serde_json::json!(8)
+                ],
+            ]
+        );
 
         let _ = fs::remove_file(path);
     }
