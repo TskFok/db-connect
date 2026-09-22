@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { useShallow } from "zustand/react/shallow";
 import {
   Button,
   Space,
@@ -72,17 +73,28 @@ export interface SqlEditorProps {
 }
 
 export function SqlEditor({ tabId }: SqlEditorProps) {
-  const { activeConnection } = useConnectionStore();
+  const activeConnection = useConnectionStore((s) => s.activeConnection);
   const {
     databases,
     selectedDatabase,
-    sqlTabContents,
-    sqlTabResults,
-    sqlTabExecutions,
+    contentFromStore,
+    tabResult,
+    tabExecuting,
     setSqlTabContent,
     setSqlTabResult,
     setSqlTabExecution,
-  } = useDatabaseStore();
+  } = useDatabaseStore(
+    useShallow((s) => ({
+      databases: s.databases,
+      selectedDatabase: s.selectedDatabase,
+      contentFromStore: tabId ? (s.sqlTabContents[tabId] ?? "") : undefined,
+      tabResult: tabId ? s.sqlTabResults[tabId] : null,
+      tabExecuting: tabId ? !!s.sqlTabExecutions[tabId] : false,
+      setSqlTabContent: s.setSqlTabContent,
+      setSqlTabResult: s.setSqlTabResult,
+      setSqlTabExecution: s.setSqlTabExecution,
+    }))
+  );
   const themeMode = useThemeStore((s) => s.mode);
   const { add: addSavedSql, getAll: getSavedSqlList } = useSavedSqlStore();
 
@@ -116,10 +128,8 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
   const versionProbeKey = `${connId}::${currentDb ?? ""}`;
   const prefetchedVersionLoading =
     !!connId && prefetchedVersionReadyKey !== versionProbeKey;
-  const contentFromStore = tabId ? (sqlTabContents[tabId] ?? "") : undefined;
 
   // 独立 SQL 标签页：从 store 读取执行结果（切换 tab 时保留）；表内嵌 SQL：使用本地 state
-  const tabResult = tabId ? sqlTabResults[tabId] : null;
   const [localResult, setLocalResult] = useState<SqlExecuteResult | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const [localExecutedSqlList, setLocalExecutedSqlList] = useState<string[]>(
@@ -132,7 +142,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     ? (tabResult?.executedSqlList ?? EMPTY_EXECUTED_SQL_LIST)
     : localExecutedSqlList;
   // 独立 SQL 标签页：执行中状态存于 store，切换标签（组件卸载重挂载）后仍能显示执行中并可停止
-  const executing = tabId ? !!sqlTabExecutions[tabId] : localExecuting;
+  const executing = tabId ? tabExecuting : localExecuting;
 
   /** 标记执行状态：tab 模式写入 store（跨卸载保留），表内嵌模式用本地 state；同时维护取消令牌 */
   const markExecution = useCallback(

@@ -1,3 +1,4 @@
+import { useShallow } from "zustand/react/shallow";
 import { useEffect, useState, useMemo } from "react";
 import { Modal, Form, Select, Button, Space, Spin, message, Alert } from "antd";
 import { SafeInput } from "../common/SafeInput";
@@ -63,7 +64,15 @@ export function DatabaseEditModal({
   onSuccess,
 }: DatabaseEditModalProps) {
   const { databaseInfo, databaseInfoLoading, loadDatabaseInfo, editDatabase, renameDatabase } =
-    useDatabaseStore();
+    useDatabaseStore(
+    useShallow((s) => ({
+      databaseInfo: s.databaseInfo,
+      databaseInfoLoading: s.databaseInfoLoading,
+      loadDatabaseInfo: s.loadDatabaseInfo,
+      editDatabase: s.editDatabase,
+      renameDatabase: s.renameDatabase,
+    }))
+  );
   const activeConnection = useConnectionStore((s) => s.activeConnection);
   const capabilities = useMemo(
     () => getDatabaseCapabilities(activeConnection?.config.database_type),

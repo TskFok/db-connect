@@ -1,3 +1,4 @@
+import { useShallow } from "zustand/react/shallow";
 import { useEffect, useState, useCallback, useMemo } from "react";
 import {
   Table,
@@ -71,7 +72,14 @@ export function ForeignKeyList() {
     selectedTable,
     tableStructure,
     tableContentActiveTab,
-  } = useDatabaseStore();
+  } = useDatabaseStore(
+    useShallow((s) => ({
+      selectedDatabase: s.selectedDatabase,
+      selectedTable: s.selectedTable,
+      tableStructure: s.tableStructure,
+      tableContentActiveTab: s.tableContentActiveTab,
+    }))
+  );
   const [fks, setFks] = useState<ForeignKeyInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

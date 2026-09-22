@@ -539,6 +539,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   setSqlTabContent: (connId: string, tabId: string, content: string) => {
     const { connectionStates, activeConnId } = get();
     const state = connectionStates[connId] ?? emptyConnState();
+    if (state.sqlTabContents[tabId] === content) return;
     const newSqlTabContents = {
       ...(state.sqlTabContents ?? {}),
       [tabId]: content,
@@ -550,10 +551,10 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     const newStates = { ...connectionStates, [connId]: updated };
     const res: Partial<DatabaseState> = {
       connectionStates: newStates,
-      sqlTabContents: newSqlTabContents,
     };
     if (activeConnId === connId) {
-      Object.assign(res, syncCurrentView(updated));
+      // 编辑草稿不改变选中表或标签；仅同步当前连接的内容，避免重建视图派生状态。
+      res.sqlTabContents = newSqlTabContents;
     }
     set(res);
   },

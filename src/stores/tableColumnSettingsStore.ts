@@ -133,6 +133,8 @@ export const useTableColumnSettingsStore = create<TableColumnSettingsState>()(
 
       setColumnWidth: (connId: string, database: string, table: string, colName: string, width: number) => {
         const key = tableKey(connId, database, table);
+        // persist 即使 set 返回原对象仍会写入，必须在调用 set 前拦截。
+        if (get().settings[key]?.columnWidths[colName] === width) return;
         set((state) => {
           const current = state.settings[key] ?? defaultSettings;
           return {

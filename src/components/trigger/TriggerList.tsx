@@ -1,3 +1,4 @@
+import { useShallow } from "zustand/react/shallow";
 import { useEffect, useState, useCallback } from "react";
 import {
   Table,
@@ -49,7 +50,13 @@ const timingColorMap: Record<string, string> = {
 export function TriggerList() {
   const { activeConnection } = useConnectionStore();
   const clientReadOnly = useClientReadOnly();
-  const { selectedDatabase, selectedTable, tableContentActiveTab } = useDatabaseStore();
+  const { selectedDatabase, selectedTable, tableContentActiveTab } = useDatabaseStore(
+    useShallow((s) => ({
+      selectedDatabase: s.selectedDatabase,
+      selectedTable: s.selectedTable,
+      tableContentActiveTab: s.tableContentActiveTab,
+    }))
+  );
 
   const { containerRef, scrollY } = useAntTableScrollY({
     remeasureKey: `${tableContentActiveTab}|${selectedDatabase}|${selectedTable}`,

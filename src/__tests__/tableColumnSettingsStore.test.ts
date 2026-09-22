@@ -8,6 +8,7 @@ vi.mock("../services/tauriCommands", () => ({
 }));
 
 import { useTableColumnSettingsStore } from "../stores/tableColumnSettingsStore";
+import { saveTableColumnSettings } from "../services/tauriCommands";
 
 const CONN_ID = "conn-1";
 const DATABASE = "test_db";
@@ -40,6 +41,16 @@ describe("tableColumnSettingsStore", () => {
   });
 
   describe("setColumnWidth / setColumnWidths", () => {
+    it("同一列重复设置相同宽度不触发持久化或状态更新", () => {
+      const store = useTableColumnSettingsStore.getState();
+      store.setColumnWidth(CONN_ID, DATABASE, TABLE, "id", 100);
+      const previousState = useTableColumnSettingsStore.getState();
+      vi.mocked(saveTableColumnSettings).mockClear();
+      store.setColumnWidth(CONN_ID, DATABASE, TABLE, "id", 100);
+      expect(saveTableColumnSettings).not.toHaveBeenCalled();
+      expect(useTableColumnSettingsStore.getState()).toBe(previousState);
+    });
+
     it("setColumnWidth 应更新单列宽度", () => {
       useTableColumnSettingsStore
         .getState()

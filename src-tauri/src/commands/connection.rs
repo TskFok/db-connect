@@ -1,5 +1,5 @@
 use crate::crypto;
-use crate::db::connection::{ConnectionManager, DatabasePoolHandle};
+use crate::db::connection::{ConnectionManager, DatabasePoolHandle, DisconnectMode};
 use crate::db::{clickhouse, postgres, sqlite, sqlserver};
 use crate::models::types::{
     redact_connection_secrets, ConnectionConfig, ConnectionGroup, TestResult, PASSWORD_REDACTED,
@@ -631,8 +631,13 @@ pub async fn connect(
 /// 断开数据库连接
 #[tauri::command]
 pub async fn disconnect(state: State<'_, AppState>, conn_id: String) -> Result<(), String> {
-    let mut manager = state.connection_manager.lock().await;
-    manager.disconnect(&conn_id).await
+    ConnectionManager::disconnect_managed(
+        &state.connection_manager,
+        &conn_id,
+        DisconnectMode::Normal,
+    )
+    .await
+    .map(|_| ())
 }
 
 /// 探测连接是否仍然可用（带超时，SELECT 1）。
@@ -661,8 +666,13 @@ pub async fn ping_connection(state: State<'_, AppState>, conn_id: String) -> Res
 /// 用于连接已被对端 / 中间设备 / 系统休眠掐断、常规 disconnect 可能卡住的场景。
 #[tauri::command]
 pub async fn force_disconnect(state: State<'_, AppState>, conn_id: String) -> Result<(), String> {
-    let mut manager = state.connection_manager.lock().await;
-    manager.force_remove(&conn_id).await
+    ConnectionManager::disconnect_managed(
+        &state.connection_manager,
+        &conn_id,
+        DisconnectMode::Force,
+    )
+    .await
+    .map(|_| ())
 }
 
 /// 检查空闲超时并断开连接，减少凭据驻留时间
@@ -673,10 +683,12 @@ pub async fn check_idle_disconnect(
     conn_id: String,
     idle_timeout_secs: u64,
 ) -> Result<bool, String> {
-    let mut manager = state.connection_manager.lock().await;
-    manager
-        .check_idle_and_disconnect(&conn_id, idle_timeout_secs)
-        .await
+    ConnectionManager::disconnect_managed(
+        &state.connection_manager,
+        &conn_id,
+        DisconnectMode::Idle(idle_timeout_secs),
+    )
+    .await
 }
 
 /// 保存连接配置

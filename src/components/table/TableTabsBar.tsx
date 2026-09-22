@@ -1,3 +1,4 @@
+import { useShallow } from "zustand/react/shallow";
 import { Tabs } from "antd";
 import { TableOutlined, EyeOutlined, CloseOutlined, CodeOutlined } from "@ant-design/icons";
 import { useDatabaseStore } from "../../stores/databaseStore";
@@ -14,7 +15,15 @@ export function TableTabsBar() {
     tableInfos,
     switchTab,
     closeTab,
-  } = useDatabaseStore();
+  } = useDatabaseStore(
+    useShallow((s) => ({
+      openTabs: s.openTabs,
+      activeTabIndex: s.activeTabIndex,
+      tableInfos: s.tableInfos,
+      switchTab: s.switchTab,
+      closeTab: s.closeTab,
+    }))
+  );
 
   const connId = activeConnection?.connId ?? "";
   if (!connId || openTabs.length === 0) return null;

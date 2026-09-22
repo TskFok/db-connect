@@ -60,7 +60,7 @@ export function DatabaseCreateModal({
   onClose,
   onSuccess,
 }: DatabaseCreateModalProps) {
-  const { createDatabase } = useDatabaseStore();
+  const createDatabase = useDatabaseStore((s) => s.createDatabase);
   const activeConnection = useConnectionStore((s) => s.activeConnection);
   const capabilities = useMemo(
     () => getDatabaseCapabilities(activeConnection?.config.database_type),

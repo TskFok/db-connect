@@ -1,3 +1,4 @@
+import { useShallow } from "zustand/react/shallow";
 import { useEffect, useCallback, useState, useMemo, useRef } from "react";
 import {
   Tree,
@@ -64,12 +65,36 @@ export function DatabaseTree() {
     setExpandedKeys,
     setDatabaseSortOrder,
     setTableSortOrder,
-    connectionStates,
     openSqlTab,
-  } = useDatabaseStore();
+  } = useDatabaseStore(
+    useShallow((s) => ({
+      databases: s.databases,
+      tables: s.tables,
+      selectedDatabase: s.selectedDatabase,
+      selectedTable: s.selectedTable,
+      openTabs: s.openTabs,
+      treeLoading: s.treeLoading,
+      databaseSortOrder: s.databaseSortOrder,
+      tableSortOrder: s.tableSortOrder,
+      loadDatabases: s.loadDatabases,
+      loadTables: s.loadTables,
+      selectDatabase: s.selectDatabase,
+      selectTable: s.selectTable,
+      closeTab: s.closeTab,
+      refresh: s.refresh,
+      expandedKeys: s.expandedKeys,
+      setExpandedKeys: s.setExpandedKeys,
+      setDatabaseSortOrder: s.setDatabaseSortOrder,
+      setTableSortOrder: s.setTableSortOrder,
+      openSqlTab: s.openSqlTab,
+    }))
+  );
   const removeTableFromCache = useTableDataStore((s) => s.removeTableFromCache);
 
   const connId = activeConnection?.connId ?? "";
+  const hasCachedDatabases = useDatabaseStore(
+    (s) => (s.connectionStates[connId]?.databases.length ?? 0) > 0
+  );
   const clientReadOnly = useClientReadOnly();
   const capabilities = useMemo(
     () => getDatabaseCapabilities(activeConnection?.config.database_type),
@@ -110,8 +135,7 @@ export function DatabaseTree() {
   // 连接后自动加载数据库列表（若尚无缓存）；若有默认数据库则自动选中
   useEffect(() => {
     if (connId && capabilities.tableBrowsing) {
-      const state = connectionStates[connId];
-      if (!state || state.databases.length === 0) {
+      if (!hasCachedDatabases) {
         const defaultDb = activeConnection?.config.database ?? undefined;
         loadDatabases(connId, defaultDb);
       }
@@ -121,7 +145,7 @@ export function DatabaseTree() {
     capabilities.tableBrowsing,
     loadDatabases,
     activeConnection?.config.database,
-    connectionStates,
+    hasCachedDatabases,
   ]);
 
   // 构建树数据 (memoize 避免大量表时重复渲染)，应用排序

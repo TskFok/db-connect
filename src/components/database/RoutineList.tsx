@@ -84,7 +84,7 @@ function getRoutineListCellText(
 export function RoutineList({ remeasureKey }: RoutineListProps = {}) {
   const { activeConnection } = useConnectionStore();
   const clientReadOnly = useClientReadOnly();
-  const { selectedDatabase } = useDatabaseStore();
+  const selectedDatabase = useDatabaseStore((s) => s.selectedDatabase);
   const { containerRef, scrollY } = useAntTableScrollY({ remeasureKey });
   const [data, setData] = useState<RoutineInfo[]>([]);
   const [loading, setLoading] = useState(false);

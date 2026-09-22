@@ -1,3 +1,4 @@
+import { useShallow } from "zustand/react/shallow";
 import { useEffect, useState, useCallback } from "react";
 import { Button, Alert, Typography, Space, message } from "antd";
 import { ReloadOutlined, CopyOutlined } from "@ant-design/icons";
@@ -11,7 +12,12 @@ const { Text, Paragraph } = Typography;
 
 export function CreateTableSql() {
   const { activeConnection } = useConnectionStore();
-  const { selectedDatabase, selectedTable } = useDatabaseStore();
+  const { selectedDatabase, selectedTable } = useDatabaseStore(
+    useShallow((s) => ({
+      selectedDatabase: s.selectedDatabase,
+      selectedTable: s.selectedTable,
+    }))
+  );
   const themeMode = useThemeStore((s) => s.mode);
   const [messageApi, contextHolder] = message.useMessage();
 

@@ -1,3 +1,4 @@
+import { useShallow } from "zustand/react/shallow";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
@@ -38,7 +39,14 @@ export function FavoriteTables({
   const searchRef = useRef<InputRef>(null);
   const { activeConnection } = useConnectionStore();
   const { tables, loadTables, selectTable, setExpandedKeys } =
-    useDatabaseStore();
+    useDatabaseStore(
+    useShallow((s) => ({
+      tables: s.tables,
+      loadTables: s.loadTables,
+      selectTable: s.selectTable,
+      setExpandedKeys: s.setExpandedKeys,
+    }))
+  );
   const removeFavorite = useFavoriteStore((s) => s.removeFavorite);
   const clearFavoritesForConnection = useFavoriteStore(
     (s) => s.clearFavoritesForConnection

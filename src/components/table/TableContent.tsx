@@ -1,3 +1,4 @@
+import { useShallow } from "zustand/react/shallow";
 import { lazy, Suspense, useEffect, useMemo, type ReactNode } from "react";
 import { Tabs, Spin } from "antd";
 import {
@@ -41,7 +42,15 @@ function withLazyTab(children: ReactNode) {
 
 export function TableContent() {
   const { selectedDatabase, selectedTable, selectedTableInfo, tableContentActiveTab, setTableContentActiveTab } =
-    useDatabaseStore();
+    useDatabaseStore(
+    useShallow((s) => ({
+      selectedDatabase: s.selectedDatabase,
+      selectedTable: s.selectedTable,
+      selectedTableInfo: s.selectedTableInfo,
+      tableContentActiveTab: s.tableContentActiveTab,
+      setTableContentActiveTab: s.setTableContentActiveTab,
+    }))
+  );
   const activeConnection = useConnectionStore((s) => s.activeConnection);
 
   const isView = selectedTableInfo?.table_type === "VIEW";

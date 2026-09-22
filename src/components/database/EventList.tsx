@@ -82,7 +82,7 @@ function getEventListCellText(
 export function EventList({ remeasureKey }: EventListProps = {}) {
   const { activeConnection } = useConnectionStore();
   const clientReadOnly = useClientReadOnly();
-  const { selectedDatabase } = useDatabaseStore();
+  const selectedDatabase = useDatabaseStore((s) => s.selectedDatabase);
   const { containerRef, scrollY } = useAntTableScrollY({ remeasureKey });
   const [data, setData] = useState<EventInfo[]>([]);
   const [loading, setLoading] = useState(false);

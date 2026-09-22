@@ -1,3 +1,4 @@
+import { useShallow } from "zustand/react/shallow";
 import { useEffect, useCallback, useRef, useState } from "react";
 import { DiffOutlined } from "@ant-design/icons";
 import { Button, Layout, message } from "antd";
@@ -87,7 +88,18 @@ function AppInner() {
     treeLoading,
     structureLoading,
     tableContentActiveTab,
-  } = useDatabaseStore();
+  } = useDatabaseStore(
+    useShallow((s) => ({
+      selectedDatabase: s.selectedDatabase,
+      selectedTable: s.selectedTable,
+      openTabs: s.openTabs,
+      activeTabIndex: s.activeTabIndex,
+      viewMode: s.viewMode,
+      treeLoading: s.treeLoading,
+      structureLoading: s.structureLoading,
+      tableContentActiveTab: s.tableContentActiveTab,
+    }))
+  );
 
   const { sidebarWidth, setSidebarWidth } = useSettingsStore();
   const resizeStartX = useRef<number>(0);

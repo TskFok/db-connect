@@ -1,3 +1,4 @@
+import { useShallow } from "zustand/react/shallow";
 import { useEffect, useState, useCallback } from "react";
 import {
   Table,
@@ -39,7 +40,14 @@ export function IndexList() {
     selectedTable,
     tableStructure,
     tableContentActiveTab,
-  } = useDatabaseStore();
+  } = useDatabaseStore(
+    useShallow((s) => ({
+      selectedDatabase: s.selectedDatabase,
+      selectedTable: s.selectedTable,
+      tableStructure: s.tableStructure,
+      tableContentActiveTab: s.tableContentActiveTab,
+    }))
+  );
 
   const { containerRef, scrollY } = useAntTableScrollY({
     remeasureKey: `${tableContentActiveTab}|${selectedDatabase}|${selectedTable}`,

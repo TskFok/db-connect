@@ -309,42 +309,54 @@ impl ActiveDatabaseConnection {
             }
         }
     }
+}
 
-    async fn force_disconnect(self) {
-        match self {
-            ActiveDatabaseConnection::MySql(mut conn) => {
-                if let Some(tunnel) = conn.ssh_tunnel.take() {
-                    tunnel.close();
-                }
-                let _ = tokio::time::timeout(
-                    Duration::from_secs(2),
-                    conn.adapter.into_pool().disconnect(),
-                )
-                .await;
-            }
-            ActiveDatabaseConnection::Postgres(mut conn) => {
-                if let Some(tunnel) = conn.ssh_tunnel.take() {
-                    tunnel.close();
-                }
-                conn.adapter.close();
-            }
-            ActiveDatabaseConnection::Sqlite(conn) => {
-                conn.adapter.close();
-            }
-            ActiveDatabaseConnection::SqlServer(mut conn) => {
-                if let Some(tunnel) = conn.ssh_tunnel.take() {
-                    tunnel.close();
-                }
-                conn.adapter.close();
-            }
-            ActiveDatabaseConnection::ClickHouse(mut conn) => {
-                if let Some(tunnel) = conn.ssh_tunnel.take() {
-                    tunnel.close();
-                }
-                conn.adapter.close();
-            }
+/// 共享管理器的关闭方式；空闲判断和移除必须在同一把锁内完成。
+#[derive(Clone, Copy)]
+pub(crate) enum DisconnectMode {
+    Normal,
+    Force,
+    Idle(u64),
+}
+
+const FORCE_CONNECTION_CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
+
+async fn close_database<F>(close: F, mode: DisconnectMode) -> Result<(), String>
+where
+    F: std::future::Future<Output = Result<(), String>>,
+{
+    match mode {
+        DisconnectMode::Force => {
+            // 沿用强制关闭的等待上限和忽略错误语义。MySQL 的 recycler 会继续
+            // 清理归还的连接；结束等待不代表在途查询已取消，不发送取消 SQL。
+            let _ = tokio::time::timeout(FORCE_CONNECTION_CLOSE_TIMEOUT, close).await;
+            Ok(())
         }
+        // 普通/空闲关闭保持原有语义，允许已借出的连接归还后再完成。
+        DisconnectMode::Normal | DisconnectMode::Idle(_) => close.await,
     }
+}
+
+async fn disconnect_managed_with<F, Fut>(
+    manager: &tokio::sync::Mutex<ConnectionManager>,
+    conn_id: &str,
+    mode: DisconnectMode,
+    close: F,
+) -> Result<bool, String>
+where
+    F: FnOnce(ActiveDatabaseConnection) -> Fut,
+    Fut: std::future::Future<Output = Result<(), String>>,
+{
+    let active = {
+        let mut guard = manager.lock().await;
+        guard.take_for_disconnect(conn_id, mode)
+    };
+    let Some(active) = active else {
+        return Ok(false);
+    };
+    close_database(close(active.database), mode)
+        .await
+        .map(|()| true)
 }
 
 /// 连接管理器，管理所有活跃的 MySQL 连接
@@ -592,24 +604,43 @@ impl ConnectionManager {
         self.connections.insert(conn_id, active);
     }
 
-    /// 断开连接
-    /// 若连接已被移除（如空闲超时断开），则静默返回 Ok，保持幂等性
-    pub async fn disconnect(&mut self, conn_id: &str) -> Result<(), String> {
-        if let Some(conn) = self.connections.remove(conn_id) {
-            conn.database.disconnect().await?;
-            Ok(())
-        } else {
-            // 连接已不存在（可能已被空闲超时断开），视为已断开
-            Ok(())
+    fn take_for_disconnect(
+        &mut self,
+        conn_id: &str,
+        mode: DisconnectMode,
+    ) -> Option<ActiveConnection> {
+        if let DisconnectMode::Idle(idle_secs) = mode {
+            let active = self.connections.get(conn_id)?;
+            if active.last_activity.elapsed().as_secs() < idle_secs {
+                return None;
+            }
         }
+        self.connections.remove(conn_id)
     }
 
-    /// 强制移除并尽力关闭连接（不返回断开错误）。
-    /// 适用于：连接已被对端/中间设备/系统休眠掐断，常规 disconnect 可能会卡住或报错。
-    /// 永远返回 Ok，便于前端在检测到连接失效时无副作用地清理。
+    /// 锁内原子取走连接，锁外等待资源关闭；返回是否移除了连接。
+    pub(crate) async fn disconnect_managed(
+        manager: &tokio::sync::Mutex<Self>,
+        conn_id: &str,
+        mode: DisconnectMode,
+    ) -> Result<bool, String> {
+        disconnect_managed_with(manager, conn_id, mode, |database| database.disconnect()).await
+    }
+
+    /// 非共享管理器的兼容入口；持有全局锁的调用方须使用 `disconnect_managed`。
+    /// 若连接已被移除（如空闲超时断开），则静默返回 Ok，保持幂等性。
+    pub async fn disconnect(&mut self, conn_id: &str) -> Result<(), String> {
+        if let Some(conn) = self.take_for_disconnect(conn_id, DisconnectMode::Normal) {
+            conn.database.disconnect().await?;
+        }
+        Ok(())
+    }
+
+    /// 非共享管理器的兼容入口，尽力关闭连接且忽略关闭错误。
+    /// 持有全局锁的调用方须使用 `disconnect_managed`。
     pub async fn force_remove(&mut self, conn_id: &str) -> Result<(), String> {
-        if let Some(conn) = self.connections.remove(conn_id) {
-            conn.database.force_disconnect().await;
+        if let Some(conn) = self.take_for_disconnect(conn_id, DisconnectMode::Force) {
+            close_database(conn.database.disconnect(), DisconnectMode::Force).await?;
         }
         Ok(())
     }
@@ -737,24 +768,19 @@ impl ConnectionManager {
         Ok((conn.database.pool_handle(), read_only))
     }
 
-    /// 检查空闲超时并断开连接，减少凭据驻留时间
+    /// 非共享管理器的空闲关闭兼容入口；共享调用方须使用 `disconnect_managed`。
     /// 若连接空闲超过 idle_secs 秒则断开，返回 true；否则返回 false
     pub async fn check_idle_and_disconnect(
         &mut self,
         conn_id: &str,
         idle_secs: u64,
     ) -> Result<bool, String> {
-        let should_disconnect = self
-            .connections
-            .get(conn_id)
-            .map(|c| c.last_activity.elapsed().as_secs() >= idle_secs)
-            .unwrap_or(false);
-
-        if should_disconnect {
-            self.disconnect(conn_id).await?;
-            Ok(true)
-        } else {
-            Ok(false)
+        match self.take_for_disconnect(conn_id, DisconnectMode::Idle(idle_secs)) {
+            Some(conn) => {
+                conn.database.disconnect().await?;
+                Ok(true)
+            }
+            None => Ok(false),
         }
     }
 
@@ -943,6 +969,188 @@ impl Default for ConnectionManager {
 mod tests {
     use super::*;
     use crate::models::types::{ConnectionConfig, DatabaseType};
+
+    fn lazy_active(last_activity: Instant) -> ActiveConnection {
+        let config = sample_config();
+        ActiveConnection {
+            database: ActiveDatabaseConnection::MySql(MySqlActiveConnection {
+                // 惰性池不发起网络连接；仅替换关闭边界来确定性模拟慢资源。
+                adapter: MySqlDatabaseAdapter::new(Pool::new(Opts::default())),
+                ssh_tunnel: None,
+            }),
+            config,
+            last_activity,
+        }
+    }
+
+    async fn assert_slow_close_releases_manager(mode: DisconnectMode) {
+        let manager = tokio::sync::Mutex::new(ConnectionManager::new());
+        manager.lock().await.register(
+            "closing".into(),
+            lazy_active(Instant::now() - Duration::from_secs(60)),
+        );
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (finish_tx, finish_rx) = tokio::sync::oneshot::channel();
+        let close = disconnect_managed_with(&manager, "closing", mode, |database| async move {
+            started_tx.send(()).unwrap();
+            finish_rx.await.unwrap();
+            database.disconnect().await
+        });
+        let concurrent_access = async {
+            started_rx.await.unwrap();
+            let access = manager.try_lock();
+            assert!(access.is_ok(), "慢关闭期间仍持有全局连接锁");
+            let mut guard = access.unwrap();
+            assert!(!guard.has_connection("closing"));
+            guard.register("other".into(), lazy_active(Instant::now()));
+            assert!(guard.get_database_pool_and_touch("other").is_ok());
+            // 同一 ID 可重新注册；旧资源关闭结束不能删掉新连接。
+            guard.register("closing".into(), lazy_active(Instant::now()));
+            drop(guard);
+            finish_tx.send(()).unwrap();
+        };
+        let (closed, ()) = tokio::join!(close, concurrent_access);
+        assert_eq!(closed, Ok(true));
+        assert!(manager.lock().await.has_connection("closing"));
+    }
+
+    #[tokio::test]
+    async fn normal_slow_close_does_not_block_manager() {
+        assert_slow_close_releases_manager(DisconnectMode::Normal).await;
+    }
+
+    #[tokio::test]
+    async fn force_slow_close_does_not_block_manager() {
+        assert_slow_close_releases_manager(DisconnectMode::Force).await;
+    }
+
+    #[tokio::test]
+    async fn idle_slow_close_does_not_block_manager() {
+        assert_slow_close_releases_manager(DisconnectMode::Idle(30)).await;
+    }
+
+    #[tokio::test]
+    async fn idle_close_rechecks_activity_when_it_acquires_manager() {
+        let manager = tokio::sync::Mutex::new(ConnectionManager::new());
+        let mut guard = manager.lock().await;
+        guard.register(
+            "active".into(),
+            lazy_active(Instant::now() - Duration::from_secs(60)),
+        );
+        let close =
+            disconnect_managed_with(&manager, "active", DisconnectMode::Idle(30), |_| async {
+                panic!("活动连接不应执行关闭")
+            });
+        tokio::pin!(close);
+        assert!(futures_util::poll!(close.as_mut()).is_pending());
+        assert!(guard.get_database_pool_and_touch("active").is_ok());
+        drop(guard);
+        assert_eq!(close.await, Ok(false));
+        assert!(manager.lock().await.has_connection("active"));
+    }
+
+    #[tokio::test]
+    async fn managed_close_is_idempotent_for_every_mode() {
+        let manager = tokio::sync::Mutex::new(ConnectionManager::new());
+        for mode in [
+            DisconnectMode::Normal,
+            DisconnectMode::Force,
+            DisconnectMode::Idle(0),
+        ] {
+            assert_eq!(
+                disconnect_managed_with(&manager, "missing", mode, |_| async {
+                    panic!("不存在的连接不应执行关闭")
+                })
+                .await,
+                Ok(false),
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn normal_and_idle_close_wait_for_in_flight_cleanup() {
+        async fn close_after_query_finishes(mode: DisconnectMode) {
+            let manager = tokio::sync::Mutex::new(ConnectionManager::new());
+            manager
+                .lock()
+                .await
+                .register("slow".into(), lazy_active(Instant::now()));
+            let result = disconnect_managed_with(&manager, "slow", mode, |database| async move {
+                // 超过强制清理的 2 秒上限后归还连接，普通和空闲关闭仍应等待成功。
+                tokio::time::sleep(Duration::from_millis(2100)).await;
+                database.disconnect().await
+            })
+            .await;
+            assert_eq!(result, Ok(true));
+            assert!(!manager.lock().await.has_connection("slow"));
+        }
+        tokio::join!(
+            close_after_query_finishes(DisconnectMode::Normal),
+            close_after_query_finishes(DisconnectMode::Idle(0)),
+        );
+    }
+
+    #[tokio::test]
+    async fn managed_force_close_ignores_timeout() {
+        let manager = tokio::sync::Mutex::new(ConnectionManager::new());
+        manager
+            .lock()
+            .await
+            .register("slow".into(), lazy_active(Instant::now()));
+        let result = tokio::time::timeout(
+            Duration::from_secs(3),
+            disconnect_managed_with(&manager, "slow", DisconnectMode::Force, |_| {
+                std::future::pending::<Result<(), String>>()
+            }),
+        )
+        .await;
+        assert_eq!(result.unwrap(), Ok(true));
+        assert!(!manager.lock().await.has_connection("slow"));
+    }
+
+    #[tokio::test]
+    async fn managed_close_preserves_normal_and_idle_errors_but_ignores_force_errors() {
+        let manager = tokio::sync::Mutex::new(ConnectionManager::new());
+        for (mode, expected) in [
+            (DisconnectMode::Normal, Err("关闭失败".to_string())),
+            (DisconnectMode::Idle(0), Err("关闭失败".to_string())),
+            (DisconnectMode::Force, Ok(true)),
+        ] {
+            manager
+                .lock()
+                .await
+                .register("error".into(), lazy_active(Instant::now()));
+            assert_eq!(
+                disconnect_managed_with(&manager, "error", mode, |_| async {
+                    Err("关闭失败".to_string())
+                })
+                .await,
+                expected
+            );
+            assert!(!manager.lock().await.has_connection("error"));
+        }
+    }
+
+    #[tokio::test]
+    async fn managed_close_shuts_down_the_detached_pool() {
+        let manager = tokio::sync::Mutex::new(ConnectionManager::new());
+        for mode in [
+            DisconnectMode::Normal,
+            DisconnectMode::Force,
+            DisconnectMode::Idle(0),
+        ] {
+            let active = lazy_active(Instant::now());
+            let pool = active.database.mysql_pool().unwrap();
+            manager.lock().await.register("close".into(), active);
+            assert_eq!(
+                ConnectionManager::disconnect_managed(&manager, "close", mode).await,
+                Ok(true)
+            );
+            // 已关闭的惰性池直接拒绝借用，不会尝试连接服务器。
+            assert!(pool.get_conn().await.is_err());
+            assert!(!manager.lock().await.has_connection("close"));
+        }
+    }
 
     #[test]
     fn test_connection_manager_new() {

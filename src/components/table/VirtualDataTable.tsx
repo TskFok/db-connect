@@ -4,10 +4,10 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   memo,
   useCallback,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type CSSProperties,
   type ReactNode,
 } from "react";
@@ -121,45 +121,76 @@ function resolveColumn(
 
 /** 列宽调节手柄：原生 mousedown 监听以兼容 macOS Tauri */
 function ColumnResizer({
+  columnKey,
   width,
   onResize,
+  onPreview,
 }: {
+  columnKey: string;
   width: number;
   onResize: (newWidth: number) => void;
+  onPreview: (columnKey: string, width: number | null) => void;
 }) {
   const handleRef = useRef<HTMLDivElement>(null);
-  const startRef = useRef<{ x: number; w: number } | null>(null);
+  const latestRef = useRef({ width, onResize });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    latestRef.current = { width, onResize };
+  }, [width, onResize]);
+
+  useLayoutEffect(() => {
     const el = handleRef.current;
     if (!el) return;
+    let cancelDrag: (() => void) | undefined;
 
     const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0 || cancelDrag) return;
       e.preventDefault();
       e.stopPropagation();
-      if (startRef.current) return;
-      startRef.current = { x: e.clientX, w: width };
+      // 拖动开始时固定提交目标；父级重渲染只更新下一次拖动的配置。
+      const { width: startWidth, onResize: commitWidth } = latestRef.current;
+      const startX = e.clientX;
+      let nextWidth = startWidth;
+      let frame: number | null = null;
+      const previousCursor = document.body.style.cursor;
+      const previousUserSelect = document.body.style.userSelect;
 
       const onMouseMove = (moveEvent: MouseEvent) => {
-        if (!startRef.current) return;
-        const delta = moveEvent.clientX - startRef.current.x;
+        const delta = moveEvent.clientX - startX;
         const newWidth = Math.round(
           Math.max(
             MIN_COL_WIDTH,
-            Math.min(MAX_COL_WIDTH, startRef.current.w + delta)
+            Math.min(MAX_COL_WIDTH, startWidth + delta)
           )
         );
-        onResize(newWidth);
+        if (newWidth === nextWidth) return;
+        nextWidth = newWidth;
+        if (frame === null) {
+          frame = requestAnimationFrame(() => {
+            frame = null;
+            onPreview(columnKey, nextWidth);
+          });
+        }
+      };
+
+      const cleanup = () => {
+        if (frame !== null) cancelAnimationFrame(frame);
+        frame = null;
+        document.removeEventListener("mousemove", onMouseMove, true);
+        document.removeEventListener("mouseup", onMouseUp, true);
+        document.body.style.cursor = previousCursor;
+        document.body.style.userSelect = previousUserSelect;
+        cancelDrag = undefined;
+        onPreview(columnKey, null);
       };
 
       const onMouseUp = () => {
-        startRef.current = null;
-        document.removeEventListener("mousemove", onMouseMove, true);
-        document.removeEventListener("mouseup", onMouseUp, true);
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
+        cleanup();
+        // 使用最后一次事件的宽度，不依赖尚未执行的 rAF / React 渲染。
+        if (nextWidth !== startWidth) commitWidth(nextWidth);
       };
 
+      cancelDrag = cleanup;
       document.addEventListener("mousemove", onMouseMove, true);
       document.addEventListener("mouseup", onMouseUp, true);
       document.body.style.cursor = "col-resize";
@@ -167,8 +198,11 @@ function ColumnResizer({
     };
 
     el.addEventListener("mousedown", onMouseDown, true);
-    return () => el.removeEventListener("mousedown", onMouseDown, true);
-  }, [width, onResize]);
+    return () => {
+      el.removeEventListener("mousedown", onMouseDown, true);
+      cancelDrag?.();
+    };
+  }, [columnKey, onPreview]);
 
   return (
     <div
@@ -211,9 +245,23 @@ function VirtualDataTableInner({
   const initialScrollPositionRef = useRef(initialScrollPosition);
   const scrollRestoredRef = useRef(false);
   const { token } = antdTheme.useToken();
+  const [resizePreview, setResizePreview] = useState<{
+    columnKey: string;
+    width: number;
+  } | null>(null);
+  const handleResizePreview = useCallback(
+    (columnKey: string, width: number | null) => {
+      setResizePreview((current) => {
+        if (width === null) return current?.columnKey === columnKey ? null : current;
+        if (current?.columnKey === columnKey && current.width === width) return current;
+        return { columnKey, width };
+      });
+    },
+    []
+  );
 
   // 解析列；行选择列作为虚拟列固定在最左，参与虚拟化但其宽度由 rowSelection 决定
-  const resolvedColumns: ResolvedColumn[] = useMemo(() => {
+  const baseColumns: ResolvedColumn[] = useMemo(() => {
     const userCols = columns.map((c) => resolveColumn(c, defaultColWidth));
     if (!rowSelection) return userCols;
     const selectionWidth =
@@ -230,6 +278,16 @@ function VirtualDataTableInner({
       ...userCols,
     ];
   }, [columns, defaultColWidth, rowSelection]);
+
+  // 拖动预览仅作用于本表，避免每帧触发持久化和父级列定义重建。
+  const resolvedColumns = useMemo(
+    () => resizePreview
+      ? baseColumns.map((column) => column.key === resizePreview.columnKey
+        ? { ...column, width: resizePreview.width }
+        : column)
+      : baseColumns,
+    [baseColumns, resizePreview]
+  );
 
   const totalWidth = useMemo(
     () => resolvedColumns.reduce((s, c) => s + c.width, 0),
@@ -471,8 +529,10 @@ function VirtualDataTableInner({
                   </div>
                   {col.onResize && !col.isSelection ? (
                     <ColumnResizer
+                      columnKey={col.key}
                       width={col.width}
                       onResize={col.onResize}
+                      onPreview={handleResizePreview}
                     />
                   ) : null}
                 </div>
