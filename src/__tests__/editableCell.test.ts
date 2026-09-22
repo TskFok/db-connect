@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import React from "react";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import {
   normalizeValue,
   displayVal,
@@ -224,6 +224,86 @@ describe("isLongFieldValue", () => {
 });
 
 describe("EditableCell", () => {
+  it("年份字段未修改直接确认时保留原数值类型，避免生成无效修改", () => {
+    const onEdit = vi.fn();
+    render(
+      React.createElement(EditableCell, {
+        value: 2026,
+        pendingValue: undefined,
+        hasPending: false,
+        onEdit,
+        temporalKind: "year",
+      })
+    );
+    fireEvent.doubleClick(screen.getByTitle("双击编辑"));
+    fireEvent.click(screen.getByRole("button", { name: "确 定" }));
+    expect(onEdit).toHaveBeenCalledExactlyOnceWith(2026);
+  });
+
+  it("日期字段通过日历选择，确定后以日期字符串记录修改", async () => {
+    const onEdit = vi.fn();
+    render(
+      React.createElement(EditableCell, {
+        value: "2026-09-22",
+        pendingValue: undefined,
+        hasPending: false,
+        onEdit,
+        fieldLabel: "birthday",
+        temporalKind: "date",
+      })
+    );
+    fireEvent.doubleClick(screen.getByTitle("双击编辑"));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("textbox", { name: "birthday" }));
+    fireEvent.click(await screen.findByTitle("2026-09-25"));
+    expect(onEdit).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "确 定" }));
+    await waitFor(() => expect(onEdit).toHaveBeenCalledWith("2026-09-25"));
+    expect(onEdit).toHaveBeenCalledTimes(1);
+  });
+
+  it("时间编辑取消时不提交，原有微秒和时区文本可手动编辑", () => {
+    const onEdit = vi.fn();
+    const original = "2026-09-22 12:34:56.123456+08:00";
+    render(
+      React.createElement(EditableCell, {
+        value: original,
+        pendingValue: undefined,
+        hasPending: false,
+        onEdit,
+        fieldLabel: "created_at",
+        temporalKind: "datetime",
+      })
+    );
+    fireEvent.doubleClick(screen.getByTitle("双击编辑"));
+    fireEvent.click(screen.getByRole("button", { name: "手动输入" }));
+    expect(screen.getByRole("textbox", { name: "created_at" })).toHaveValue(original);
+    fireEvent.change(screen.getByRole("textbox", { name: "created_at" }), {
+      target: { value: "2026-09-23 12:34:56.123456+08:00" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "取 消" }));
+    expect(onEdit).not.toHaveBeenCalled();
+  });
+
+  it("特殊 TIME 原值无需被选择器转换，确认和卸载保持原文本", () => {
+    const onEdit = vi.fn();
+    const { unmount } = render(
+      React.createElement(EditableCell, {
+        value: "-838:59:59.123456",
+        pendingValue: undefined,
+        hasPending: false,
+        onEdit,
+        fieldLabel: "duration",
+        temporalKind: "time",
+      })
+    );
+    fireEvent.doubleClick(screen.getByTitle("双击编辑"));
+    expect(screen.getByRole("textbox", { name: "duration" })).toHaveValue("-838:59:59.123456");
+    fireEvent.click(screen.getByRole("button", { name: "确 定" }));
+    unmount();
+    expect(onEdit).toHaveBeenCalledExactlyOnceWith("-838:59:59.123456");
+  });
+
   it("渲染普通值时显示字符串形式", () => {
     const onEdit = vi.fn();
     render(

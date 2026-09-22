@@ -8,6 +8,8 @@ import {
   normalizeValue,
 } from "./tableDataUtils";
 import { TAB_NAVIGATE_EDIT } from "./tableDataEditEvents";
+import { TemporalInput } from "./TemporalInput";
+import type { TemporalKind } from "../../utils/temporalValue";
 
 export interface EditableCellProps {
   value: unknown;
@@ -24,6 +26,7 @@ export interface EditableCellProps {
   readOnly?: boolean;
   /** varchar/text 等：避免纯数字被归一成 Number 后经 JSON 精度丢失 */
   forceStringSemantics?: boolean;
+  temporalKind?: TemporalKind | null;
 }
 
 /** 可编辑单元格，编辑后由父组件集中管理待提交状态。 */
@@ -38,6 +41,7 @@ export function EditableCell({
   fieldLabel,
   readOnly = false,
   forceStringSemantics = false,
+  temporalKind = null,
 }: EditableCellProps) {
   const [editing, setEditing] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -49,6 +53,7 @@ export function EditableCell({
   const activeEditSessionRef = useRef<{
     value: unknown;
     forceStringSemantics: boolean;
+    temporalKind: TemporalKind | null;
     onEdit: (newValue: unknown) => void;
   } | null>(null);
   const latestInputValueRef = useRef("");
@@ -64,15 +69,19 @@ export function EditableCell({
 
   const commitInputValue = (text: string) => {
     const session = activeEditSessionRef.current;
-    const newVal = normalizeValue(
-      text,
-      session?.value ?? latestValueRef.current,
-      {
-        forceString:
-          session?.forceStringSemantics ??
-          latestForceStringSemanticsRef.current,
-      }
-    );
+    const isTemporal = Boolean(session?.temporalKind ?? temporalKind);
+    const originalValue = session?.value ?? latestValueRef.current;
+    const newVal =
+      isTemporal && text === String(originalValue ?? "")
+        ? originalValue
+        : isTemporal && text === ""
+          ? null
+          : normalizeValue(text, originalValue, {
+              forceString:
+                isTemporal ||
+                (session?.forceStringSemantics ??
+                  latestForceStringSemanticsRef.current),
+            });
     (session?.onEdit ?? onEdit)(newVal);
   };
 
@@ -83,11 +92,12 @@ export function EditableCell({
     activeEditSessionRef.current = {
       value,
       forceStringSemantics,
+      temporalKind,
       onEdit,
     };
     latestInputValueRef.current = text;
     setInputValue(text);
-    if (isLongFieldValue(displayValue)) {
+    if (temporalKind || isLongFieldValue(displayValue)) {
       setModalOpen(true);
     } else {
       setEditing(true);
@@ -234,22 +244,35 @@ export function EditableCell({
           open
           onOk={finishModalEdit}
           onCancel={cancelModal}
-          width={720}
+          width={temporalKind ? 480 : 720}
           destroyOnHidden
           okText="确定"
           cancelText="取消"
           focusTriggerAfterClose={false}
         >
-          <SafeTextArea
-            value={inputValue}
-            onChange={(e) => {
-              latestInputValueRef.current = e.target.value;
-              setInputValue(e.target.value);
-            }}
-            autoSize={{ minRows: 10, maxRows: 28 }}
-            style={{ fontFamily: "monospace", fontSize: 13 }}
-            autoFocus
-          />
+          {temporalKind ? (
+            <TemporalInput
+              kind={temporalKind}
+              label={fieldLabel}
+              value={inputValue}
+              onChange={(text) => {
+                latestInputValueRef.current = text;
+                setInputValue(text);
+              }}
+              autoFocus
+            />
+          ) : (
+            <SafeTextArea
+              value={inputValue}
+              onChange={(e) => {
+                latestInputValueRef.current = e.target.value;
+                setInputValue(e.target.value);
+              }}
+              autoSize={{ minRows: 10, maxRows: 28 }}
+              style={{ fontFamily: "monospace", fontSize: 13 }}
+              autoFocus
+            />
+          )}
         </Modal>
       ) : null}
     </>
@@ -267,5 +290,6 @@ export const MemoEditableCell = memo(
     prev.onTabNavigate === next.onTabNavigate &&
     prev.fieldLabel === next.fieldLabel &&
     prev.readOnly === next.readOnly &&
-    prev.forceStringSemantics === next.forceStringSemantics
+    prev.forceStringSemantics === next.forceStringSemantics &&
+    prev.temporalKind === next.temporalKind
 );
