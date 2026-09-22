@@ -6,6 +6,7 @@ pub mod postgres;
 pub mod postgres_ddl;
 pub mod postgres_error;
 pub mod postgres_objects;
+pub mod result_budget;
 pub mod schema_compare;
 pub mod schema_sync;
 pub mod sql_script;

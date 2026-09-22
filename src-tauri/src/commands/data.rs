@@ -1,4 +1,5 @@
 use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
+use crate::db::result_budget::ResultBudget;
 use crate::db::sql_utils::{
     esc_id, esc_str, mysql_count_query, mysql_paginated_select,
     mysql_sql_editor_allowed_on_read_only_connection, validate_where_clause,
@@ -23,9 +24,6 @@ const JS_MIN_SAFE_INTEGER: i64 = -9007199254740991;
 
 /// 单条 SQL 最大长度，防止异常输入导致内存/CPU 压力
 const MAX_SQL_LENGTH: usize = 1_000_000;
-
-/// SQL 编辑器中 SELECT 类语句单次返回的最大行数（与前端 `CSV_EXPORT_MAX_ROWS` / Excel 导出行上限一致）。
-pub const MAX_EXECUTE_SQL_SELECT_ROWS: usize = 100_000;
 
 fn is_use_statement(sql: &str) -> bool {
     let trimmed = sql.trim();
@@ -183,8 +181,14 @@ async fn materialize_limited_select(
         .await
         .map_err(|e| format!("执行查询失败: {}", e))?;
 
-    let mut rows_stored: Vec<Row> = Vec::new();
-    let mut columns: Vec<String> = Vec::new();
+    let mut json_rows = Vec::new();
+    let columns: Vec<String> = result
+        .columns_ref()
+        .iter()
+        .map(|c| c.name_str().to_string())
+        .collect();
+    let mut budget = ResultBudget::default();
+    budget.add_columns(&columns)?;
 
     loop {
         let row = match result
@@ -196,29 +200,12 @@ async fn materialize_limited_select(
             None => break,
         };
 
-        if rows_stored.is_empty() {
-            columns = row
-                .columns_ref()
-                .iter()
-                .map(|c| c.name_str().to_string())
-                .collect();
-        }
-        if rows_stored.len() >= MAX_EXECUTE_SQL_SELECT_ROWS {
-            result
-                .drop_result()
-                .await
-                .map_err(|e| format!("执行查询失败: {}", e))?;
-            return Err(format!(
-                "查询结果超过最大行数 {}（与 Excel 导出行上限一致），请使用 LIMIT 或缩小范围后重试",
-                MAX_EXECUTE_SQL_SELECT_ROWS
-            ));
-        }
-        rows_stored.push(row);
+        let values = mysql_row_to_json(&row, columns.len());
+        budget.add_row(&values)?;
+        json_rows.push(values);
     }
 
     let elapsed = start.elapsed().as_millis() as u64;
-    let json_rows = rows_to_json_with_columns(&rows_stored, columns.len());
-
     let row_count = json_rows.len();
     Ok(SqlExecuteResult {
         result_type: "select".to_string(),
@@ -360,19 +347,21 @@ pub fn mysql_value_to_json_typed(
 
 /// 将结果行转换为 JSON 行矩阵；`col_count` 为列数，缺失值以 `null` 填充。
 /// 优先按列元数据（`ColumnType`）判断数值/文本，文本列保留字符串。
-/// 被 `query_table_data` / `query_full_rows` / `materialize_limited_select` 复用，避免逻辑漂移。
+/// 表格查询与 SQL 编辑器共用 `mysql_row_to_json`，避免逻辑漂移。
 fn rows_to_json_with_columns(rows: &[Row], col_count: usize) -> Vec<Vec<JsonValue>> {
     rows.iter()
-        .map(|row| {
-            let cols = row.columns_ref();
-            (0..col_count)
-                .map(|i| {
-                    let col_type = cols.get(i).map(|c| c.column_type());
-                    row.as_ref(i)
-                        .map(|val| mysql_value_to_json_typed(val, col_type))
-                        .unwrap_or(JsonValue::Null)
-                })
-                .collect()
+        .map(|row| mysql_row_to_json(row, col_count))
+        .collect()
+}
+
+fn mysql_row_to_json(row: &Row, col_count: usize) -> Vec<JsonValue> {
+    let cols = row.columns_ref();
+    (0..col_count)
+        .map(|i| {
+            let col_type = cols.get(i).map(|c| c.column_type());
+            row.as_ref(i)
+                .map(|val| mysql_value_to_json_typed(val, col_type))
+                .unwrap_or(JsonValue::Null)
         })
         .collect()
 }
@@ -1376,6 +1365,11 @@ pub async fn execute_sql(
                 state.running_queries.lock().await.remove(&eid);
             }
 
+            if result.is_err() {
+                // 不排空超限结果；关闭出错的连接，避免连接池后台继续读取。
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(2), conn.disconnect())
+                    .await;
+            }
             result
         }
         DatabasePoolHandle::Postgres(handle) => {
@@ -1389,14 +1383,11 @@ pub async fn execute_sql(
             let client = postgres::get_client_with_retry(&handle.pool).await?;
             postgres::set_search_path_if_set(&client, &database).await?;
 
-            let registered_id = execution_id.map(|eid| {
-                let cancel = postgres::PostgresCancelHandle::new(
-                    client.cancel_token(),
-                    handle.cancel_tls.clone(),
-                );
-                (eid, cancel)
-            });
-            if let Some((eid, cancel)) = &registered_id {
+            let cancel = postgres::PostgresCancelHandle::new(
+                client.cancel_token(),
+                handle.cancel_tls.clone(),
+            );
+            if let Some(eid) = &execution_id {
                 state.running_queries.lock().await.insert(
                     eid.clone(),
                     RunningQuery::Postgres(Box::new(cancel.clone())),
@@ -1404,9 +1395,9 @@ pub async fn execute_sql(
             }
 
             let start = Instant::now();
-            let result = postgres::run_sql_on_client(&client, &sql, read_only, start).await;
+            let result = postgres::run_sql_on_client(client, &sql, read_only, start, &cancel).await;
 
-            if let Some((eid, _)) = registered_id {
+            if let Some(eid) = execution_id {
                 state.running_queries.lock().await.remove(&eid);
             }
 
@@ -1668,7 +1659,12 @@ pub async fn explain_sql(
             use_database_if_set(&mut conn, &database).await?;
 
             let start = Instant::now();
-            materialize_limited_select(&mut conn, &explain_stmt, start).await
+            let result = materialize_limited_select(&mut conn, &explain_stmt, start).await;
+            if result.is_err() {
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(2), conn.disconnect())
+                    .await;
+            }
+            result
         }
         DatabasePoolHandle::Postgres(handle) => {
             let explain_stmt = if trimmed.to_uppercase().starts_with("EXPLAIN") {
@@ -1683,7 +1679,11 @@ pub async fn explain_sql(
             let client = postgres::get_client_with_retry(&handle.pool).await?;
             postgres::set_search_path_if_set(&client, &database).await?;
             let start = Instant::now();
-            postgres::run_sql_on_client(&client, &explain_stmt, false, start).await
+            let cancel = postgres::PostgresCancelHandle::new(
+                client.cancel_token(),
+                handle.cancel_tls.clone(),
+            );
+            postgres::run_sql_on_client(client, &explain_stmt, false, start, &cancel).await
         }
         DatabasePoolHandle::Sqlite(handle) => {
             validate_sql_input(trimmed)?;
@@ -1915,11 +1915,6 @@ mod tests {
         // 超过上限时应拒绝
         let long_sql = "A".repeat(MAX_SQL_LENGTH + 1);
         assert!(validate_sql_input(&long_sql).is_err());
-    }
-
-    #[test]
-    fn test_max_execute_sql_select_rows_matches_csv_export_cap() {
-        assert_eq!(MAX_EXECUTE_SQL_SELECT_ROWS, 100_000);
     }
 
     #[test]

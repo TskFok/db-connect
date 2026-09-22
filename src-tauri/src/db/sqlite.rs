@@ -1,4 +1,5 @@
 use crate::db::dialect::SQLITE_DIALECT;
+use crate::db::result_budget::ResultBudget;
 use crate::db::sql_utils::{
     sqlite_count_query, sqlite_id, sqlite_paginated_select, sqlite_str, validate_column_type,
     validate_where_clause,
@@ -19,7 +20,6 @@ use std::time::Instant;
 
 const JS_MAX_SAFE_INTEGER: i64 = 9007199254740991;
 const JS_MIN_SAFE_INTEGER: i64 = -9007199254740991;
-const MAX_EXECUTE_SQL_SELECT_ROWS: usize = 100_000;
 const SQLITE_NO_PRIMARY_KEY_EDIT_ERROR: &str = "SQLite 表没有主键，无法安全定位要修改的行";
 const SQLITE_VIEW_TABLE_OPERATION_ERROR: &str = "SQLite 视图不支持该表操作";
 
@@ -126,17 +126,12 @@ fn run_sql_on_conn(
             .iter()
             .map(|name| (*name).to_string())
             .collect::<Vec<_>>();
+        let mut budget = ResultBudget::default();
+        budget.add_columns(&columns)?;
         let mut query = stmt.query([]).map_err(|e| format!("执行查询失败: {}", e))?;
         let mut rows = Vec::new();
 
         while let Some(row) = query.next().map_err(|e| format!("执行查询失败: {}", e))? {
-            if rows.len() >= MAX_EXECUTE_SQL_SELECT_ROWS {
-                return Err(format!(
-                    "查询结果超过最大行数 {}（与 Excel 导出行上限一致），请使用 LIMIT 或缩小范围后重试",
-                    MAX_EXECUTE_SQL_SELECT_ROWS
-                ));
-            }
-
             let mut values = Vec::with_capacity(column_count);
             for idx in 0..column_count {
                 let value: SqliteValue = row
@@ -144,6 +139,7 @@ fn run_sql_on_conn(
                     .map_err(|e| format!("读取查询结果失败: {}", e))?;
                 values.push(sqlite_value_to_json(&value));
             }
+            budget.add_row(&values)?;
             rows.push(values);
         }
 
@@ -2857,8 +2853,26 @@ mod tests {
 
         assert_eq!(
             err,
-            "查询结果超过最大行数 100000（与 Excel 导出行上限一致），请使用 LIMIT 或缩小范围后重试"
+            "查询结果超过最大行数 100000，请限制返回行数或缩小范围后重试"
         );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_run_sql_rejects_select_results_over_byte_limit() {
+        let (pool, path) = test_pool_with_schema().await;
+
+        let err = run_sql_on_pool(
+            &pool,
+            "SELECT hex(zeroblob(16777217)) AS payload",
+            false,
+            Instant::now(),
+        )
+        .await
+        .expect_err("byte limit exceeded");
+
+        assert_eq!(err, crate::db::result_budget::result_bytes_exceeded());
 
         let _ = fs::remove_file(path);
     }

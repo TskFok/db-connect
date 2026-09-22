@@ -109,7 +109,7 @@ async fn run_one_postgres_statement(
 }
 
 async fn run_one_sqlserver_batch(
-    client: &mut bb8::PooledConnection<'_, bb8_tiberius::ConnectionManager>,
+    client: &mut bb8::PooledConnection<'_, sqlserver::SqlServerConnectionManager>,
     batch: &str,
 ) -> Result<(), String> {
     client

@@ -1,3 +1,6 @@
+use crate::db::result_budget::{
+    result_bytes_exceeded, ResultBudget, MAX_RESULT_BYTES, MAX_RESULT_ROWS,
+};
 use crate::models::types::{
     ColumnInfo, ConnectionConfig, QueryResult, SessionInfo, SqlCompletionColumn,
     SqlCompletionMetadata, SqlCompletionTable, SqlExecuteResult, TableInfo,
@@ -189,6 +192,24 @@ struct ClickHouseReadOnlySettingRow {
 
 fn parse_json_result_body(body: &str) -> Result<ClickHouseJsonResultBody, String> {
     serde_json::from_str(body).map_err(|e| format!("解析 ClickHouse JSON 结果失败: {}", e))
+}
+
+fn clickhouse_json_row_values(
+    mut row: serde_json::Map<String, JsonValue>,
+    columns: &[String],
+    has_duplicate_columns: bool,
+) -> Vec<JsonValue> {
+    if has_duplicate_columns {
+        return columns
+            .iter()
+            .map(|name| row.get(name).cloned().unwrap_or(JsonValue::Null))
+            .collect();
+    }
+
+    columns
+        .iter()
+        .map(|name| row.remove(name).unwrap_or(JsonValue::Null))
+        .collect()
 }
 
 fn deserialize_opt_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
@@ -473,16 +494,15 @@ pub(crate) fn clickhouse_json_to_sql_execute_result(
     let parsed = parse_json_result_body(body)?;
 
     let columns: Vec<String> = parsed.meta.into_iter().map(|m| m.name).collect();
-    let rows: Vec<Vec<JsonValue>> = parsed
-        .data
-        .into_iter()
-        .map(|row| {
-            columns
-                .iter()
-                .map(|name| row.get(name).cloned().unwrap_or(JsonValue::Null))
-                .collect()
-        })
-        .collect();
+    let has_duplicate_columns = columns.iter().collect::<BTreeSet<_>>().len() != columns.len();
+    let mut budget = ResultBudget::default();
+    budget.add_columns(&columns)?;
+    let mut rows = Vec::with_capacity(parsed.data.len().min(MAX_RESULT_ROWS));
+    for row in parsed.data {
+        let values = clickhouse_json_row_values(row, &columns, has_duplicate_columns);
+        budget.add_row(&values)?;
+        rows.push(values);
+    }
 
     let row_count = rows.len();
     Ok(SqlExecuteResult {
@@ -503,15 +523,11 @@ pub(crate) fn clickhouse_json_to_query_result(
     let parsed = parse_json_result_body(body)?;
 
     let columns: Vec<String> = parsed.meta.into_iter().map(|m| m.name).collect();
+    let has_duplicate_columns = columns.iter().collect::<BTreeSet<_>>().len() != columns.len();
     let rows: Vec<Vec<JsonValue>> = parsed
         .data
         .into_iter()
-        .map(|row| {
-            columns
-                .iter()
-                .map(|name| row.get(name).cloned().unwrap_or(JsonValue::Null))
-                .collect()
-        })
+        .map(|row| clickhouse_json_row_values(row, &columns, has_duplicate_columns))
         .collect();
 
     Ok(QueryResult {
@@ -656,18 +672,34 @@ async fn fetch_json_result(client: &Client, sql: &str, context: &str) -> Result<
     let mut cursor = client
         .query(sql)
         .with_setting("wait_end_of_query", "1")
-        .with_setting("max_result_rows", "100000")
+        .with_setting("max_result_rows", MAX_RESULT_ROWS.to_string())
+        .with_setting("max_result_bytes", MAX_RESULT_BYTES.to_string())
         .with_setting("result_overflow_mode", "throw")
         .with_setting("output_format_json_quote_64bit_integers", "1")
         .fetch_bytes("JSON")
         .map_err(|e| format!("{}: {}", context, e))?;
-    let bytes = cursor
-        .collect()
+    let mut bytes = Vec::new();
+    while let Some(chunk) = cursor
+        .next()
         .await
-        .map_err(|e| format!("{}: {}", context, e))?;
-    std::str::from_utf8(bytes.as_ref())
-        .map(str::to_string)
+        .map_err(|e| format!("{}: {}", context, e))?
+    {
+        extend_clickhouse_response(&mut bytes, &chunk, MAX_RESULT_BYTES)?;
+    }
+    String::from_utf8(bytes)
         .map_err(|e| format!("{}: ClickHouse 返回了非 UTF-8 JSON: {}", context, e))
+}
+
+fn extend_clickhouse_response(
+    response: &mut Vec<u8>,
+    chunk: &[u8],
+    max_bytes: usize,
+) -> Result<(), String> {
+    if response.len().saturating_add(chunk.len()) > max_bytes {
+        return Err(result_bytes_exceeded());
+    }
+    response.extend_from_slice(chunk);
+    Ok(())
 }
 
 pub(crate) async fn fetch_json_each_rows<T>(query: Query, context: &str) -> Result<Vec<T>, String>
@@ -1415,6 +1447,54 @@ mod tests {
         );
         assert_eq!(result.message, "返回 1 行 (耗时 12ms)");
         assert_eq!(result.execution_time_ms, 12);
+    }
+
+    #[test]
+    fn clickhouse_sql_editor_result_rejects_values_over_byte_limit() {
+        let oversized = "x".repeat(crate::db::result_budget::MAX_RESULT_BYTES);
+        let body = serde_json::json!({
+            "meta": [{ "name": "payload", "type": "String" }],
+            "data": [{ "payload": oversized }],
+            "rows": 1
+        })
+        .to_string();
+
+        let err = super::clickhouse_json_to_sql_execute_result(&body, 0)
+            .expect_err("byte limit exceeded");
+
+        assert_eq!(err, crate::db::result_budget::result_bytes_exceeded());
+    }
+
+    #[test]
+    fn clickhouse_json_result_preserves_duplicate_alias_values() {
+        let body = r#"{
+            "meta": [
+                { "name": "x", "type": "UInt8" },
+                { "name": "x", "type": "UInt8" }
+            ],
+            "data": [{ "x": 1 }],
+            "rows": 1
+        }"#;
+
+        let result = super::clickhouse_json_to_sql_execute_result(body, 0)
+            .expect("duplicate aliases remain readable");
+
+        assert_eq!(
+            result.rows,
+            Some(vec![vec![serde_json::json!(1), serde_json::json!(1)]])
+        );
+    }
+
+    #[test]
+    fn clickhouse_response_chunks_enforce_limit_without_mutating_on_failure() {
+        let mut response = Vec::new();
+        super::extend_clickhouse_response(&mut response, b"123", 5).unwrap();
+        super::extend_clickhouse_response(&mut response, b"45", 5).unwrap();
+        let err = super::extend_clickhouse_response(&mut response, b"6", 5)
+            .expect_err("chunk crosses byte limit");
+
+        assert_eq!(response, b"12345");
+        assert_eq!(err, crate::db::result_budget::result_bytes_exceeded());
     }
 
     #[test]

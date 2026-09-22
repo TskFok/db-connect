@@ -66,6 +66,12 @@ import { formatSql } from "../../utils/sqlFormat";
 const { Text } = Typography;
 
 const EMPTY_EXECUTED_SQL_LIST: string[] = [];
+const DEFAULT_RESULT_PAGE_SIZE = 100;
+
+interface SqlResultTableRow {
+  rowKey: number;
+  values: unknown[];
+}
 
 export interface SqlEditorProps {
   /** 独立 SQL 标签页 id，提供时从 store 读写内容 */
@@ -134,6 +140,10 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
   const [localError, setLocalError] = useState<string | null>(null);
   const [localExecutedSqlList, setLocalExecutedSqlList] = useState<string[]>(
     []
+  );
+  const [resultPage, setResultPage] = useState(1);
+  const [resultPageSize, setResultPageSize] = useState(
+    DEFAULT_RESULT_PAGE_SIZE
   );
 
   const result = tabId ? (tabResult?.result ?? null) : localResult;
@@ -631,13 +641,35 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     };
   }, []);
 
-  // 构建结果表格列
+  const resultRowCount = result?.rows?.length ?? 0;
+  const resultMaxPage = Math.max(1, Math.ceil(resultRowCount / resultPageSize));
+  const safeResultPage = Math.min(resultPage, resultMaxPage);
+
+  useEffect(() => {
+    setResultPage(1);
+  }, [result]);
+
+  useEffect(() => {
+    setResultPage((page) => Math.min(page, resultMaxPage));
+  }, [resultMaxPage]);
+
+  const handleResultPageChange = useCallback(
+    (page: number, pageSize: number) => {
+      const nextPageSize = Math.max(1, pageSize);
+      const nextMaxPage = Math.max(1, Math.ceil(resultRowCount / nextPageSize));
+      setResultPageSize(nextPageSize);
+      setResultPage(Math.min(Math.max(1, page), nextMaxPage));
+    },
+    [resultRowCount]
+  );
+
+  // 构建结果表格列；按列下标取值，避免重复列名或名为 _key 的列相互覆盖
   const resultColumns = useMemo(
     () =>
-      result?.columns?.map((col) => ({
+      result?.columns?.map((col, colIdx) => ({
         title: col,
-        dataIndex: col,
-        key: col,
+        dataIndex: ["values", colIdx],
+        key: `${colIdx}:${col}`,
         ellipsis: true,
         width: 160,
         render: (val: unknown) =>
@@ -652,18 +684,16 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     [result?.columns]
   );
 
-  // 转换结果行
-  const resultData = useMemo<Record<string, unknown>[]>(
-    () =>
-      result?.rows?.map((row, rowIdx) => {
-        const record: Record<string, unknown> = { _key: rowIdx };
-        result.columns?.forEach((col, colIdx) => {
-          record[col] = row[colIdx];
-        });
-        return record;
-      }) ?? [],
-    [result?.rows, result?.columns]
-  );
+  // 先截取当前页，再转换为表格记录，避免为不可见页面创建大量对象
+  const resultData = useMemo<SqlResultTableRow[]>(() => {
+    const rows = result?.rows;
+    if (!rows) return [];
+    const start = (safeResultPage - 1) * resultPageSize;
+    return rows.slice(start, start + resultPageSize).map((row, rowIdx) => ({
+      rowKey: start + rowIdx,
+      values: row,
+    }));
+  }, [result?.rows, safeResultPage, resultPageSize]);
 
   const hasSelectResult =
     result?.result_type === "select" &&
@@ -994,11 +1024,14 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
               <Table
                 columns={resultColumns}
                 dataSource={resultData}
-                rowKey="_key"
+                rowKey="rowKey"
                 size="small"
                 virtual
                 pagination={{
-                  pageSize: 100,
+                  current: safeResultPage,
+                  pageSize: resultPageSize,
+                  total: resultRowCount,
+                  onChange: handleResultPageChange,
                   showSizeChanger: true,
                   pageSizeOptions: ["50", "100", "200", "500"],
                   showTotal: (t) => `共 ${t} 行`,

@@ -1,4 +1,5 @@
 use crate::db::postgres_error::format_pg_error;
+use crate::db::result_budget::ResultBudget;
 use crate::db::sql_utils::{
     pg_id, pg_str, postgres_count_query, postgres_paginated_select,
     postgres_sql_editor_allowed_on_read_only_connection, validate_where_clause,
@@ -14,6 +15,7 @@ use crate::models::types::{
 };
 use bytes::BytesMut;
 use deadpool_postgres::{Config as PgPoolConfig, Pool as PgPool, PoolConfig, Runtime, SslMode};
+use futures_util::TryStreamExt;
 use native_tls::{Certificate, Identity, TlsConnector};
 use postgres_native_tls::MakeTlsConnector;
 use serde_json::Value as JsonValue;
@@ -23,6 +25,10 @@ use std::net::IpAddr;
 use std::time::{Duration, Instant};
 use tokio_postgres::types::{Format, IsNull, ToSql, Type};
 use tokio_postgres::{CancelToken, NoTls, SimpleQueryMessage};
+
+#[cfg(test)]
+#[path = "postgres_query_tests.rs"]
+mod query_tests;
 
 #[derive(Clone)]
 pub enum PostgresCancelTls {
@@ -34,14 +40,30 @@ pub enum PostgresCancelTls {
 pub struct PostgresCancelHandle {
     token: CancelToken,
     tls: PostgresCancelTls,
+    status: tokio::sync::watch::Sender<QueryStatus>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum QueryStatus {
+    Running,
+    CancelRequested,
+    Finished,
 }
 
 impl PostgresCancelHandle {
     pub fn new(token: CancelToken, tls: PostgresCancelTls) -> Self {
-        Self { token, tls }
+        Self {
+            token,
+            tls,
+            status: tokio::sync::watch::channel(QueryStatus::Running).0,
+        }
     }
 
     pub async fn cancel(self) -> Result<(), String> {
+        // 唤醒读取端，即使服务器尚未返回下一行也能停止。
+        if !self.transition_running_to(QueryStatus::CancelRequested) {
+            return Ok(());
+        }
         match self.tls {
             PostgresCancelTls::NoTls => self
                 .token
@@ -54,6 +76,17 @@ impl PostgresCancelHandle {
                 .await
                 .map_err(|e| format!("取消查询失败: {}", e)),
         }
+    }
+
+    fn transition_running_to(&self, next: QueryStatus) -> bool {
+        self.status.send_if_modified(|status| {
+            if *status == QueryStatus::Running {
+                *status = next;
+                true
+            } else {
+                false
+            }
+        })
     }
 }
 
@@ -456,21 +489,78 @@ pub fn sql_editor_returns_result_set(sql: &str) -> bool {
 }
 
 pub async fn run_sql_on_client(
-    client: &deadpool_postgres::Client,
+    client: deadpool_postgres::Client,
     sql: &str,
     read_only: bool,
     start: Instant,
+    cancel: &PostgresCancelHandle,
 ) -> Result<SqlExecuteResult, String> {
     if read_only && !sql_editor_allowed_on_read_only_connection(sql) {
+        cancel.transition_running_to(QueryStatus::Finished);
         return Err("当前连接为只读模式，不允许执行 DML/DDL".to_string());
     }
 
-    let messages = client
-        .simple_query(sql)
+    let mut result = read_sql_result(&client, sql, start, cancel).await;
+    // 完成与取消必须互斥：过期取消句柄不得取消此连接上的下一条查询。
+    if result.is_ok() && !cancel.transition_running_to(QueryStatus::Finished) {
+        result = Err("查询已取消".to_string());
+    }
+    if result.is_err() {
+        // 错误/取消时不能将仍有未读结果的连接归还连接池。取消请求有时间界限，
+        // 失败时关闭连接也能终止后端会话，避免为清理而继续排空无限结果。
+        let _ = tokio::time::timeout(Duration::from_secs(2), cancel.clone().cancel()).await;
+        drop(deadpool_postgres::Client::take(client));
+    }
+    result
+}
+
+async fn read_sql_result(
+    client: &deadpool_postgres::Client,
+    sql: &str,
+    start: Instant,
+    cancel: &PostgresCancelHandle,
+) -> Result<SqlExecuteResult, String> {
+    let mut requested = cancel.status.subscribe();
+    if *requested.borrow() != QueryStatus::Running {
+        return Err("查询已取消".to_string());
+    }
+    let stream = client
+        .simple_query_raw(sql)
         .await
         .map_err(|e| format_pg_error("执行 SQL", e))?;
+    futures_util::pin_mut!(stream);
+    let mut columns = Vec::new();
+    let mut rows = Vec::new();
+    let mut affected = 0;
+    let mut budget = ResultBudget::default();
+    loop {
+        let msg = tokio::select! {
+            biased;
+            _ = requested.changed() => return Err("查询已取消".to_string()),
+            msg = stream.try_next() => msg.map_err(|e| format_pg_error("执行 SQL", e))?,
+        };
+        match msg {
+            Some(SimpleQueryMessage::RowDescription(cols)) if columns.is_empty() => {
+                columns = cols.iter().map(|c| c.name().to_string()).collect();
+                budget.add_columns(&columns)?;
+            }
+            Some(SimpleQueryMessage::Row(row)) => {
+                let values = (0..row.len())
+                    .map(|i| simple_value_to_json(row.get(i)))
+                    .collect::<Vec<_>>();
+                budget.add_row(&values)?;
+                rows.push(values);
+            }
+            Some(SimpleQueryMessage::CommandComplete(count)) => affected = count,
+            None => break,
+            _ => {}
+        }
+        // 缓冲中持续有数据时也给取消命令调度机会。
+        if !rows.is_empty() && rows.len() % 256 == 0 {
+            tokio::task::yield_now().await;
+        }
+    }
     let elapsed = start.elapsed().as_millis() as u64;
-    let (columns, rows) = simple_messages_to_columns_and_json(&messages)?;
 
     if sql_editor_returns_result_set(sql) || !columns.is_empty() {
         let row_count = rows.len();
@@ -483,15 +573,6 @@ pub async fn run_sql_on_client(
             execution_time_ms: elapsed,
         });
     }
-
-    let affected = messages
-        .iter()
-        .filter_map(|msg| match msg {
-            SimpleQueryMessage::CommandComplete(n) => Some(*n),
-            _ => None,
-        })
-        .last()
-        .unwrap_or(0);
 
     Ok(SqlExecuteResult {
         result_type: "modify".to_string(),

@@ -1,4 +1,5 @@
 use crate::db::dialect::SQLSERVER_DIALECT;
+use crate::db::result_budget::ResultBudget;
 use crate::db::sql_utils::{
     sqlserver_count_query, sqlserver_id, sqlserver_paginated_select,
     sqlserver_sql_editor_allowed_on_read_only_connection, sqlserver_str, validate_where_clause,
@@ -7,21 +8,93 @@ use crate::models::types::{
     ColumnInfo, ConnectionConfig, QueryResult, SessionInfo, SqlCompletionColumn,
     SqlCompletionMetadata, SqlCompletionTable, SqlExecuteResult, TableInfo,
 };
-use bb8::{Pool, PooledConnection};
-use bb8_tiberius::ConnectionManager as SqlServerConnectionManager;
+use bb8::{ManageConnection, Pool, PooledConnection};
+use bb8_tiberius::ConnectionManager as InnerSqlServerConnectionManager;
 use futures_util::TryStreamExt;
 use serde_json::Value as JsonValue;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::ops::{Deref, DerefMut};
 use std::time::{Duration, Instant};
 use tiberius::{AuthMethod, ColumnData, Config as TiberiusConfig, EncryptionLevel, Row};
 
 pub type SqlServerPool = Pool<SqlServerConnectionManager>;
 type SqlServerPooledConnection<'a> = PooledConnection<'a, SqlServerConnectionManager>;
 
+/// 允许立即关闭未读完结果的连接，同时由 bb8 正常维护连接数上限。
+pub struct SqlServerConnectionManager {
+    inner: InnerSqlServerConnectionManager,
+}
+
+pub struct SqlServerConnection<
+    C = <InnerSqlServerConnectionManager as ManageConnection>::Connection,
+> {
+    inner: Option<C>,
+}
+
+impl<C> SqlServerConnection<C> {
+    fn discard_on_error<T, E>(&mut self, result: Result<T, E>) -> Result<T, E> {
+        if result.is_err() {
+            // Drop Tiberius client 会关闭 socket，不触发 flush_stream 排空剩余结果。
+            drop(self.inner.take());
+        }
+        result
+    }
+}
+
+impl<C> Deref for SqlServerConnection<C> {
+    type Target = C;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner.as_ref().expect("SQL Server 连接已关闭")
+    }
+}
+
+impl<C> DerefMut for SqlServerConnection<C> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.inner.as_mut().expect("SQL Server 连接已关闭")
+    }
+}
+
+impl SqlServerConnectionManager {
+    fn new(config: TiberiusConfig) -> Self {
+        Self {
+            inner: InnerSqlServerConnectionManager::new(config),
+        }
+    }
+}
+
+impl ManageConnection for SqlServerConnectionManager {
+    type Connection = SqlServerConnection;
+    type Error = <InnerSqlServerConnectionManager as ManageConnection>::Error;
+
+    async fn connect(&self) -> Result<Self::Connection, Self::Error> {
+        Ok(SqlServerConnection {
+            inner: Some(self.inner.connect().await?),
+        })
+    }
+
+    async fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
+        match conn.inner.as_mut() {
+            Some(client) => self.inner.is_valid(client).await,
+            None => Err(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "SQL Server 连接已关闭",
+            )
+            .into()),
+        }
+    }
+
+    fn has_broken(&self, conn: &mut Self::Connection) -> bool {
+        match conn.inner.as_mut() {
+            Some(client) => self.inner.has_broken(client),
+            None => true,
+        }
+    }
+}
+
 const JS_MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
 const JS_MIN_SAFE_INTEGER: i64 = -9_007_199_254_740_991;
 const DAYS_0001_TO_1970: i64 = 719_162;
-const MAX_EXECUTE_SQL_SELECT_ROWS: usize = 100_000;
 
 #[derive(Clone)]
 pub struct SqlServerPoolHandle {
@@ -634,7 +707,8 @@ pub async fn run_sql_on_pool(
 
     let mut client = get_client_with_retry(pool).await?;
     if SQLSERVER_DIALECT.sql_editor_returns_result_set(sql) {
-        return materialize_limited_sql(&mut client, sql, start).await;
+        let result = materialize_limited_sql(&mut client, sql, start).await;
+        return client.discard_on_error(result);
     }
 
     if read_only {
@@ -680,6 +754,8 @@ async fn materialize_limited_sql(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let mut budget = ResultBudget::default();
+    budget.add_columns(&columns)?;
 
     let mut rows = Vec::new();
     let mut row_stream = stream.into_row_stream();
@@ -688,13 +764,9 @@ async fn materialize_limited_sql(
         .await
         .map_err(|e| normalize_sqlserver_error("读取查询结果失败", e.to_string()))?
     {
-        if rows.len() >= MAX_EXECUTE_SQL_SELECT_ROWS {
-            return Err(format!(
-                "查询结果超过最大行数 {}（与 Excel 导出行上限一致），请使用 TOP、OFFSET/FETCH 或缩小范围后重试",
-                MAX_EXECUTE_SQL_SELECT_ROWS
-            ));
-        }
-        rows.push(row_to_json(&row));
+        let values = row_to_json(&row);
+        budget.add_row(&values)?;
+        rows.push(values);
     }
 
     let elapsed = start.elapsed().as_millis() as u64;
@@ -900,16 +972,16 @@ pub async fn explain_sql_on_pool(
     }
 
     let mut client = get_client_with_retry(pool).await?;
-    drain_simple_query(&mut client, "SET SHOWPLAN_TEXT ON", "开启执行计划失败").await?;
+    let open_result =
+        drain_simple_query(&mut client, "SET SHOWPLAN_TEXT ON", "开启执行计划失败").await;
+    client.discard_on_error(open_result)?;
     let result = materialize_limited_sql(&mut client, trimmed, start).await;
+    // 结果读取失败时立即关闭连接；发送 OFF 会先排空超限查询的剩余结果。
+    let result = client.discard_on_error(result)?;
     let close_result =
         drain_simple_query(&mut client, "SET SHOWPLAN_TEXT OFF", "关闭执行计划失败").await;
-
-    match (result, close_result) {
-        (Ok(result), Ok(())) => Ok(result),
-        (Err(err), _) => Err(err),
-        (Ok(_), Err(err)) => Err(err),
-    }
+    client.discard_on_error(close_result)?;
+    Ok(result)
 }
 
 async fn drain_simple_query(
@@ -1728,7 +1800,44 @@ fn civil_from_days(days_since_1970: i64) -> (i32, u32, u32) {
 mod tests {
     use super::*;
     use crate::models::types::{ConnectionConfig, DatabaseType};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    #[tokio::test]
+    async fn failed_query_closes_transport_without_draining_unread_results() {
+        let (transport, mut server) = tokio::io::duplex(64);
+        let mut connection = SqlServerConnection {
+            inner: Some(transport),
+        };
+
+        // 成功路径保持连接可用；模拟服务端随后仍有未消费的结果。
+        assert_eq!(connection.discard_on_error(Ok::<_, &str>(42)), Ok(42));
+        server.write_all(b"ok").await.unwrap();
+        let mut received = [0; 2];
+        connection.read_exact(&mut received).await.unwrap();
+        assert_eq!(&received, b"ok");
+        server.write_all(b"unread result rows").await.unwrap();
+
+        assert_eq!(
+            connection.discard_on_error(Err::<(), _>("查询结果超限")),
+            Err("查询结果超限")
+        );
+        // 外层连接仍存活，但对端已收到 EOF，无需继续发送/排空查询结果。
+        let mut byte = [0];
+        let read = tokio::time::timeout(Duration::from_secs(1), server.read(&mut byte))
+            .await
+            .expect("超限后应立即关闭底层传输")
+            .unwrap();
+        assert_eq!(read, 0);
+    }
+
+    #[tokio::test]
+    async fn discarded_connection_is_rejected_by_pool_checks() {
+        let manager = SqlServerConnectionManager::new(TiberiusConfig::new());
+        let mut connection = SqlServerConnection { inner: None };
+
+        assert!(manager.has_broken(&mut connection));
+        assert!(manager.is_valid(&mut connection).await.is_err());
+    }
     fn sample_config() -> ConnectionConfig {
         ConnectionConfig {
             id: None,
