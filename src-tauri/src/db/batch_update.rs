@@ -365,7 +365,12 @@ fn target_identity(dialect: BatchDialect, keys: &[String]) -> String {
     let columns: Vec<_> = keys.iter().map(|key| dialect.quote(key)).collect();
     match dialect {
         BatchDialect::Postgres => format!("json_build_array({})::text", columns.iter().map(|c| format!("{}::text", c)).collect::<Vec<_>>().join(", ")),
-        BatchDialect::MySql => format!("CAST(JSON_ARRAY({}) AS CHAR)", columns.iter().map(|c| format!("HEX(CAST({} AS BINARY))", c)).collect::<Vec<_>>().join(", ")),
+        BatchDialect::MySql => {
+            // 兼容不支持 JSON_ARRAY 的服务器；HEX 不含分号，复合键边界不会混淆。
+            // 显式区分 NULL 与空值，也避免 CONCAT 因 NULL 参数返回 NULL。
+            let parts = columns.iter().map(|c| format!("CASE WHEN {0} IS NULL THEN 'N;' ELSE CONCAT('V', HEX(CAST({0} AS BINARY)), ';') END", c)).collect::<Vec<_>>();
+            format!("CONCAT({})", parts.join(", "))
+        }
         BatchDialect::Sqlite => columns.iter().map(|c| format!("typeof({0}) || ':' || CASE WHEN typeof({0}) IN ('text', 'blob') THEN hex({0}) ELSE quote({0}) END", c)).collect::<Vec<_>>().join(" || ';' || "),
         BatchDialect::SqlServer => {
             let parts = columns.iter().map(|c| format!("CASE WHEN {0} IS NULL THEN 'N;' ELSE CONCAT('V', CONVERT(varchar(max), CONVERT(varbinary(max), {0}), 2), ';') END", c)).collect::<Vec<_>>();
@@ -570,5 +575,89 @@ mod tests {
         assert_eq!(statements.len(), 1);
         assert!(statements[0].sql.contains("JOIN (SELECT DISTINCT"));
         assert!(statements[0].sql.contains("<=>"));
+    }
+
+    #[test]
+    fn mysql_batch_validation_supports_servers_without_json_functions() {
+        let statements = build_batch_update_statements(
+            BatchDialect::MySql,
+            "legacy",
+            "items",
+            &["id".into()],
+            &[row(json!(1), &[("name", json!("after"))])],
+        )
+        .unwrap();
+
+        assert_eq!(
+            statements[0].validation_sql,
+            "SELECT CONCAT(CASE WHEN `id` IS NULL THEN 'N;' ELSE CONCAT('V', HEX(CAST(`id` AS BINARY)), ';') END) AS batch_identity, (CASE WHEN `id` = ? THEN 1 ELSE 0 END) AS batch_matches FROM `legacy`.`items` WHERE (`id` = ?) FOR UPDATE"
+        );
+        assert_eq!(statements[0].validation_params, vec![json!(1), json!(1)]);
+    }
+
+    #[test]
+    fn mysql_batch_validation_encodes_each_composite_key_and_quotes_identifiers() {
+        let statements = build_batch_update_statements(
+            BatchDialect::MySql,
+            "legacy",
+            "items",
+            &["tenant`key".into(), "id".into()],
+            &[RowUpdate {
+                primary_keys: HashMap::from([
+                    ("tenant`key".into(), JsonValue::Null),
+                    ("id".into(), json!("")),
+                ]),
+                updates: HashMap::from([("name".into(), json!("after"))]),
+            }],
+        )
+        .unwrap();
+
+        assert_eq!(
+            statements[0].validation_sql,
+            "SELECT CONCAT(CASE WHEN `tenant``key` IS NULL THEN 'N;' ELSE CONCAT('V', HEX(CAST(`tenant``key` AS BINARY)), ';') END, CASE WHEN `id` IS NULL THEN 'N;' ELSE CONCAT('V', HEX(CAST(`id` AS BINARY)), ';') END) AS batch_identity, (CASE WHEN `tenant``key` IS NULL AND `id` = ? THEN 1 ELSE 0 END) AS batch_matches FROM `legacy`.`items` WHERE (`tenant``key` IS NULL AND `id` = ?) FOR UPDATE"
+        );
+        assert_eq!(statements[0].validation_params, vec![json!(""), json!("")]);
+    }
+
+    #[tokio::test]
+    #[ignore = "需要 DB_CONNECT_TEST_MYSQL_URL 指向隔离测试数据库"]
+    async fn mysql_batch_live_identity_distinguishes_null_empty_and_composite_boundaries() {
+        use mysql_async::prelude::Queryable;
+
+        let url = std::env::var("DB_CONNECT_TEST_MYSQL_URL").expect("isolated MySQL URL");
+        let pool = mysql_async::Pool::new(mysql_async::Opts::from_url(&url).unwrap());
+        let mut conn = pool.get_conn().await.unwrap();
+        let identity = target_identity(BatchDialect::MySql, &["a".into(), "b".into()]);
+        // 一次查询覆盖 NULL、空串、复合键边界、分隔符、内嵌 NUL 和非 UTF-8 字节。
+        let identities: Vec<String> = conn
+            .query(format!(
+                "SELECT {identity} FROM (\
+                 SELECT 1 AS n, NULL AS a, X'' AS b \
+                 UNION ALL SELECT 2, X'', NULL \
+                 UNION ALL SELECT 3, X'', X'' \
+                 UNION ALL SELECT 4, X'61', X'6263' \
+                 UNION ALL SELECT 5, X'6162', X'63' \
+                 UNION ALL SELECT 6, X'3B', X'4E3B563B' \
+                 UNION ALL SELECT 7, X'610062', X'FF' \
+                 UNION ALL SELECT 8, X'610063', X'FF'\
+                 ) AS fixtures ORDER BY n"
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            identities,
+            vec![
+                "N;V;",
+                "V;N;",
+                "V;V;",
+                "V61;V6263;",
+                "V6162;V63;",
+                "V3B;V4E3B563B;",
+                "V610062;VFF;",
+                "V610063;VFF;",
+            ]
+        );
+        drop(conn);
+        pool.disconnect().await.unwrap();
     }
 }
