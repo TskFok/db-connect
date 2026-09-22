@@ -13,26 +13,6 @@ pub fn esc_str(value: &str) -> String {
     MYSQL_DIALECT.string_literal(value)
 }
 
-pub fn mysql_paginated_select(
-    columns_sql: &str,
-    schema: &str,
-    table: &str,
-    where_sql: &str,
-    order_sql: &str,
-    limit: u64,
-    offset: u64,
-) -> String {
-    MYSQL_DIALECT.paginated_select(
-        columns_sql,
-        schema,
-        table,
-        where_sql,
-        order_sql,
-        limit,
-        offset,
-    )
-}
-
 pub fn mysql_count_query(schema: &str, table: &str, where_sql: &str) -> String {
     MYSQL_DIALECT.count_query(schema, table, where_sql)
 }
@@ -49,26 +29,6 @@ pub fn pg_id(name: &str) -> String {
 /// 因为 PostgreSQL 默认 `standard_conforming_strings = on`）。
 pub fn pg_str(value: &str) -> String {
     POSTGRES_DIALECT.string_literal(value)
-}
-
-pub fn postgres_paginated_select(
-    columns_sql: &str,
-    schema: &str,
-    table: &str,
-    where_sql: &str,
-    order_sql: &str,
-    limit: u64,
-    offset: u64,
-) -> String {
-    POSTGRES_DIALECT.paginated_select(
-        columns_sql,
-        schema,
-        table,
-        where_sql,
-        order_sql,
-        limit,
-        offset,
-    )
 }
 
 pub fn postgres_count_query(schema: &str, table: &str, where_sql: &str) -> String {
@@ -397,10 +357,6 @@ mod tests {
         assert_eq!(dialect.identifier("my`table"), "`my``table`");
         assert_eq!(dialect.string_literal("it's"), "'it''s'");
         assert_eq!(dialect.table_ref("app`db", "users"), "`app``db`.`users`");
-        assert_eq!(
-            dialect.paginated_select("*", "app", "users", "", " ORDER BY `id` DESC", 50, 100),
-            "SELECT * FROM `app`.`users` ORDER BY `id` DESC LIMIT 50 OFFSET 100"
-        );
         assert_eq!(
             dialect.count_query("app", "users", " WHERE `name` = 'a'"),
             "SELECT COUNT(*) as cnt FROM `app`.`users` WHERE `name` = 'a'"

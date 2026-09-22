@@ -703,6 +703,40 @@ pub struct QueryResult {
     pub execution_time_ms: u64,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct TablePageNavigation {
+    pub direction: String,
+    pub cursor: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TablePagination {
+    pub mode: String,
+    pub sort_column: String,
+    pub sort_order: String,
+    pub next_cursor: Option<String>,
+    pub previous_cursor: Option<String>,
+}
+
+/// 仅扩展表浏览接口，SQL 编辑器及完整行查询继续使用 QueryResult。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TablePageResult {
+    #[serde(flatten)]
+    pub result: QueryResult,
+    pub pagination: Option<TablePagination>,
+    pub executed_sql: Option<String>,
+}
+
+impl From<QueryResult> for TablePageResult {
+    fn from(result: QueryResult) -> Self {
+        Self {
+            result,
+            pagination: None,
+            executed_sql: None,
+        }
+    }
+}
+
 /// 当前连接会话信息（便于排障）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionInfo {

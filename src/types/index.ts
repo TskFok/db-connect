@@ -571,6 +571,26 @@ export interface QueryResult {
   execution_time_ms: number;
 }
 
+/** 表浏览导航；游标由后端生成，前端不解码或重建边界值。 */
+export interface TablePageNavigation {
+  direction: "next" | "previous";
+  cursor: string;
+}
+
+export interface TablePageInfo {
+  mode: "offset" | "keyset";
+  sort_column: string;
+  sort_order: "ASC" | "DESC";
+  next_cursor: string | null;
+  previous_cursor: string | null;
+}
+
+/** 完整行加载继续使用 QueryResult，只有表浏览携带分页上下文。 */
+export interface TablePageResult extends QueryResult {
+  pagination?: TablePageInfo | null;
+  executed_sql?: string | null;
+}
+
 /** SQL 执行结果 */
 export interface SqlExecuteResult {
   /** 结果类型: "select" | "modify" | "error" */

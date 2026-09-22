@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import * as api from "../services/tauriCommands";
 import type { TableSortField } from "../services/tauriCommands";
+import type {
+  TablePageInfo,
+  TablePageNavigation,
+  TablePageResult,
+} from "../types";
 import type { WhereFilterConfig } from "../utils/whereFilterUtils";
 
 export type { TableSortField };
@@ -9,6 +14,15 @@ export type { TableSortField };
 export interface TableScrollPosition {
   top: number;
   left: number;
+}
+
+interface LoadedPageContext {
+  page: number;
+  queryKey: string;
+}
+
+interface PendingPageNavigation extends LoadedPageContext {
+  navigation: TablePageNavigation;
 }
 
 /** 单表的快照数据，用于切换时恢复 */
@@ -28,6 +42,9 @@ interface TableDataSnapshot {
   lastSelectColumns: string[] | undefined;
   /** 增删改后总数可能已过期，需手动刷新分页 */
   totalCountStale?: boolean;
+  pagination?: TablePageInfo | null;
+  executedSql?: string | null;
+  loadedPageContext?: LoadedPageContext | null;
 }
 
 /** 一条待提交的单元格修改记录 */
@@ -83,6 +100,13 @@ interface TableDataState {
   dataError: string | null;
   /** 最近一次查询耗时 (毫秒) */
   executionTime: number | null;
+  /** 与成功返回的行一起更新的分页边界和实际 SQL */
+  pagination: TablePageInfo | null;
+  executedSql: string | null;
+  /** 仅成功加载页面可以作为相邻导航的起点 */
+  _loadedPageContext: LoadedPageContext | null;
+  /** setPage 创建、loadData 消费的一次性导航，刷新不会重复使用 */
+  _pendingNavigation: PendingPageNavigation | null;
   /** 最近一次查询使用的 selectColumns（用于后续 reload 保持一致） */
   lastSelectColumns: string[] | undefined;
   /** 筛选触发计数器：每次 setWhereClause 调用时递增，确保相同条件也能触发重新加载 */
@@ -90,7 +114,12 @@ interface TableDataState {
 
   // Actions
   /** 加载表数据，selectColumns 为可见列列表（后端自动合并主键列），为空时 SELECT * */
-  loadData: (connId: string, database: string, table: string, selectColumns?: string[]) => Promise<void>;
+  loadData: (
+    connId: string,
+    database: string,
+    table: string,
+    selectColumns?: string[]
+  ) => Promise<void>;
   /** 仅重新统计总行数（刷新分页），不重新加载当前页数据 */
   refreshPagination: (
     connId: string,
@@ -98,13 +127,16 @@ interface TableDataState {
     table: string
   ) => Promise<void>;
   /** 切换页码 */
-  setPage: (page: number) => void;
+  setPage: (page: number, direction?: "next" | "previous") => void;
   /** 切换每页大小 */
   setPageSize: (size: number) => void;
   /**
    * 设置排序（单列表便捷方法，会覆盖多列排序）
    */
-  setSort: (column: string | undefined, order: "ASC" | "DESC" | undefined) => void;
+  setSort: (
+    column: string | undefined,
+    order: "ASC" | "DESC" | undefined
+  ) => void;
   /**
    * 表头排序交互：additive=false 时与原先单击一致（主序列循环 DESC→ASC→清除）；
    * additive=true（如按住 Shift）时在末尾追加次要排序键，或对已存在列在其位置上循环 DESC→ASC→移除该项。
@@ -132,7 +164,10 @@ interface TableDataState {
     connId: string,
     database: string,
     table: string,
-    rows: { primaryKeys: Record<string, unknown>; updates: Record<string, unknown> }[]
+    rows: {
+      primaryKeys: Record<string, unknown>;
+      updates: Record<string, unknown>;
+    }[]
   ) => Promise<void>;
   /** 插入新行 */
   insertRow: (
@@ -155,9 +190,17 @@ interface TableDataState {
   /**
    * TRUNCATE 等清空表数据后：清除该表 count 缓存；若当前数据视图正是此表则重新 loadData。
    */
-  afterTableDataCleared: (connId: string, database: string, table: string) => void;
+  afterTableDataCleared: (
+    connId: string,
+    database: string,
+    table: string
+  ) => void;
   /** 关闭表时从缓存移除 */
-  removeTableFromCache: (connId: string, database: string, table: string) => void;
+  removeTableFromCache: (
+    connId: string,
+    database: string,
+    table: string
+  ) => void;
   /** 连接断开时移除该连接下所有缓存，保留其他连接标签页内容 */
   removeConnectionCache: (connId: string) => void;
   /** 设置指定表的一条待提交修改 */
@@ -176,7 +219,11 @@ interface TableDataState {
     changeKey: string
   ) => void;
   /** 清空指定表的待提交修改 */
-  clearPendingChanges: (connId: string, database: string, table: string) => void;
+  clearPendingChanges: (
+    connId: string,
+    database: string,
+    table: string
+  ) => void;
   /** 获取指定表的待提交修改 Map */
   getPendingChangesForTable: (
     connId: string,
@@ -184,7 +231,12 @@ interface TableDataState {
     table: string
   ) => Map<string, PendingChange>;
   /** 更新指定表的行勾选缓存 */
-  setRowSelection: (connId: string, database: string, table: string, rowKeys: string[]) => void;
+  setRowSelection: (
+    connId: string,
+    database: string,
+    table: string,
+    rowKeys: string[]
+  ) => void;
   /** 清空指定表的行勾选缓存 */
   clearRowSelection: (connId: string, database: string, table: string) => void;
   /** 更新指定表的滚动位置 */
@@ -205,10 +257,38 @@ function countCacheKey(key: string, whereClause: string): string {
   return `${key}|${whereClause}`;
 }
 
+function pageQueryKey(
+  key: string,
+  params: Pick<TableDataSnapshot, "pageSize" | "sortFields" | "whereClause">,
+  selectColumns: string[] | undefined
+): string {
+  return JSON.stringify([
+    key,
+    params.pageSize,
+    params.sortFields,
+    params.whereClause,
+    selectColumns ?? null,
+  ]);
+}
+
+function clearPageContext() {
+  return {
+    pagination: null,
+    executedSql: null,
+    _loadedPageContext: null,
+    _pendingNavigation: null,
+  };
+}
+
 /** 重新加载某张表数据时分页/筛选参数：当前视图即该表时用全局状态，否则用该表快照（避免切换标签后误用其它表的 page/where） */
 type ReloadQueryParams = Pick<
   TableDataSnapshot,
-  "page" | "pageSize" | "sortFields" | "whereClause" | "filterRows" | "lastSelectColumns"
+  | "page"
+  | "pageSize"
+  | "sortFields"
+  | "whereClause"
+  | "filterRows"
+  | "lastSelectColumns"
 >;
 
 function getReloadQueryParams(
@@ -259,7 +339,7 @@ function applyCrudDataReload(
   get: () => TableDataState,
   key: string,
   rp: ReloadQueryParams,
-  result: { columns: string[]; rows: unknown[][]; execution_time_ms: number }
+  result: TablePageResult
 ) {
   const ccKey = countCacheKey(key, rp.whereClause);
   const prevTotal =
@@ -279,6 +359,12 @@ function applyCrudDataReload(
     executionTime: result.execution_time_ms,
     lastSelectColumns: rp.lastSelectColumns,
     totalCountStale: true,
+    pagination: result.pagination ?? null,
+    executedSql: result.executed_sql ?? null,
+    loadedPageContext: {
+      page: rp.page,
+      queryKey: pageQueryKey(key, rp, rp.lastSelectColumns),
+    },
   };
 
   set((s) => {
@@ -297,6 +383,10 @@ function applyCrudDataReload(
       dataLoading: false,
       dataError: null,
       totalCountStale: true,
+      pagination: snapshot.pagination ?? null,
+      executedSql: snapshot.executedSql ?? null,
+      _loadedPageContext: snapshot.loadedPageContext ?? null,
+      _pendingNavigation: null,
       tableDataCache: nextCache,
       countCache: nextCount,
     };
@@ -316,6 +406,13 @@ async function reloadAfterMutation(
   key: string
 ) {
   const rp = getReloadQueryParams(get, connId, database, table);
+  const isActive =
+    get().activeTableKey === key || get().activeTableKey === null;
+  const loadId = isActive ? ++_loadCounter : _loadCounter;
+  const sourceContext = isActive
+    ? get()._loadedPageContext
+    : get().tableDataCache[key]?.loadedPageContext;
+  if (isActive) set({ _pendingNavigation: null });
   const result = await api.queryTableData(
     connId,
     database,
@@ -327,6 +424,14 @@ async function reloadAfterMutation(
     rp.lastSelectColumns,
     true
   );
+  // 新的页面请求或查询条件优先；后台源表重载仍只更新其缓存。
+  const current = get();
+  if (current.activeTableKey === key || current.activeTableKey === null) {
+    if (_loadCounter !== loadId) return;
+  } else {
+    const cached = current.tableDataCache[key];
+    if (!cached || cached.loadedPageContext !== sourceContext) return;
+  }
   applyCrudDataReload(set, get, key, rp, result);
 }
 
@@ -341,6 +446,10 @@ const initialSlice = {
   filterRows: [] as WhereFilterConfig[],
   dataError: null as string | null,
   executionTime: null as number | null,
+  pagination: null as TablePageInfo | null,
+  executedSql: null as string | null,
+  _loadedPageContext: null as LoadedPageContext | null,
+  _pendingNavigation: null as PendingPageNavigation | null,
   lastSelectColumns: undefined as string[] | undefined,
   _filterTrigger: 0,
 };
@@ -359,12 +468,35 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
   totalCountLoading: false,
   totalCountStale: false,
 
-  loadData: async (connId: string, database: string, table: string, selectColumns?: string[]) => {
-    const { page, pageSize, sortFields, whereClause, countCache } = get();
+  loadData: async (
+    connId: string,
+    database: string,
+    table: string,
+    selectColumns?: string[]
+  ) => {
+    const {
+      page,
+      pageSize,
+      sortFields,
+      whereClause,
+      countCache,
+      _pendingNavigation,
+      filterRows,
+    } = get();
     const key = tableKey(connId, database, table);
     const ccKey = countCacheKey(key, whereClause);
     const cachedTotal = countCache[ccKey];
     const myLoadId = ++_loadCounter;
+    const queryKey = pageQueryKey(
+      key,
+      { pageSize, sortFields, whereClause },
+      selectColumns
+    );
+    const navigation =
+      _pendingNavigation?.page === page &&
+      _pendingNavigation.queryKey === queryKey
+        ? _pendingNavigation.navigation
+        : undefined;
 
     set({
       dataLoading: true,
@@ -372,13 +504,14 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
       dataError: null,
       lastSelectColumns: selectColumns,
       activeTableKey: key,
+      _pendingNavigation: null,
     });
 
     if (cachedTotal !== undefined) {
       set({ total: cachedTotal, totalCountLoading: false });
     }
 
-    const dataPromise = api.queryTableData(
+    const queryArgs = [
       connId,
       database,
       table,
@@ -387,20 +520,29 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
       sortFields.length > 0 ? sortFields : undefined,
       whereClause || undefined,
       selectColumns,
-      true
-    );
+      true,
+    ] as const;
+    const dataPromise = navigation
+      ? api.queryTableData(...queryArgs, navigation)
+      : api.queryTableData(...queryArgs);
 
     const countPromise =
       cachedTotal !== undefined
         ? Promise.resolve(cachedTotal)
-        : api.queryTableCount(connId, database, table, whereClause || undefined);
+        : api.queryTableCount(
+            connId,
+            database,
+            table,
+            whereClause || undefined
+          );
 
     const isLatest = () => _loadCounter === myLoadId;
 
     dataPromise
       .then((result) => {
         if (!isLatest()) return;
-        const totalForSnapshot = cachedTotal ?? 0;
+        const totalForSnapshot = get().countCache[ccKey] ?? cachedTotal ?? 0;
+        const loadedPageContext = { page, queryKey };
         const snapshot: TableDataSnapshot = {
           columns: result.columns,
           rows: result.rows,
@@ -409,16 +551,22 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
           pageSize,
           sortFields,
           whereClause,
-          filterRows: get().filterRows,
+          filterRows,
           dataError: null,
           executionTime: result.execution_time_ms,
           lastSelectColumns: selectColumns,
+          pagination: result.pagination ?? null,
+          executedSql: result.executed_sql ?? null,
+          loadedPageContext,
         };
         set((s) => ({
           columns: result.columns,
           rows: result.rows,
           executionTime: result.execution_time_ms,
           dataLoading: false,
+          pagination: result.pagination ?? null,
+          executedSql: result.executed_sql ?? null,
+          _loadedPageContext: loadedPageContext,
           tableDataCache: { ...s.tableDataCache, [key]: snapshot },
         }));
       })
@@ -442,7 +590,11 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
           tableDataCache: s.tableDataCache[key]
             ? {
                 ...s.tableDataCache,
-                [key]: { ...s.tableDataCache[key], total, totalCountStale: false },
+                [key]: {
+                  ...s.tableDataCache[key],
+                  total,
+                  totalCountStale: false,
+                },
               }
             : s.tableDataCache,
         }));
@@ -453,7 +605,11 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
       });
   },
 
-  refreshPagination: async (connId: string, database: string, table: string) => {
+  refreshPagination: async (
+    connId: string,
+    database: string,
+    table: string
+  ) => {
     const key = tableKey(connId, database, table);
     const { whereClause, activeTableKey } = get();
     const ccKey = countCacheKey(key, whereClause);
@@ -474,19 +630,24 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
         const nextCount = { ...s.countCache, [ccKey]: total };
         const cached = s.tableDataCache[key];
         const nextTableCache =
-          cached != null
+          cached != null && cached.whereClause === whereClause
             ? {
                 ...s.tableDataCache,
                 [key]: { ...cached, total, totalCountStale: false },
               }
             : s.tableDataCache;
 
-        if (!isActive) {
+        if (
+          !isActive ||
+          s.activeTableKey !== key ||
+          s.whereClause !== whereClause
+        ) {
           return { countCache: nextCount, tableDataCache: nextTableCache };
         }
 
         const maxPage = Math.max(1, Math.ceil(total / s.pageSize));
         const nextPage = s.page > maxPage ? maxPage : s.page;
+        if (nextPage !== s.page) ++_loadCounter;
 
         return {
           total,
@@ -495,34 +656,66 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
           countCache: nextCount,
           tableDataCache: nextTableCache,
           page: nextPage,
+          ...(nextPage !== s.page ? clearPageContext() : {}),
         };
       });
     } catch (e) {
       console.error("刷新分页失败:", e);
-      if (isActive) {
+      if (
+        isActive &&
+        get().activeTableKey === key &&
+        get().whereClause === whereClause
+      ) {
         set({ totalCountLoading: false });
       }
       throw e;
     }
   },
 
-  setPage: (page: number) => {
-    set({ page });
+  setPage: (page: number, direction) => {
+    const s = get();
+    if (page === s.page) return;
+    const loaded = s._loadedPageContext;
+    const queryKey = pageQueryKey(
+      s.activeTableKey ?? "",
+      s,
+      s.lastSelectColumns
+    );
+    const adjacent =
+      direction === "next" ? page === s.page + 1 : page === s.page - 1;
+    const cursor =
+      direction === "next"
+        ? s.pagination?.next_cursor
+        : s.pagination?.previous_cursor;
+    const navigation =
+      direction &&
+      adjacent &&
+      !s.dataLoading &&
+      loaded?.page === s.page &&
+      loaded.queryKey === queryKey &&
+      cursor
+        ? { page, queryKey, navigation: { direction, cursor } }
+        : null;
+    ++_loadCounter;
+    set({ page, _pendingNavigation: navigation });
   },
 
   setPageSize: (size: number) => {
-    set({ pageSize: size, page: 1 });
+    ++_loadCounter;
+    set({ pageSize: size, page: 1, ...clearPageContext() });
   },
 
   setSort: (column, order) => {
+    ++_loadCounter;
     if (!column || !order) {
-      set({ sortFields: [], page: 1 });
+      set({ sortFields: [], page: 1, ...clearPageContext() });
     } else {
-      set({ sortFields: [{ column, order }], page: 1 });
+      set({ sortFields: [{ column, order }], page: 1, ...clearPageContext() });
     }
   },
 
   toggleSortColumn: (column: string, additive: boolean) => {
+    ++_loadCounter;
     set((s) => {
       const prev = s.sortFields;
       let next: TableSortField[];
@@ -533,7 +726,9 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
         } else {
           const cur = prev[idx]!;
           if (cur.order === "DESC") {
-            next = prev.map((f, i) => (i === idx ? { ...f, order: "ASC" as const } : f));
+            next = prev.map((f, i) =>
+              i === idx ? { ...f, order: "ASC" as const } : f
+            );
           } else {
             next = prev.filter((_, i) => i !== idx);
           }
@@ -548,7 +743,7 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
           next = [];
         }
       }
-      return { sortFields: next, page: 1 };
+      return { sortFields: next, page: 1, ...clearPageContext() };
     });
   },
 
@@ -556,7 +751,8 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
     set((s) => {
       const next = s.sortFields.filter((f) => f.column !== column);
       if (next.length === s.sortFields.length) return {};
-      return { sortFields: next, page: 1 };
+      ++_loadCounter;
+      return { sortFields: next, page: 1, ...clearPageContext() };
     });
   },
 
@@ -564,20 +760,24 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
     set((s) => {
       const prev = s.sortFields;
       const j = index + direction;
-      if (index < 0 || index >= prev.length || j < 0 || j >= prev.length) return {};
+      if (index < 0 || index >= prev.length || j < 0 || j >= prev.length)
+        return {};
+      ++_loadCounter;
       const next = [...prev];
       [next[index], next[j]] = [next[j]!, next[index]!];
-      return { sortFields: next, page: 1 };
+      return { sortFields: next, page: 1, ...clearPageContext() };
     });
   },
 
   setWhereClause: (clause: string, filterRows?: WhereFilterConfig[]) => {
+    ++_loadCounter;
     set((s) => ({
       whereClause: clause,
       page: 1,
       filterRows:
         filterRows !== undefined ? filterRows : clause ? s.filterRows : [],
       _filterTrigger: s._filterTrigger + 1,
+      ...clearPageContext(),
     }));
   },
 
@@ -656,6 +856,7 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
   },
 
   reset: () => {
+    ++_loadCounter;
     set({
       activeTableKey: null,
       tableDataCache: {},
@@ -673,12 +874,20 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
   switchToTable: (connId: string, database: string, table: string) => {
     const key = tableKey(connId, database, table);
     const { activeTableKey, tableDataCache } = get();
+    if (activeTableKey !== key) ++_loadCounter;
+    const loaded = get()._loadedPageContext;
+    // 尚未完成的翻页不能把新页码与旧行一起写入切表快照。
+    const snapshotPage =
+      loaded?.queryKey ===
+      pageQueryKey(activeTableKey ?? "", get(), get().lastSelectColumns)
+        ? loaded.page
+        : get().page;
 
     const snapshot: TableDataSnapshot = {
       columns: get().columns,
       rows: get().rows,
       total: get().total,
-      page: get().page,
+      page: snapshotPage,
       pageSize: get().pageSize,
       sortFields: get().sortFields,
       whereClause: get().whereClause,
@@ -687,10 +896,17 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
       executionTime: get().executionTime,
       lastSelectColumns: get().lastSelectColumns,
       totalCountStale: get().totalCountStale,
+      pagination: get().pagination,
+      executedSql: get().executedSql,
+      loadedPageContext: get()._loadedPageContext,
     };
 
     let newCache = tableDataCache;
-    if (activeTableKey && activeTableKey !== key && (get().rows.length > 0 || get().columns.length > 0)) {
+    if (
+      activeTableKey &&
+      activeTableKey !== key &&
+      (get().rows.length > 0 || get().columns.length > 0)
+    ) {
       newCache = { ...tableDataCache, [activeTableKey]: snapshot };
     }
 
@@ -714,7 +930,14 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
         dataLoading: false,
         totalCountLoading: false,
         totalCountStale: cached.totalCountStale ?? false,
-        countCache: cached.total > 0 ? { ...s.countCache, [ccKey]: cached.total } : s.countCache,
+        pagination: cached.pagination ?? null,
+        executedSql: cached.executedSql ?? null,
+        _loadedPageContext: cached.loadedPageContext ?? null,
+        _pendingNavigation: null,
+        countCache:
+          cached.total > 0
+            ? { ...s.countCache, [ccKey]: cached.total }
+            : s.countCache,
       }));
       return true;
     }
@@ -753,6 +976,8 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
     });
     const { activeTableKey, lastSelectColumns } = get();
     if (activeTableKey === tk) {
+      ++_loadCounter;
+      set(clearPageContext());
       void get().loadData(connId, database, table, lastSelectColumns);
     }
   },
@@ -787,6 +1012,7 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
       countCache: newCountCache,
     });
     if (activeTableKey === key) {
+      ++_loadCounter;
       set({ activeTableKey: null, ...initialSlice, dataLoading: false });
     }
   },
@@ -794,18 +1020,25 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
   removeConnectionCache: (connId: string) => {
     const prefix = `${connId}|`;
     const { activeTableKey } = get();
+    if (activeTableKey?.startsWith(prefix)) ++_loadCounter;
     set((s) => {
       const nextTableCache = Object.fromEntries(
         Object.entries(s.tableDataCache).filter(([k]) => !k.startsWith(prefix))
       );
       const nextPendingChangesCache = Object.fromEntries(
-        Object.entries(s.pendingChangesCache).filter(([k]) => !k.startsWith(prefix))
+        Object.entries(s.pendingChangesCache).filter(
+          ([k]) => !k.startsWith(prefix)
+        )
       );
       const nextRowSelectionCache = Object.fromEntries(
-        Object.entries(s.rowSelectionCache).filter(([k]) => !k.startsWith(prefix))
+        Object.entries(s.rowSelectionCache).filter(
+          ([k]) => !k.startsWith(prefix)
+        )
       );
       const nextScrollPositionCache = Object.fromEntries(
-        Object.entries(s.scrollPositionCache).filter(([k]) => !k.startsWith(prefix))
+        Object.entries(s.scrollPositionCache).filter(
+          ([k]) => !k.startsWith(prefix)
+        )
       );
       const nextCountCache = Object.fromEntries(
         Object.entries(s.countCache).filter(([k]) => !k.startsWith(prefix))

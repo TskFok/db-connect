@@ -23,28 +23,6 @@ impl MySqlDialect {
         format!("{}.{}", self.identifier(schema), self.identifier(table))
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn paginated_select(
-        &self,
-        columns_sql: &str,
-        schema: &str,
-        table: &str,
-        where_sql: &str,
-        order_sql: &str,
-        limit: u64,
-        offset: u64,
-    ) -> String {
-        format!(
-            "SELECT {} FROM {}{}{} LIMIT {} OFFSET {}",
-            columns_sql,
-            self.table_ref(schema, table),
-            where_sql,
-            order_sql,
-            limit,
-            offset
-        )
-    }
-
     pub fn count_query(&self, schema: &str, table: &str, where_sql: &str) -> String {
         format!(
             "SELECT COUNT(*) as cnt FROM {}{}",
@@ -88,28 +66,6 @@ impl PostgresDialect {
 
     pub fn table_ref(&self, schema: &str, table: &str) -> String {
         format!("{}.{}", self.identifier(schema), self.identifier(table))
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn paginated_select(
-        &self,
-        columns_sql: &str,
-        schema: &str,
-        table: &str,
-        where_sql: &str,
-        order_sql: &str,
-        limit: u64,
-        offset: u64,
-    ) -> String {
-        format!(
-            "SELECT {} FROM {}{}{} LIMIT {} OFFSET {}",
-            columns_sql,
-            self.table_ref(schema, table),
-            where_sql,
-            order_sql,
-            limit,
-            offset
-        )
     }
 
     pub fn count_query(&self, schema: &str, table: &str, where_sql: &str) -> String {
@@ -721,22 +677,6 @@ mod tests {
         assert_eq!(
             POSTGRES_DIALECT.table_ref("public", "users"),
             "\"public\".\"users\""
-        );
-    }
-
-    #[test]
-    fn postgres_paginated_select_uses_limit_offset() {
-        assert_eq!(
-            POSTGRES_DIALECT.paginated_select(
-                "\"id\", \"name\"",
-                "public",
-                "users",
-                " WHERE active = true",
-                " ORDER BY \"id\" DESC",
-                20,
-                40,
-            ),
-            "SELECT \"id\", \"name\" FROM \"public\".\"users\" WHERE active = true ORDER BY \"id\" DESC LIMIT 20 OFFSET 40"
         );
     }
 

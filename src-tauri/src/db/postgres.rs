@@ -2,8 +2,8 @@ use crate::db::batch_update::{build_batch_update_statements, BatchDialect};
 use crate::db::postgres_error::format_pg_error;
 use crate::db::result_budget::ResultBudget;
 use crate::db::sql_utils::{
-    pg_id, pg_str, postgres_count_query, postgres_paginated_select,
-    postgres_sql_editor_allowed_on_read_only_connection, validate_where_clause,
+    pg_id, pg_str, postgres_count_query, postgres_sql_editor_allowed_on_read_only_connection,
+    validate_where_clause,
 };
 
 /// 对外暴露 PostgreSQL 字符串字面值转义，供 `postgres_ddl` 等同模块复用。
@@ -11,8 +11,13 @@ use crate::db::sql_utils::{
 pub fn esc_pg_str_external(value: &str) -> String {
     pg_str(value)
 }
+use crate::db::table_pagination::{
+    cached_metadata_for_navigation, remember_metadata, ColumnMetadata, IntegerKind, IntegerValue,
+    PageContext, PagePlan, TableMetadata,
+};
 use crate::models::types::{
-    ColumnInfo, ConnectionConfig, QueryResult, SqlExecuteResult, TableInfo,
+    ColumnInfo, ConnectionConfig, QueryResult, SqlExecuteResult, TableInfo, TablePageNavigation,
+    TablePageResult,
 };
 use bytes::BytesMut;
 use deadpool_postgres::{Config as PgPoolConfig, Pool as PgPool, PoolConfig, Runtime, SslMode};
@@ -396,22 +401,68 @@ pub async fn query_table_count(
     Ok(i64_to_u64(Some(row.get::<_, i64>(0))).unwrap_or(0))
 }
 
+/// 从系统目录读取真实约束，而不是列展示标记；普通继承父表的子表可能重复主键，禁用游标。
+async fn fetch_table_page_metadata(
+    client: &deadpool_postgres::Client,
+    schema: &str,
+    table: &str,
+) -> Result<TableMetadata, String> {
+    let rows = client.query(
+        "SELECT a.attname, ty.typname, tn.nspname AS type_schema, \
+         CASE WHEN ix.indisvalid AND ix.indisready THEN array_position(pk.conkey, a.attnum) ELSE NULL END AS primary_position, \
+         c.relkind IN ('r', 'p') AND (c.relkind = 'p' OR NOT EXISTS (SELECT 1 FROM pg_catalog.pg_inherits inh WHERE inh.inhparent = c.oid)) AS trusted \
+         FROM pg_catalog.pg_class c \
+         JOIN pg_catalog.pg_namespace ns ON ns.oid = c.relnamespace \
+         JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped \
+         JOIN pg_catalog.pg_type ty ON ty.oid = a.atttypid \
+         JOIN pg_catalog.pg_namespace tn ON tn.oid = ty.typnamespace \
+         LEFT JOIN pg_catalog.pg_constraint pk ON pk.conrelid = c.oid AND pk.contype = 'p' AND pk.convalidated \
+         LEFT JOIN pg_catalog.pg_index ix ON ix.indexrelid = pk.conindid \
+         WHERE ns.nspname = $1 AND c.relname = $2 ORDER BY a.attnum",
+        &[&schema, &table],
+    ).await.map_err(|e| format!("查询表分页元数据失败: {}", e))?;
+    let trusted = rows.first().is_some_and(|r| r.get::<_, bool>("trusted"));
+    let columns = rows
+        .iter()
+        .map(|row| {
+            let type_name: String = row.get("typname");
+            let type_schema: String = row.get("type_schema");
+            ColumnMetadata {
+                name: row.get("attname"),
+                primary_position: row.get("primary_position"),
+                integer_kind: (type_schema == "pg_catalog"
+                    && matches!(type_name.as_str(), "int2" | "int4" | "int8"))
+                .then_some(IntegerKind::Signed),
+            }
+        })
+        .collect();
+    Ok(TableMetadata::new(columns, trusted))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn query_table_data(
     pool: &PgPool,
     schema: &str,
     table: &str,
     page: u32,
-    page_size: u32,
+    _page_size: u32,
     order_sql: String,
     where_clause: Option<String>,
     select_columns: Option<Vec<String>>,
     skip_count: Option<bool>,
-) -> Result<QueryResult, String> {
+    context: PageContext,
+    navigation: Option<TablePageNavigation>,
+) -> Result<TablePageResult, String> {
     let start = Instant::now();
     let client = get_client_with_retry(pool).await?;
     let where_sql = build_where_sql(&where_clause)?;
-
+    let metadata = match cached_metadata_for_navigation(&context, page, navigation.as_ref()) {
+        Some(metadata) => metadata,
+        None => remember_metadata(
+            &context,
+            fetch_table_page_metadata(&client, schema, table).await?,
+        ),
+    };
     let total = if skip_count == Some(true) {
         0
     } else {
@@ -422,53 +473,68 @@ pub async fn query_table_data(
             .map_err(|e| format!("查询总数失败: {}", e))?;
         i64_to_u64(Some(row.get::<_, i64>(0))).unwrap_or(0)
     };
-
-    let select_part = match &select_columns {
-        Some(cols) if !cols.is_empty() => {
-            let pk_cols = fetch_primary_keys_on_client(&client, schema, table).await?;
-            let mut merged = cols.clone();
-            for pk in pk_cols {
-                if !merged.iter().any(|c| c == &pk) {
-                    merged.push(pk);
-                }
-            }
-            merged
-                .iter()
-                .map(|c| pg_id(c))
-                .collect::<Vec<_>>()
-                .join(", ")
-        }
-        _ => "*".to_string(),
-    };
-
-    let offset = page.saturating_sub(1) * page_size;
-    let data_sql = postgres_paginated_select(
+    let selected_columns = metadata.selected_columns(&select_columns);
+    let select_part = selected_columns
+        .as_ref()
+        .map(|cols| cols.iter().map(|c| pg_id(c)).collect::<Vec<_>>().join(", "))
+        .unwrap_or_else(|| "*".into());
+    let plan = PagePlan::new(context, metadata.clone(), page, navigation.as_ref());
+    let quoted_key = plan.key_column.as_deref().map(pg_id).unwrap_or_default();
+    let data_sql = plan.sql(
         &select_part,
-        schema,
-        table,
-        &where_sql,
+        &format!("{}.{}", pg_id(schema), pg_id(table)),
+        &quoted_key,
         &order_sql,
-        page_size as u64,
-        offset as u64,
     );
+    // 保留 simple_query 的任意 PostgreSQL 类型文本展示；边界只能来自严格解析后的 i64，
+    // 再输出标准十进制整数，绝不将客户端游标或未经校验的文本拼入 SQL。
     let messages = client
         .simple_query(&data_sql)
         .await
         .map_err(|e| format!("查询数据失败: {}", e))?;
-    let (mut columns, rows) = simple_messages_to_columns_and_json(&messages)?;
-
-    if columns.is_empty() && rows.is_empty() {
-        columns = match &select_columns {
-            Some(cols) if !cols.is_empty() => cols.clone(),
-            _ => fetch_column_names_on_client(&client, schema, table).await?,
-        };
+    let raw_rows: Vec<_> = messages
+        .iter()
+        .filter_map(|message| match message {
+            SimpleQueryMessage::Row(row) => Some(row),
+            _ => None,
+        })
+        .collect();
+    let key_index = plan.key_column.as_ref().and_then(|key| {
+        raw_rows
+            .first()?
+            .columns()
+            .iter()
+            .position(|column| column.name() == key)
+    });
+    let boundary = |row: &&tokio_postgres::SimpleQueryRow| {
+        key_index
+            .and_then(|index| row.get(index))
+            .and_then(IntegerValue::from_postgres)
+    };
+    let (mut first, mut last) = (
+        raw_rows.first().and_then(boundary),
+        raw_rows.last().and_then(boundary),
+    );
+    if plan.reverse {
+        std::mem::swap(&mut first, &mut last);
     }
-
-    Ok(QueryResult {
-        columns,
-        rows,
-        total,
-        execution_time_ms: start.elapsed().as_millis() as u64,
+    let pagination = plan.pagination(first, last, raw_rows.len());
+    let (mut columns, mut rows) = simple_messages_to_columns_and_json(&messages)?;
+    if plan.reverse {
+        rows.reverse();
+    }
+    if columns.is_empty() && rows.is_empty() {
+        columns = selected_columns.unwrap_or(metadata.columns);
+    }
+    Ok(TablePageResult {
+        result: QueryResult {
+            columns,
+            rows,
+            total,
+            execution_time_ms: start.elapsed().as_millis() as u64,
+        },
+        pagination,
+        executed_sql: Some(data_sql),
     })
 }
 
@@ -680,24 +746,6 @@ pub async fn fetch_grant_write_capable(client: &deadpool_postgres::Client) -> bo
         Ok(row) => row.get::<_, bool>(0),
         Err(_) => true,
     }
-}
-
-async fn fetch_column_names_on_client(
-    client: &deadpool_postgres::Client,
-    schema: &str,
-    table: &str,
-) -> Result<Vec<String>, String> {
-    let rows = client
-        .query(
-            "SELECT column_name \
-             FROM information_schema.columns \
-             WHERE table_schema = $1 AND table_name = $2 \
-             ORDER BY ordinal_position",
-            &[&schema, &table],
-        )
-        .await
-        .map_err(|e| format!("获取列信息失败: {}", e))?;
-    Ok(rows.iter().map(|r| r.get::<_, String>(0)).collect())
 }
 
 pub use crate::db::batch_update::RowUpdate as PgRowUpdate;

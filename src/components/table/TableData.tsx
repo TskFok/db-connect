@@ -5,7 +5,11 @@ import {
   useRef,
   useMemo,
   useLayoutEffect,
+  cloneElement,
+  isValidElement,
+  type ReactElement,
   type MouseEvent as ReactMouseEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import {
   Table,
@@ -226,6 +230,7 @@ export function TableData() {
     totalCountStale,
     dataError,
     executionTime,
+    executedSql,
     activeTableKey,
     pendingChangesCache,
     rowSelectionCache,
@@ -245,6 +250,7 @@ export function TableData() {
       totalCountStale: s.totalCountStale,
       dataError: s.dataError,
       executionTime: s.executionTime,
+      executedSql: s.executedSql,
       activeTableKey: s.activeTableKey,
       pendingChangesCache: s.pendingChangesCache,
       rowSelectionCache: s.rowSelectionCache,
@@ -334,8 +340,7 @@ export function TableData() {
   const dataEditingAllowed =
     baseDataEditingAllowed &&
     (!requiresPrimaryKeyForDataEditing || hasRowLocatorForEdits);
-  const insertAllowed =
-    dataEditingAllowed || (isClickHouse && !clientReadOnly);
+  const insertAllowed = dataEditingAllowed || (isClickHouse && !clientReadOnly);
   const noPrimaryKeyDisabledReason =
     currentDatabaseType === "sqlserver"
       ? "该表没有主键或非过滤唯一索引，无法定位行；请改用 SQL 编辑器或为表添加主键/唯一索引"
@@ -363,7 +368,8 @@ export function TableData() {
     connId && database && table ? `${connId}|${database}|${table}` : "";
   // 只在切表时读取初始位置，不订阅滚动更新，避免每次滚动重渲染整个数据面板。
   const initialScrollPosition = useMemo(
-    () => useTableDataStore.getState().scrollPositionCache[rowSelectionScopeKey],
+    () =>
+      useTableDataStore.getState().scrollPositionCache[rowSelectionScopeKey],
     [rowSelectionScopeKey]
   );
   const handleScrollPositionChange = useCallback(
@@ -1288,17 +1294,50 @@ export function TableData() {
   ]);
 
   // 底部分页条（页码由 Pagination 控制，每页行数由 InputNumber 自定义）
+  const paginationDirectionRef = useRef<"next" | "previous" | undefined>();
+  // Pagination 的 onChange 不区分按钮与跳页。在捕获阶段记录按钮意图，
+  // 同时支持按钮内部点击和聚焦分页项后的 Enter 键。
+  const capturePaginationDirection = useCallback(
+    (
+      event:
+        | ReactMouseEvent<HTMLDivElement>
+        | ReactKeyboardEvent<HTMLDivElement>
+    ) => {
+      const target = event.target;
+      const marker =
+        target instanceof Element
+          ? (target.closest("[data-table-page-direction]") ??
+            target.closest("li")?.querySelector("[data-table-page-direction]"))
+          : null;
+      const direction = marker?.getAttribute("data-table-page-direction");
+      paginationDirectionRef.current =
+        direction === "next" || direction === "previous"
+          ? direction
+          : undefined;
+    },
+    []
+  );
   const handlePaginationBarChange = useCallback(
     (newPage: number, newPageSize?: number) => {
+      const direction = paginationDirectionRef.current;
+      paginationDirectionRef.current = undefined;
+      if (dataLoading) return;
       restoredFromCacheRef.current = false;
       if (newPageSize !== undefined && newPageSize !== pageSize) {
         setPageSize(newPageSize);
       }
       if (newPage !== page) {
-        setPage(newPage);
+        if (
+          direction &&
+          (newPageSize === undefined || newPageSize === pageSize)
+        ) {
+          setPage(newPage, direction);
+        } else {
+          setPage(newPage);
+        }
       }
     },
-    [page, pageSize, setPage, setPageSize]
+    [page, pageSize, dataLoading, setPage, setPageSize]
   );
 
   const handleCustomPageSizeChange = useCallback(
@@ -1323,7 +1362,8 @@ export function TableData() {
 
   // 构建当前数据查询的完整 SQL（用于展示，反映实际执行的查询）
   const currentDataSql =
-    database && table
+    executedSql ||
+    (database && table
       ? (() => {
           const quoteIdentifier = (value: string) =>
             currentDatabaseType === "postgres"
@@ -1349,7 +1389,7 @@ export function TableData() {
           }
           return `SELECT ${selectPart} FROM ${quoteIdentifier(database)}.${quoteIdentifier(table)}${wherePart}${orderPart} LIMIT ${pageSize} OFFSET ${offset}`;
         })()
-      : "";
+      : "");
 
   const handleCopyFilterSql = useCallback(async () => {
     if (!currentDataSql.trim()) {
@@ -1793,13 +1833,23 @@ export function TableData() {
                 </span>
               </Badge>
             </Tooltip>
-            {whereClause?.trim() && currentDataSql ? (
-              <Tooltip title="查看筛选后的查询 SQL">
+            {(whereClause?.trim() || executedSql) && currentDataSql ? (
+              <Tooltip
+                title={
+                  whereClause?.trim()
+                    ? "查看筛选后的查询 SQL"
+                    : "查看当前查询 SQL"
+                }
+              >
                 <Button
                   icon={<CodeOutlined />}
                   size="small"
                   type="text"
-                  aria-label="查看筛选后的查询 SQL"
+                  aria-label={
+                    whereClause?.trim()
+                      ? "查看筛选后的查询 SQL"
+                      : "查看当前查询 SQL"
+                  }
                   onClick={() => setFilterSqlPreviewOpen(true)}
                 />
               </Tooltip>
@@ -2060,7 +2110,7 @@ export function TableData() {
       </Modal>
 
       <Modal
-        title="筛选后的查询 SQL"
+        title={whereClause?.trim() ? "筛选后的查询 SQL" : "当前查询 SQL"}
         open={filterSqlPreviewOpen}
         onCancel={() => setFilterSqlPreviewOpen(false)}
         destroyOnHidden
@@ -2215,20 +2265,43 @@ export function TableData() {
               条
             </Text>
           </Space>
-          <Pagination
-            size="small"
-            current={page}
-            pageSize={pageSize}
-            total={total}
-            showQuickJumper
-            showSizeChanger={false}
-            showTotal={() =>
-              totalCountLoading
-                ? "正在统计行数…"
-                : `共 ${total.toLocaleString()} 行`
-            }
-            onChange={handlePaginationBarChange}
-          />
+          <div
+            onClickCapture={capturePaginationDirection}
+            onKeyDownCapture={capturePaginationDirection}
+          >
+            <Pagination
+              size="small"
+              current={page}
+              pageSize={pageSize}
+              total={total}
+              disabled={dataLoading}
+              itemRender={(_page, type, originalElement) => {
+                if (
+                  (type === "prev" || type === "next") &&
+                  isValidElement(originalElement)
+                ) {
+                  return cloneElement(
+                    originalElement as ReactElement<{
+                      "data-table-page-direction"?: string;
+                    }>,
+                    {
+                      "data-table-page-direction":
+                        type === "prev" ? "previous" : "next",
+                    }
+                  );
+                }
+                return originalElement;
+              }}
+              showQuickJumper
+              showSizeChanger={false}
+              showTotal={() =>
+                totalCountLoading
+                  ? "正在统计行数…"
+                  : `共 ${total.toLocaleString()} 行`
+              }
+              onChange={handlePaginationBarChange}
+            />
+          </div>
         </div>
       </div>
 
@@ -2408,7 +2481,9 @@ export function TableData() {
                           label={record.colName}
                           size="small"
                           value={
-                            record.newValue == null ? "" : String(record.newValue)
+                            record.newValue == null
+                              ? ""
+                              : String(record.newValue)
                           }
                           onChange={(text) =>
                             handleUpdatePendingValue(
@@ -2423,7 +2498,9 @@ export function TableData() {
                       <SafeInput
                         size="small"
                         value={
-                          record.newValue === null ? "" : String(record.newValue)
+                          record.newValue === null
+                            ? ""
+                            : String(record.newValue)
                         }
                         onChange={(e) => {
                           const raw = e.target.value;

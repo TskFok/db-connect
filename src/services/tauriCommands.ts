@@ -8,6 +8,8 @@ import type {
   TableInfo,
   ColumnInfo,
   QueryResult,
+  TablePageNavigation,
+  TablePageResult,
   SqlExecuteResult,
   SqlCompletionMetadata,
   SessionInfo,
@@ -851,6 +853,7 @@ export type TableSortField = {
  * 查询表数据 (分页)
  * @param selectColumns 可选的列列表，传入时仅查询指定列（后端自动合并主键列）；为空时使用 SELECT *
  * @param skipCount 为 true 时跳过 COUNT 查询以加快首屏显示，total 返回 0，可配合 queryTableCount 单独获取数量
+ * @param navigation 仅相邻按钮翻页时传入；跳页和当前页重载省略，由后端重建游标
  */
 export async function queryTableData(
   connId: string,
@@ -861,9 +864,10 @@ export async function queryTableData(
   sortFields: TableSortField[] | undefined,
   whereClause?: string,
   selectColumns?: string[],
-  skipCount?: boolean
-): Promise<QueryResult> {
-  return invoke<QueryResult>("query_table_data", {
+  skipCount?: boolean,
+  navigation?: TablePageNavigation
+): Promise<TablePageResult> {
+  return invoke<TablePageResult>("query_table_data", {
     connId,
     database,
     table,
@@ -873,6 +877,7 @@ export async function queryTableData(
     whereClause: whereClause ?? null,
     selectColumns: selectColumns ?? null,
     skipCount: skipCount ?? null,
+    navigation: navigation ?? null,
   });
 }
 

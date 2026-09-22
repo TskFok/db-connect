@@ -3,11 +3,17 @@ use crate::db::batch_update::{build_batch_update_statements, BatchDialect};
 use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
 use crate::db::result_budget::ResultBudget;
 use crate::db::sql_utils::{
-    esc_id, esc_str, mysql_count_query, mysql_paginated_select,
-    mysql_sql_editor_allowed_on_read_only_connection, validate_where_clause,
+    esc_id, esc_str, mysql_count_query, mysql_sql_editor_allowed_on_read_only_connection,
+    validate_where_clause,
+};
+use crate::db::table_pagination::{
+    cached_metadata_for_navigation, remember_metadata, ColumnMetadata, Engine, IntegerKind,
+    IntegerValue, PageContext, PagePlan, TableMetadata,
 };
 use crate::db::{clickhouse, postgres, sqlite, sqlserver};
-use crate::models::types::{QueryResult, SessionInfo, SqlExecuteResult};
+use crate::models::types::{
+    QueryResult, SessionInfo, SqlExecuteResult, TablePageNavigation, TablePageResult,
+};
 use crate::{AppState, RunningQuery};
 use mysql_async::prelude::*;
 use mysql_async::Row;
@@ -464,6 +470,75 @@ async fn fetch_primary_keys(
     Ok(pk_columns)
 }
 
+/// 一次集合查询同时获取真实主键、整数类型和空页列名；不信任视图传播的 COLUMN_KEY。
+async fn fetch_table_page_metadata(
+    conn: &mut mysql_async::Conn,
+    database: &str,
+    table: &str,
+) -> Result<TableMetadata, String> {
+    let rows: Vec<mysql_async::Row> = conn.exec(
+        "SELECT c.COLUMN_NAME AS column_name, c.DATA_TYPE AS data_type, c.COLUMN_TYPE AS column_type, \
+         k.ORDINAL_POSITION AS primary_position, t.TABLE_TYPE AS table_type \
+         FROM INFORMATION_SCHEMA.COLUMNS c \
+         JOIN INFORMATION_SCHEMA.TABLES t ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME \
+         LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE k ON k.TABLE_SCHEMA = c.TABLE_SCHEMA \
+          AND k.TABLE_NAME = c.TABLE_NAME AND k.COLUMN_NAME = c.COLUMN_NAME AND k.CONSTRAINT_NAME = 'PRIMARY' \
+         WHERE c.TABLE_SCHEMA = ? AND c.TABLE_NAME = ? ORDER BY c.ORDINAL_POSITION",
+        (database, table),
+    ).await.map_err(|e| format!("查询表分页元数据失败: {}", e))?;
+    let trusted = rows
+        .first()
+        .and_then(|r| r.get::<String, _>("table_type"))
+        .is_some_and(|t| t == "BASE TABLE");
+    let columns = rows
+        .iter()
+        .map(|row| {
+            let data_type: String = row.get("data_type").unwrap_or_default();
+            let column_type: String = row.get("column_type").unwrap_or_default();
+            let primary_position: Option<u64> = row.get("primary_position").unwrap_or(None);
+            ColumnMetadata {
+                name: row.get("column_name").unwrap_or_default(),
+                primary_position: primary_position.and_then(|p| i32::try_from(p).ok()),
+                integer_kind: if matches!(
+                    data_type.as_str(),
+                    "tinyint" | "smallint" | "mediumint" | "int" | "bigint"
+                ) {
+                    Some(if column_type.to_ascii_lowercase().contains("unsigned") {
+                        IntegerKind::Unsigned
+                    } else {
+                        IntegerKind::Signed
+                    })
+                } else {
+                    None
+                },
+            }
+        })
+        .collect();
+    let metadata = TableMetadata::new(columns, trusted);
+    if !trusted {
+        return Ok(metadata);
+    }
+    // SHOW INDEX 只需任一列的某种权限，能完整证明 PRIMARY 的列数；COLUMNS/KCU
+    // 可能只显示当前账号可见的列。读取失败时保守回退 OFFSET，不影响普通浏览。
+    let indexes: Vec<mysql_async::Row> = conn
+        .query(format!(
+            "SHOW INDEX FROM {}.{} WHERE Key_name = 'PRIMARY'",
+            esc_id(database),
+            esc_id(table),
+        ))
+        .await
+        .unwrap_or_default();
+    let complete_primary_keys: Vec<String> = indexes
+        .iter()
+        .map(|row| {
+            row.get::<Option<String>, _>("Column_name")
+                .flatten()
+                .unwrap_or_default()
+        })
+        .collect();
+    Ok(metadata.with_primary_key_evidence(&complete_primary_keys))
+}
+
 /// 查询表总行数 (用于分页，可与 query_table_data skip_count 配合实现数据与数量分离请求)
 #[tauri::command]
 pub async fn query_table_count(
@@ -599,7 +674,8 @@ pub async fn query_table_data(
     where_clause: Option<String>,
     select_columns: Option<Vec<String>>,
     skip_count: Option<bool>,
-) -> Result<QueryResult, String> {
+    navigation: Option<TablePageNavigation>,
+) -> Result<TablePageResult, String> {
     let pool_handle = {
         let mut manager = state.connection_manager.lock().await;
         manager.get_database_pool_and_touch(&conn_id)?
@@ -609,6 +685,20 @@ pub async fn query_table_data(
         DatabasePoolHandle::MySql(pool) => pool,
         DatabasePoolHandle::Postgres(handle) => {
             let order_sql = build_postgres_order_by_sql(&sort_fields);
+            let context = PageContext {
+                engine: Engine::Postgres,
+                connection: conn_id,
+                database: database.clone(),
+                table: table.clone(),
+                filter: where_clause.as_deref().unwrap_or("").trim().to_string(),
+                sort: sort_fields
+                    .as_deref()
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(|f| (f.column.clone(), f.order.clone()))
+                    .collect(),
+                page_size,
+            };
             return postgres::query_table_data(
                 &handle.pool,
                 &database,
@@ -619,6 +709,8 @@ pub async fn query_table_data(
                 where_clause,
                 select_columns,
                 skip_count,
+                context,
+                navigation,
             )
             .await;
         }
@@ -635,7 +727,8 @@ pub async fn query_table_data(
                 select_columns,
                 skip_count,
             )
-            .await;
+            .await
+            .map(Into::into);
         }
         DatabasePoolHandle::SqlServer(handle) => {
             let order_sql = build_sqlserver_order_by_sql(&sort_fields);
@@ -650,7 +743,8 @@ pub async fn query_table_data(
                 select_columns,
                 skip_count,
             )
-            .await;
+            .await
+            .map(Into::into);
         }
         DatabasePoolHandle::ClickHouse(handle) => {
             let borrowed_sort_fields = sort_fields
@@ -672,7 +766,8 @@ pub async fn query_table_data(
                     skip_count,
                 },
             )
-            .await;
+            .await
+            .map(Into::into);
         }
     };
 
@@ -682,12 +777,33 @@ pub async fn query_table_data(
     let where_sql = match &where_clause {
         Some(w) if !w.trim().is_empty() => {
             validate_where_clause(w)?;
-            format!(" WHERE {}", w)
+            format!(" WHERE ({})", w)
         }
         _ => String::new(),
     };
 
     let mut conn = get_conn_with_retry(&pool).await?;
+    let context = PageContext {
+        engine: Engine::MySql,
+        connection: conn_id,
+        database: database.clone(),
+        table: table.clone(),
+        filter: where_clause.as_deref().unwrap_or("").trim().to_string(),
+        sort: sort_fields
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .map(|f| (f.column.clone(), f.order.clone()))
+            .collect(),
+        page_size,
+    };
+    let metadata = match cached_metadata_for_navigation(&context, page, navigation.as_ref()) {
+        Some(metadata) => metadata,
+        None => remember_metadata(
+            &context,
+            fetch_table_page_metadata(&mut conn, &database, &table).await?,
+        ),
+    };
 
     // 1) 查询总数（skip_count 为 true 时跳过，用于大数据量表加快首屏显示）
     let total: u64 = if skip_count == Some(true) {
@@ -700,92 +816,66 @@ pub async fn query_table_data(
             .unwrap_or(0)
     };
 
-    // 2) 构建 SELECT 列部分：若指定了 select_columns，自动合并主键列
-    let select_part = match &select_columns {
-        Some(cols) if !cols.is_empty() => {
-            let pk_cols = fetch_primary_keys(&mut conn, &database, &table).await?;
-            let mut merged: Vec<String> = cols.clone();
-            for pk in &pk_cols {
-                if !merged.iter().any(|c| c == pk) {
-                    merged.push(pk.clone());
-                }
-            }
-            merged
-                .iter()
+    // 保留自动补主键的既有行为：前端隐藏列仍可用于编辑和行选择。
+    let selected_columns = metadata.selected_columns(&select_columns);
+    let select_part = selected_columns
+        .as_ref()
+        .map(|cols| {
+            cols.iter()
                 .map(|c| esc_id(c))
                 .collect::<Vec<_>>()
                 .join(", ")
-        }
-        _ => "*".to_string(),
-    };
-
-    // 3) 构建 ORDER BY（支持多列）
-    let order_sql = build_order_by_sql(&sort_fields);
-
-    let offset = (page.saturating_sub(1)) * page_size;
-    let data_sql = mysql_paginated_select(
-        &select_part,
-        &database,
-        &table,
-        &where_sql,
-        &order_sql,
-        page_size as u64,
-        offset as u64,
-    );
-
-    let rows: Vec<mysql_async::Row> = conn
+        })
+        .unwrap_or_else(|| "*".into());
+    let fallback_order = build_order_by_sql(&sort_fields);
+    let plan = PagePlan::new(context, metadata.clone(), page, navigation.as_ref());
+    let qualified_table = format!("{}.{}", esc_id(&database), esc_id(&table));
+    let quoted_key = plan.key_column.as_deref().map(esc_id).unwrap_or_default();
+    let data_sql = plan.sql(&select_part, &qualified_table, &quoted_key, &fallback_order);
+    // 保留文本协议，避免切换 prepared/binary 后日期微秒、午夜时间等展示发生变化。
+    // 边界来自真实整数主键的 i64/u64 解析后规范十进制，客户端文本不会进入 SQL。
+    let mut rows: Vec<mysql_async::Row> = conn
         .query(&data_sql)
         .await
         .map_err(|e| format!("查询数据失败: {}", e))?;
+    if plan.reverse {
+        rows.reverse();
+    }
 
-    // 4) 提取列名
-    let columns: Vec<String> = if let Some(first_row) = rows.first() {
-        first_row
-            .columns_ref()
-            .iter()
-            .map(|c| c.name_str().to_string())
-            .collect()
-    } else {
-        // 没有数据时，返回请求的列列表（或通过 SHOW COLUMNS 获取全部列名）
-        match &select_columns {
-            Some(cols) if !cols.is_empty() => {
-                let pk_cols = fetch_primary_keys(&mut conn, &database, &table).await?;
-                let mut merged: Vec<String> = cols.clone();
-                for pk in &pk_cols {
-                    if !merged.iter().any(|c| c == pk) {
-                        merged.push(pk.clone());
-                    }
-                }
-                merged
-            }
-            _ => {
-                let col_sql = format!("SHOW COLUMNS FROM {}.{}", esc_id(&database), esc_id(&table));
-                let col_rows: Vec<mysql_async::Row> = conn
-                    .query(&col_sql)
-                    .await
-                    .map_err(|e| format!("获取列信息失败: {}", e))?;
-                col_rows
-                    .iter()
-                    .map(|r| {
-                        r.get::<Option<String>, _>("Field")
-                            .flatten()
-                            .unwrap_or_default()
-                    })
-                    .collect()
-            }
-        }
+    let columns: Vec<String> = rows
+        .first()
+        .map(|row| {
+            row.columns_ref()
+                .iter()
+                .map(|c| c.name_str().to_string())
+                .collect()
+        })
+        .unwrap_or_else(|| selected_columns.unwrap_or(metadata.columns));
+    let key_index = plan
+        .key_column
+        .as_ref()
+        .and_then(|key| columns.iter().position(|column| column == key));
+    let boundary = |row: &mysql_async::Row| {
+        key_index
+            .and_then(|i| row.as_ref(i))
+            .and_then(|value| IntegerValue::from_mysql(value, plan.integer_kind()?))
     };
-
-    // 5) 转换行数据
+    // 游标必须在展示值转换前解析原始整数文本，不能借道 JavaScript 数字。
+    let pagination = plan.pagination(
+        rows.first().and_then(boundary),
+        rows.last().and_then(boundary),
+        rows.len(),
+    );
     let json_rows = rows_to_json_with_columns(&rows, columns.len());
-
-    let elapsed = start.elapsed().as_millis() as u64;
-
-    Ok(QueryResult {
-        columns,
-        rows: json_rows,
-        total,
-        execution_time_ms: elapsed,
+    Ok(TablePageResult {
+        result: QueryResult {
+            columns,
+            rows: json_rows,
+            total,
+            execution_time_ms: start.elapsed().as_millis() as u64,
+        },
+        pagination,
+        executed_sql: Some(data_sql),
     })
 }
 
