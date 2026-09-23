@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { SqlDialect, SqlSchema } from "../utils/sqlCompletion";
 import type {
   RelationSymbol,
+  QueryScope,
   SqlCompletionContext,
 } from "../utils/sqlCompletionTypes";
 import { analyzeSqlCompletion } from "../utils/sqlCompletionContext";
+import { resolveSqlCompletionScopes } from "../utils/sqlCompletionScopes";
 import { buildSqlMetadataIndex } from "../utils/sqlCompletionMetadataIndex";
 import { generateSqlCompletionCandidates } from "../utils/sqlCompletionCandidates";
 import {
@@ -53,6 +55,278 @@ function candidates(ctx = context(), schema = completionSchema) {
 function columns(ctx = context(), schema = completionSchema) {
   return candidates(ctx, schema).filter((item) => item.kind === "column");
 }
+
+describe("二期查询作用域候选", () => {
+  const scope = (
+    id: string,
+    relations: RelationSymbol[] = [],
+    extra: Partial<QueryScope> = {}
+  ): QueryScope => ({
+    id,
+    relations,
+    projections: [],
+    canCorrelate: false,
+    ...extra,
+  });
+  const virtual = (extra: Partial<RelationSymbol> = {}): RelationSymbol => ({
+    id: "derived",
+    kind: "derived",
+    name: "derived",
+    alias: "D",
+    outputColumns: [{ name: "k" }],
+    outputComplete: true,
+    ...extra,
+  });
+  const dialects: SqlDialect[] = [
+    "mysql",
+    "postgres",
+    "sqlite",
+    "sqlserver",
+    "clickhouse",
+  ];
+  const clauses = [
+    "select",
+    "where",
+    "groupBy",
+    "having",
+    "orderBy",
+    "on",
+  ] as const;
+  const allowed: Record<SqlDialect, readonly string[]> = {
+    mysql: ["groupBy", "having", "orderBy"],
+    postgres: ["groupBy", "orderBy"],
+    sqlite: ["orderBy"],
+    sqlserver: ["orderBy"],
+    clickhouse: ["select", "where", "groupBy", "having", "orderBy"],
+  };
+  it.each(
+    dialects.flatMap((dialect) =>
+      clauses.map((clause) => ({ dialect, clause }))
+    )
+  )("$dialect 的 $clause 投影别名策略", ({ dialect, clause }) => {
+    const ctx = context({
+      dialect,
+      clause,
+      scopes: [
+        scope("q", [users], {
+          projections: [{ name: "renamed" }],
+          projectionComplete: true,
+        }),
+      ],
+    });
+    expect(candidates(ctx).some((item) => item.label === "renamed")).toBe(
+      allowed[dialect].includes(clause)
+    );
+  });
+  it("逐跳应用父块可见 id，保留祖父块相关关系", () => {
+    const ctx = context({
+      scopeId: "inner",
+      scopes: [
+        scope("q", [users, { ...users, id: "hidden", alias: "hidden" }]),
+        scope("middle", [orders], {
+          parentId: "q",
+          canCorrelate: true,
+          visibleParentRelationIds: [users.id],
+        }),
+        scope("inner", [], {
+          parentId: "middle",
+          canCorrelate: true,
+          visibleParentRelationIds: [orders.id],
+        }),
+      ],
+    });
+    expect(columns(ctx).map((item) => item.label)).toEqual([
+      "u.id",
+      "o.id",
+      "u.name",
+      "o.user_id",
+    ]);
+    expect(
+      candidates({ ...ctx, qualifierParts: ["u"] }).map(
+        (item) => item.insertText
+      )
+    ).toEqual(["`id`", "`name`"]);
+  });
+  it.each([false, true])(
+    "没有父级 id 列表时不泄漏父级，canCorrelate=%s",
+    (canCorrelate) => {
+      const ctx = context({
+        scopeId: "inner",
+        scopes: [
+          scope("q", [users]),
+          scope("inner", [], { parentId: "q", canCorrelate }),
+        ],
+      });
+      expect(columns(ctx)).toEqual([]);
+    }
+  );
+  it("普通派生表不相关，当前块别名遮蔽父块同名别名", () => {
+    const ctx = context({
+      scopeId: "inner",
+      scopes: [
+        scope("q", [users]),
+        scope("inner", [{ ...orders, alias: "u" }], {
+          parentId: "q",
+          canCorrelate: true,
+          visibleParentRelationIds: [users.id],
+        }),
+      ],
+    });
+    expect(columns(ctx).map((item) => item.label)).toEqual([
+      "u.id",
+      "u.user_id",
+    ]);
+    ctx.scopes[1].canCorrelate = false;
+    ctx.scopes[1].relations = [];
+    expect(columns(ctx)).toEqual([]);
+  });
+  it("点号限定优先绑定别名，再绑定未取别名的关系名", () => {
+    const ctx = context({ qualifierParts: ["orders"] }, [
+      { ...users, alias: "orders" },
+      { ...orders, alias: undefined },
+    ]);
+    expect(columns(ctx).map((item) => item.filterText)).toEqual(["id", "name"]);
+  });
+  it("JOIN 只限制当前块，相关父块仍可访问且不带入其投影别名", () => {
+    const ctx = context({
+      scopeId: "inner",
+      clause: "on",
+      slot: "joinCondition",
+      join: {
+        leftRelationIds: [orders.id],
+        rightRelationId: "right",
+      },
+      scopes: [
+        scope("q", [users], {
+          projections: [{ name: "outer_alias" }],
+          projectionComplete: true,
+        }),
+        scope(
+          "inner",
+          [
+            orders,
+            { ...users, id: "right", alias: "r" },
+            { ...users, id: "future", alias: "f" },
+          ],
+          {
+            parentId: "q",
+            canCorrelate: true,
+            visibleParentRelationIds: [users.id],
+          }
+        ),
+      ],
+    });
+    expect(columns(ctx).map((item) => item.label)).toContain("u.id");
+    expect(columns(ctx).some((item) => item.label.startsWith("f."))).toBe(
+      false
+    );
+    expect(candidates(ctx).some((item) => item.label === "outer_alias")).toBe(
+      false
+    );
+  });
+  it("虚拟关系必须完整，重复输出列过滤，SQL 名称按引用位插入", () => {
+    expect(columns(context({}, [virtual({ outputComplete: false })]))).toEqual(
+      []
+    );
+    expect(
+      columns(context({}, [virtual({ outputComplete: undefined })]))
+    ).toEqual([]);
+    const relation = virtual({
+      outputColumns: [{ name: "id" }, { name: "id" }, { name: "k" }],
+    });
+    expect(
+      columns(context({ dialect: "postgres" }, [relation])).map(
+        (item) => item.insertText
+      )
+    ).toEqual(['"d"."k"']);
+    expect(
+      columns(
+        context({ dialect: "postgres" }, [{ ...relation, aliasQuoted: true }])
+      )[0].insertText
+    ).toBe('"D"."k"');
+    expect(
+      columns(
+        context({ dialect: "postgres", qualifierParts: ["d"] }, [relation])
+      )[0].insertText
+    ).toBe('"k"');
+    expect(
+      columns(
+        context({ dialect: "postgres" }, [
+          virtual({ outputColumns: [{ name: "K", quoted: true }] }),
+        ])
+      )[0].insertText
+    ).toBe('"d"."K"');
+    expect(
+      columns(
+        context({ dialect: "postgres" }, [
+          virtual({
+            outputColumns: [
+              {
+                name: "ID",
+                quoted: false,
+                source: { relationId: "source", column: "ID" },
+              },
+            ],
+          }),
+        ])
+      )[0].insertText
+    ).toBe('"d"."ID"');
+  });
+  it("当前 CTE 表名遮蔽物理表，显式 namespace 仍指向物理表", () => {
+    const ctx = context({
+      slot: "table",
+      clause: "from",
+      scopes: [
+        scope("q", [], {
+          ctes: [
+            { id: "cte", kind: "cte", name: "users" },
+            { id: "extra", kind: "cte", name: "Extra" },
+          ],
+        }),
+      ],
+    });
+    const items = candidates(ctx);
+    expect(items.filter((item) => item.label === "users")).toHaveLength(1);
+    expect(items.find((item) => item.label === "users")?.detail).toBe("CTE");
+    expect(items.some((item) => item.label === "Extra")).toBe(true);
+    expect(
+      candidates({ ...ctx, qualifierParts: ["app"] }).find(
+        (item) => item.label === "users"
+      )?.detail
+    ).toBe("表 / 视图");
+  });
+  it("投影别名冲突或重复时保留真实列，不给出歧义别名", () => {
+    const ctx = context({
+      dialect: "clickhouse",
+      clause: "where",
+      scopes: [
+        scope("q", [users], {
+          projections: [{ name: "id" }, { name: "dup" }, { name: "dup" }],
+          projectionComplete: true,
+        }),
+      ],
+    });
+    expect(columns(ctx).map((item) => item.label)).toEqual(["u.id", "u.name"]);
+    ctx.dialect = "postgres";
+    ctx.clause = "groupBy";
+    expect(columns(ctx).map((item) => item.label)).toEqual(["u.id", "u.name"]);
+  });
+  it("不完整投影仍可提供 resolver 已确认的 ClickHouse 同块别名", () => {
+    const ctx = context({
+      dialect: "clickhouse",
+      clause: "select",
+      scopes: [
+        scope("q", [users], {
+          projections: [{ name: "confirmed" }],
+          projectionComplete: false,
+        }),
+      ],
+    });
+    expect(candidates(ctx).some((item) => item.label === "confirmed")).toBe(
+      true
+    );
+  });
+});
 
 describe("SQL 元数据索引与候选", () => {
   it("保留大小写不同的精确索引键", () => {
@@ -539,5 +813,174 @@ describe("组合边界回归", () => {
         .map((item) => item.insertText)
         .sort()
     ).toEqual(expected);
+  });
+});
+
+describe("二期实际 SQL 到候选集成", () => {
+  function scoped(
+    marked: string,
+    dialect: SqlDialect = "postgres",
+    defaultNamespace: string | null = "app",
+    schema = completionSchema
+  ) {
+    const offset = marked.indexOf("|");
+    const sql = marked.replace("|", "");
+    const base = analyzeSqlCompletion({ sql, offset, dialect });
+    base.defaultNamespace = defaultNamespace;
+    const index = buildSqlMetadataIndex(schema, { ...completionKey, dialect });
+    const ctx = resolveSqlCompletionScopes({
+      sql,
+      offset,
+      context: base,
+      index,
+    });
+    return generateSqlCompletionCandidates(ctx, index);
+  }
+  const dialects: SqlDialect[] = [
+    "mysql",
+    "postgres",
+    "sqlite",
+    "sqlserver",
+    "clickhouse",
+  ];
+  it.each(dialects)("%s 通过真实 SQL 解析限制别名跨子句", (dialect) => {
+    const allowed = {
+      mysql: ["GROUP BY", "HAVING", "ORDER BY"],
+      postgres: ["GROUP BY", "ORDER BY"],
+      sqlite: ["ORDER BY"],
+      sqlserver: ["ORDER BY"],
+      clickhouse: ["WHERE", "GROUP BY", "HAVING", "ORDER BY"],
+    };
+    for (const clause of [
+      "WHERE",
+      "GROUP BY",
+      "HAVING",
+      "ORDER BY",
+      "JOIN orders o ON",
+    ]) {
+      expect(
+        scoped(`SELECT id AS renamed FROM users ${clause} |`, dialect).some(
+          (item) => item.label === "renamed"
+        ),
+        clause
+      ).toBe(allowed[dialect].includes(clause));
+    }
+  });
+  it.each([
+    [
+      "SELECT * FROM users u WHERE EXISTS (SELECT u.| FROM orders o)",
+      ["id", "name"],
+    ],
+    ["SELECT * FROM users u, (SELECT u.|) d", []],
+    ["SELECT * FROM users u, LATERAL (SELECT u.|) d, orders o", ["id", "name"]],
+    ["SELECT * FROM users u, LATERAL (SELECT o.|) d, orders o", []],
+    [
+      "SELECT * FROM (SELECT u.*, o.* FROM users u JOIN orders o ON u.id=o.user_id) d WHERE d.|",
+      ["name", "user_id"],
+    ],
+    ["SELECT * FROM (SELECT id AS renamed, FROM users) d WHERE d.|", []],
+    ["SELECT * FROM other.users x WHERE x.|", []],
+    ["SELECT * FROM users u WHERE EXISTS (SELECT 'u.|' FROM orders)", []],
+    ["SELECT * FROM users u WHERE EXISTS (SELECT 1 -- u.|\n FROM orders)", []],
+  ] as const)("%s 的列可见性", (sql, names) => {
+    expect(
+      scoped(sql)
+        .filter((item) => item.kind === "column")
+        .map((item) => item.filterText)
+    ).toEqual(names);
+  });
+  it("虚拟输出与关系引用分别处理 PostgreSQL 大小写", () => {
+    expect(
+      scoped("SELECT * FROM (SELECT id AS K FROM users) D WHERE |").find(
+        (item) => item.label === "D.k"
+      )?.insertText
+    ).toBe('"d"."k"');
+    expect(
+      scoped('SELECT * FROM (SELECT id AS K FROM users) "D" WHERE |').find(
+        (item) => item.label === "D.k"
+      )?.insertText
+    ).toBe('"D"."k"');
+    const schema = {
+      ...completionSchema,
+      columns: [{ table: "users", name: "ID" }],
+    };
+    expect(
+      scoped(
+        'SELECT * FROM (SELECT "ID" FROM users) d WHERE d.|',
+        "postgres",
+        "app",
+        schema
+      ).map((item) => item.insertText)
+    ).toEqual(['"ID"']);
+  });
+  it("未知默认 namespace 不允许把显式 namespace 猜配到索引", () => {
+    expect(
+      scoped("SELECT * FROM app.users u WHERE u.|", "postgres", null)
+    ).toEqual([]);
+  });
+  it("未知来源可能包含同名列，已知关系列必须限定", () => {
+    expect(
+      scoped("SELECT * FROM users u JOIN unknown_source z ON |")
+        .filter((item) => item.kind === "column")
+        .map((item) => item.insertText)
+    ).toEqual(['"u"."id"', '"u"."name"']);
+    expect(
+      columns(context({}, [users, { ...orders, name: "unknown_source" }])).map(
+        (item) => item.insertText
+      )
+    ).toEqual(["`u`.`id`", "`u`.`name`"]);
+  });
+  it("同名无别名关系的限定名不唯一时不产生列候选", () => {
+    expect(
+      scoped("SELECT * FROM users JOIN users ON |").filter(
+        (item) => item.kind === "column"
+      )
+    ).toEqual([]);
+    expect(scoped("SELECT * FROM users JOIN users ON users.|")).toEqual([]);
+    expect(
+      scoped("SELECT * FROM users a JOIN users b ON |")
+        .filter((item) => item.kind === "column")
+        .map((item) => item.insertText)
+    ).toEqual(['"a"."id"', '"b"."id"', '"a"."name"', '"b"."name"']);
+  });
+  it("CTE 提示与虚拟输出来自当前词法块", () => {
+    expect(
+      scoped(
+        "WITH recent AS (SELECT id AS uid FROM users) SELECT * FROM |"
+      ).map((item) => item.label)
+    ).toContain("recent");
+    expect(
+      scoped(
+        "WITH recent AS (SELECT id AS uid FROM users) SELECT * FROM recent r WHERE r.|"
+      ).map((item) => item.insertText)
+    ).toEqual(['"uid"']);
+    expect(
+      scoped(
+        "WITH recent AS (SELECT id AS uid FROM users) SELECT 1; SELECT * FROM |"
+      ).map((item) => item.label)
+    ).not.toContain("recent");
+  });
+  it("ClickHouse COLUMNS 输出不产生猜测列", () => {
+    expect(
+      scoped(
+        "SELECT * FROM (SELECT COLUMNS('.*') FROM users) d WHERE d.|",
+        "clickhouse"
+      )
+    ).toEqual([]);
+  });
+  it("ClickHouse 简单 SELECT 编辑项可用已完成项别名", () => {
+    expect(
+      scoped("SELECT id AS renamed, | FROM users", "clickhouse").some(
+        (item) => item.label === "renamed"
+      )
+    ).toBe(true);
+  });
+  it.each([
+    "SELECT COLUMNS('.*') AS renamed FROM users WHERE |",
+    "SELECT row_number() OVER () AS renamed FROM users WHERE |",
+  ])("ClickHouse 复杂投影不提供同块别名：%s", (sql) => {
+    expect(
+      scoped(sql, "clickhouse").some((item) => item.label === "renamed")
+    ).toBe(false);
   });
 });
