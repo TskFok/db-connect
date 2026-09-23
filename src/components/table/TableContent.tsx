@@ -1,6 +1,13 @@
 import { useShallow } from "zustand/react/shallow";
-import { lazy, Suspense, useEffect, useMemo, type ReactNode } from "react";
-import { Tabs, Spin } from "antd";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import { Alert, Button, Tabs, Spin } from "antd";
 import {
   TableOutlined,
   UnorderedListOutlined,
@@ -24,10 +31,14 @@ const TriggerList = lazy(() =>
   import("../trigger/TriggerList").then((m) => ({ default: m.TriggerList }))
 );
 const CreateTableSql = lazy(() =>
-  import("../database/CreateTableSql").then((m) => ({ default: m.CreateTableSql }))
+  import("../database/CreateTableSql").then((m) => ({
+    default: m.CreateTableSql,
+  }))
 );
 const ForeignKeyList = lazy(() =>
-  import("../foreignKey/ForeignKeyList").then((m) => ({ default: m.ForeignKeyList }))
+  import("../foreignKey/ForeignKeyList").then((m) => ({
+    default: m.ForeignKeyList,
+  }))
 );
 
 const lazyTabFallback = (
@@ -41,17 +52,60 @@ function withLazyTab(children: ReactNode) {
 }
 
 export function TableContent() {
-  const { selectedDatabase, selectedTable, selectedTableInfo, tableContentActiveTab, setTableContentActiveTab } =
-    useDatabaseStore(
+  const {
+    selectedDatabase,
+    selectedTable,
+    selectedTableInfo,
+    tableStructure,
+    tableContentActiveTab,
+    setTableContentActiveTab,
+    ensureTableMetadata,
+  } = useDatabaseStore(
     useShallow((s) => ({
       selectedDatabase: s.selectedDatabase,
       selectedTable: s.selectedTable,
       selectedTableInfo: s.selectedTableInfo,
+      tableStructure: s.tableStructure,
       tableContentActiveTab: s.tableContentActiveTab,
       setTableContentActiveTab: s.setTableContentActiveTab,
+      ensureTableMetadata: s.ensureTableMetadata,
     }))
   );
   const activeConnection = useConnectionStore((s) => s.activeConnection);
+  const connId = activeConnection?.connId;
+  const metadataScope = JSON.stringify([
+    connId,
+    selectedDatabase,
+    selectedTable,
+  ]);
+  const [metadataError, setMetadataError] = useState<{
+    scope: string;
+    message: string;
+  } | null>(null);
+  const [metadataRetry, setMetadataRetry] = useState(0);
+  const metadataReady = selectedTableInfo !== null && tableStructure !== null;
+
+  useEffect(() => {
+    if (!connId || !selectedDatabase || !selectedTable || metadataReady) return;
+    let cancelled = false;
+    void ensureTableMetadata(connId, selectedDatabase, selectedTable).catch(
+      (error: unknown) => {
+        if (!cancelled)
+          setMetadataError({ scope: metadataScope, message: String(error) });
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    connId,
+    selectedDatabase,
+    selectedTable,
+    metadataReady,
+    metadataScope,
+    metadataRetry,
+    ensureTableMetadata,
+  ]);
 
   const isView = selectedTableInfo?.table_type === "VIEW";
   const tableScopeKey = `${selectedDatabase ?? ""}|${selectedTable ?? ""}`;
@@ -59,7 +113,9 @@ export function TableContent() {
     () => getDatabaseCapabilities(activeConnection?.config.database_type),
     [activeConnection?.config.database_type]
   );
-  const databaseType = normalizeDatabaseType(activeConnection?.config.database_type);
+  const databaseType = normalizeDatabaseType(
+    activeConnection?.config.database_type
+  );
 
   const tabItems = useMemo(() => {
     const base: { key: string; label: ReactNode; children: ReactNode }[] = [];
@@ -86,8 +142,7 @@ export function TableContent() {
       children: <TableStructure key={`structure:${tableScopeKey}`} />,
     });
     if (capabilities.indexManagement) {
-      base.push(
-      {
+      base.push({
         key: "indexes",
         label: (
           <span>
@@ -96,12 +151,10 @@ export function TableContent() {
           </span>
         ),
         children: withLazyTab(<IndexList />),
-      },
-      );
+      });
     }
     if (capabilities.triggerManagement) {
-      base.push(
-      {
+      base.push({
         key: "triggers",
         label: (
           <span>
@@ -110,8 +163,7 @@ export function TableContent() {
           </span>
         ),
         children: withLazyTab(<TriggerList />),
-      },
-      );
+      });
     }
     if (!isView && capabilities.foreignKeyManagement) {
       base.push({
@@ -178,8 +230,46 @@ export function TableContent() {
 
   const tableDisplayName = `${selectedDatabase}.${selectedTable}`;
 
+  if (!metadataReady) {
+    const error =
+      metadataError?.scope === metadataScope ? metadataError.message : null;
+    return (
+      <div style={{ padding: 24 }}>
+        {error ? (
+          <Alert
+            type="error"
+            showIcon
+            message={`无法加载 ${tableDisplayName}`}
+            description={error}
+            action={
+              <Button
+                onClick={() => {
+                  setMetadataError(null);
+                  setMetadataRetry((value) => value + 1);
+                }}
+              >
+                重试
+              </Button>
+            }
+          />
+        ) : (
+          <Spin tip={`正在加载 ${tableDisplayName}`}>
+            <div style={{ minHeight: 80 }} />
+          </Spin>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+    <div
+      style={{
+        flex: 1,
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
       <Tabs
         key={`${selectedDatabase}|${selectedTable}`}
         activeKey={activeTabKey}

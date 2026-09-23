@@ -425,6 +425,7 @@ export function DatabaseOverview() {
               {capabilities.favoriteTables && (
                 <Tooltip title={fav ? "取消收藏" : "收藏"}>
                   <Button
+                    aria-label={`${fav ? "取消收藏" : "收藏"} ${selectedDatabase}.${record.name}`}
                     type="text"
                     size="small"
                     icon={

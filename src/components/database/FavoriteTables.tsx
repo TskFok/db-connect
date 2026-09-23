@@ -9,7 +9,6 @@ import {
   Input,
   Space,
   Modal,
-  Progress,
 } from "antd";
 import type { InputRef } from "antd/es/input";
 import {
@@ -23,6 +22,7 @@ import { useDatabaseStore } from "../../stores/databaseStore";
 import { useFavoriteStore } from "../../stores/favoriteStore";
 import type { FavoriteTable } from "../../stores/favoriteStore";
 import { favoriteConnectionKey } from "../../utils/favoriteConnection";
+import { getDatabaseCapabilities } from "../../utils/databaseCapabilities";
 
 const { Text } = Typography;
 
@@ -38,13 +38,10 @@ export function FavoriteTables({
   const [search, setSearch] = useState("");
   const searchRef = useRef<InputRef>(null);
   const { activeConnection } = useConnectionStore();
-  const { tables, loadTables, selectTable, setExpandedKeys } =
-    useDatabaseStore(
+  const { tables, openTableTabs } = useDatabaseStore(
     useShallow((s) => ({
       tables: s.tables,
-      loadTables: s.loadTables,
-      selectTable: s.selectTable,
-      setExpandedKeys: s.setExpandedKeys,
+      openTableTabs: s.openTableTabs,
     }))
   );
   const removeFavorite = useFavoriteStore((s) => s.removeFavorite);
@@ -52,13 +49,6 @@ export function FavoriteTables({
     (s) => s.clearFavoritesForConnection
   );
   const favoritesFromStore = useFavoriteStore((s) => s.favorites);
-  const batchOpenAbortRef = useRef<AbortController | null>(null);
-  const [batchOpen, setBatchOpen] = useState<null | {
-    completed: number;
-    total: number;
-    currentLabel: string;
-    aborted: boolean;
-  }>(null);
 
   useEffect(() => {
     if (open) {
@@ -88,13 +78,15 @@ export function FavoriteTables({
     ? favoriteConnectionKey(activeConnection.config)
     : "";
   const connId = activeConnection?.connId ?? "";
-  const isSqlServer = activeConnection?.config.database_type === "sqlserver";
-  const searchPlaceholder = isSqlServer
+  const isSchema =
+    getDatabaseCapabilities(activeConnection?.config.database_type)
+      .databaseObjectNoun === "schema";
+  const searchPlaceholder = isSchema
     ? "搜索 schema 或表名…"
     : "搜索库名或表名…";
-  const emptyHint = isSqlServer
-    ? "在 schema 树中点击表旁的星标可添加收藏"
-    : "在数据库树中点击表旁的星标可添加收藏";
+  const emptyHint = isSchema
+    ? "在 schema 概览的表列表中点击星标可添加收藏"
+    : "在数据库概览的表列表中点击星标可添加收藏";
   const favorites = useMemo(() => {
     if (!activeConnection || !connectionId) return [];
     return favoritesFromStore.filter((f) => f.connectionId === connectionId);
@@ -109,78 +101,14 @@ export function FavoriteTables({
     });
   }, [favorites, search]);
 
-  const handleSelectTable = async (item: FavoriteTable) => {
+  const handleSelectTable = (item: FavoriteTable) => {
     if (!connId) return;
-    await loadTables(connId, item.database);
-    const { expandedKeys } = useDatabaseStore.getState();
-    const dbKey = `db:${item.database}`;
-    if (!expandedKeys.includes(dbKey)) {
-      setExpandedKeys([...expandedKeys, dbKey]);
-    }
-    await selectTable(connId, item.database, item.table);
+    openTableTabs(connId, [item]);
   };
 
-  const runOpenFavoriteBatch = async (
-    list: FavoriteTable[],
-    signal: AbortSignal
-  ) => {
-    for (let i = 0; i < list.length; i += 1) {
-      const item = list[i];
-      if (signal.aborted) break;
-      const label = `${item.database}.${item.table}`;
-      setBatchOpen({
-        completed: i,
-        total: list.length,
-        currentLabel: label,
-        aborted: false,
-      });
-      await handleSelectTable(item);
-      if (signal.aborted) break;
-      setBatchOpen({
-        completed: i + 1,
-        total: list.length,
-        currentLabel: label,
-        aborted: false,
-      });
-    }
-  };
-
-  const handleOpenAllFavorites = async () => {
+  const handleOpenAllFavorites = () => {
     if (!connId || favorites.length === 0) return;
-    const list = [...favorites];
-    if (list.length === 1) {
-      await handleSelectTable(list[0]);
-      return;
-    }
-
-    const ctrl = new AbortController();
-    batchOpenAbortRef.current = ctrl;
-
-    const firstLabel = `${list[0].database}.${list[0].table}`;
-    setBatchOpen({
-      completed: 0,
-      total: list.length,
-      currentLabel: firstLabel,
-      aborted: false,
-    });
-
-    try {
-      await runOpenFavoriteBatch(list, ctrl.signal);
-    } finally {
-      batchOpenAbortRef.current = null;
-      if (!ctrl.signal.aborted) {
-        setBatchOpen(null);
-      }
-    }
-  };
-
-  const handleCancelBatchOpen = () => {
-    batchOpenAbortRef.current?.abort();
-    setBatchOpen((prev) => (prev ? { ...prev, aborted: true } : prev));
-  };
-
-  const handleCloseBatchOpenModal = () => {
-    setBatchOpen(null);
+    openTableTabs(connId, favorites);
   };
 
   const handleClearAllClick = () => {
@@ -193,7 +121,7 @@ export function FavoriteTables({
           <Text>将移除当前连接下的 {favorites.length} 个收藏的表。</Text>
           <br />
           <Text type="secondary" style={{ fontSize: 12 }}>
-            仅影响本连接收藏；可随时在侧边库树中点击星标再次添加。
+            仅影响本连接收藏；可随时在概览的表列表中点击星标再次添加。
           </Text>
         </>
       ),
@@ -247,10 +175,10 @@ export function FavoriteTables({
                   size="small"
                   icon={<FolderOpenOutlined />}
                   aria-label="打开全部收藏"
-                  disabled={!connId || Boolean(batchOpen)}
+                  disabled={!connId}
                   onClick={(e) => {
                     e.stopPropagation();
-                    void handleOpenAllFavorites();
+                    handleOpenAllFavorites();
                   }}
                 />
               </Tooltip>
@@ -261,7 +189,6 @@ export function FavoriteTables({
                   danger
                   icon={<DeleteOutlined />}
                   aria-label="取消全部收藏"
-                  disabled={Boolean(batchOpen)}
                   onClick={(e) => {
                     e.stopPropagation();
                     handleClearAllClick();
@@ -439,124 +366,43 @@ export function FavoriteTables({
   if (!activeConnection) return null;
 
   return (
-    <>
-      <Modal
-        title="批量打开收藏的表"
-        open={
-          !!batchOpen &&
-          !batchOpen.aborted &&
-          batchOpen.completed < batchOpen.total
-        }
-        footer={[
-          <Button
-            key="cancel"
-            onClick={handleCancelBatchOpen}
-            aria-label="中止批量打开"
-          >
-            中止
-          </Button>,
-        ]}
-        closable={false}
-        maskClosable={false}
-        keyboard={false}
-        centered
-        destroyOnHidden
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <Text type="secondary" style={{ fontSize: 13 }}>
-            正在打开：
-            <Text style={{ wordBreak: "break-word" }}>
-              {batchOpen?.currentLabel}
-            </Text>{" "}
-            <Text type="secondary">
-              （
-              {batchOpen
-                ? Math.min(batchOpen.completed + 1, batchOpen.total)
-                : 0}{" "}
-              / {batchOpen?.total ?? 0}）
-            </Text>
-          </Text>
-          <Progress
-            percent={
-              batchOpen && batchOpen.total > 0
-                ? Math.round(
-                    (Math.min(batchOpen.completed, batchOpen.total) /
-                      batchOpen.total) *
-                      100
-                  )
-                : 0
+    <Dropdown
+      open={open}
+      onOpenChange={handleOpenChange}
+      trigger={["click"]}
+      placement="bottomLeft"
+      align={
+        dropdownTreeEdgeRef
+          ? {
+              offset: popupAlignOffset,
+              overflow: { adjustX: true, adjustY: true },
             }
-            status="active"
-          />
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            已完成{" "}
-            {batchOpen ? Math.min(batchOpen.completed, batchOpen.total) : 0} /{" "}
-            {batchOpen?.total ?? 0}
-          </Text>
-        </div>
-      </Modal>
-      <Modal
-        title="已中止批量打开"
-        open={Boolean(batchOpen?.aborted)}
-        closable={false}
-        maskClosable={false}
-        keyboard={false}
-        footer={[
-          <Button key="ok" type="primary" onClick={handleCloseBatchOpenModal}>
-            知道了
-          </Button>,
-        ]}
-        destroyOnHidden
-      >
-        <Text type="secondary" style={{ fontSize: 13 }}>
-          已打开{" "}
-          {batchOpen ? Math.min(batchOpen.completed, batchOpen.total) : 0} /{" "}
-          {batchOpen?.total ?? 0}，其余未继续加载。
-        </Text>
-        <div style={{ marginTop: 8 }}>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            可随时再次点击「打开全部收藏」继续。
-          </Text>
-        </div>
-      </Modal>
-      <Dropdown
-        open={open}
-        onOpenChange={handleOpenChange}
-        trigger={["click"]}
-        placement="bottomLeft"
-        align={
-          dropdownTreeEdgeRef
-            ? {
-                offset: popupAlignOffset,
-                overflow: { adjustX: true, adjustY: true },
-              }
-            : undefined
-        }
-        popupRender={() => dropdownPanel}
-        getPopupContainer={
-          dropdownTreeEdgeRef
-            ? () => document.body
-            : (n) => n.parentElement ?? document.body
-        }
-      >
-        <div ref={triggerWrapRef} style={{ display: "inline-flex" }}>
-          <Tooltip title={`收藏的表 (${favorites.length})`}>
-            <Badge
-              count={favorites.length}
+          : undefined
+      }
+      popupRender={() => dropdownPanel}
+      getPopupContainer={
+        dropdownTreeEdgeRef
+          ? () => document.body
+          : (n) => n.parentElement ?? document.body
+      }
+    >
+      <div ref={triggerWrapRef} style={{ display: "inline-flex" }}>
+        <Tooltip title={`收藏的表 (${favorites.length})`}>
+          <Badge
+            count={favorites.length}
+            size="small"
+            offset={[-6, 4]}
+            showZero={false}
+          >
+            <Button
+              type="default"
               size="small"
-              offset={[-6, 4]}
-              showZero={false}
-            >
-              <Button
-                type="default"
-                size="small"
-                icon={<StarFilled style={{ color: "#faad14", fontSize: 14 }} />}
-                aria-label={`收藏 (${favorites.length})`}
-              />
-            </Badge>
-          </Tooltip>
-        </div>
-      </Dropdown>
-    </>
+              icon={<StarFilled style={{ color: "#faad14", fontSize: 14 }} />}
+              aria-label={`收藏 (${favorites.length})`}
+            />
+          </Badge>
+        </Tooltip>
+      </div>
+    </Dropdown>
   );
 }

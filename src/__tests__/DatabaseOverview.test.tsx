@@ -11,6 +11,7 @@ import {
 import type { TableInfo } from "../types";
 import { useDatabaseStore } from "../stores/databaseStore";
 import { useConnectionStore } from "../stores/connectionStore";
+import { useFavoriteStore } from "../stores/favoriteStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { LIST_TABLE_IDS } from "../utils/listTableColumns";
 
@@ -71,6 +72,7 @@ describe("resolveTableListColumnWidth", () => {
 describe("DatabaseOverview", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useFavoriteStore.setState({ favorites: [] });
     vi.mocked(api.executeSql).mockResolvedValue({
       result_type: "select",
       columns: ["ro", "sro"],
@@ -150,6 +152,44 @@ describe("DatabaseOverview", () => {
       },
     });
   }
+
+  it("PostgreSQL 可在 schema 概览添加和取消收藏，保留其它 schema 同名表", () => {
+    useConnectionStore.setState({
+      activeConnection: {
+        connId: "pg-1",
+        config: {
+          id: "pg-profile",
+          name: "PG",
+          host: "localhost",
+          port: 5432,
+          username: "postgres",
+          database_type: "postgres",
+          database: "appdb",
+        },
+      },
+    });
+    useDatabaseStore.setState({
+      selectedDatabase: "public",
+      tables: { public: [{ ...mockTables[0], engine: "PostgreSQL" }] },
+    });
+    useFavoriteStore.setState({
+      favorites: [
+        { connectionId: "pg-profile", database: "audit", table: "users" },
+      ],
+    });
+    render(<DatabaseOverview />);
+    fireEvent.click(screen.getByRole("button", { name: "收藏 public.users" }));
+    expect(useFavoriteStore.getState().favorites).toEqual([
+      { connectionId: "pg-profile", database: "audit", table: "users" },
+      { connectionId: "pg-profile", database: "public", table: "users" },
+    ]);
+    fireEvent.click(
+      screen.getByRole("button", { name: "取消收藏 public.users" })
+    );
+    expect(useFavoriteStore.getState().favorites).toEqual([
+      { connectionId: "pg-profile", database: "audit", table: "users" },
+    ]);
+  });
 
   it("SQLite 概览确认清空后执行清空操作，不发送实例探测 SQL", async () => {
     useSqliteConnection();

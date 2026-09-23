@@ -42,6 +42,12 @@ describe("getDatabaseCapabilities", () => {
     expect(getDatabaseCapabilities("postgres").sqlFileImportExport).toBe(true);
   });
 
+  it("PostgreSQL 开放连接级收藏与保存 SQL 入口", () => {
+    const caps = getDatabaseCapabilities("postgres");
+    expect(caps.favoriteTables).toBe(true);
+    expect(caps.savedSql).toBe(true);
+  });
+
   it("MySQL 启用全部高级管理与字符集/引擎/列重排/事件", () => {
     const caps = getDatabaseCapabilities("mysql");
     expect(caps.charsetAndCollation).toBe(true);

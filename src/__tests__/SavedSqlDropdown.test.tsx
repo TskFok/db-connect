@@ -152,6 +152,47 @@ describe("SavedSqlDropdown", () => {
       expect(screen.getByText("SQL Server 查询")).toBeInTheDocument();
       expect(screen.queryByText("MySQL 查询")).not.toBeInTheDocument();
     });
+
+    it("PostgreSQL 仅载入当前实际 database 的片段，隔离其他 database 和同地址 MySQL", () => {
+      const config = {
+        name: "PostgreSQL 临时连接",
+        host: "localhost",
+        port: 5432,
+        username: "app",
+        database: "app_database",
+        database_type: "postgres" as const,
+      };
+      const savedSql = useSavedSqlStore.getState();
+      savedSql.add("应用查询", "SELECT * FROM users", config);
+      savedSql.add("审计查询", "SELECT * FROM audit_log", {
+        ...config,
+        database: "audit_database",
+      });
+      savedSql.add("MySQL 查询", "SHOW TABLES", {
+        ...config,
+        database_type: "mysql",
+      });
+      useConnectionStore.setState({
+        activeConnection: { connId: "pg-session", config },
+        activeConnId: "pg-session",
+        activeConnections: { "pg-session": { connId: "pg-session", config } },
+      });
+      useDatabaseStore.getState().switchToConnection("pg-session");
+
+      render(<SavedSqlDropdown />);
+      fireEvent.click(screen.getByRole("button", { name: /已保存的 SQL/ }));
+
+      expect(screen.getByText("应用查询")).toBeInTheDocument();
+      expect(screen.queryByText("审计查询")).not.toBeInTheDocument();
+      expect(screen.queryByText("MySQL 查询")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "加载已保存的 SQL" }));
+      const state = useDatabaseStore.getState();
+      const tab = state.openTabs[state.activeTabIndex];
+      expect(tab?.type).toBe("sql");
+      if (tab?.type !== "sql") throw new Error("未打开 SQL 标签");
+      expect(state.sqlTabContents[tab.id]).toBe("SELECT * FROM users");
+      expect(state.connectionStates["conn-1"]?.openTabs ?? []).toEqual([]);
+    });
   });
 
   describe("内嵌编辑器", () => {

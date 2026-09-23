@@ -36,8 +36,8 @@
 - **新建表**：可视化创建表（列定义、主键、MySQL 引擎、ClickHouse MergeTree 引擎与 ORDER BY、注释）
 - **删除表 / 清空表**：删除表支持确认；MySQL / MariaDB、PostgreSQL、SQL Server、ClickHouse 的物理表支持 **TRUNCATE**（外键等约束导致的失败会给出可读错误提示）；SQLite 概览清空表通过 **DELETE FROM** 删除全部行，保留表结构，不重置自增序列
 - **表搜索**：在数据库概览中按表名或注释搜索（`Cmd/Ctrl+F`）
-- **表收藏**：MySQL / MariaDB、SQLite、SQL Server、ClickHouse 可收藏常用表，在侧边栏顶部快捷访问，支持一键进入和取消收藏；PostgreSQL 当前不展示收藏入口
-- **多标签工作区**：可同时打开多张表的内容页与多个 **SQL** 标签页，在顶部标签栏切换；每个 SQL 标签独立保留编辑器内容与执行结果
+- **表收藏**：MySQL / MariaDB、PostgreSQL、SQLite、SQL Server、ClickHouse 均可从数据库 / schema 概览表格的星标添加或取消收藏，在侧边栏顶部按连接快捷访问，支持一键进入和批量打开收藏
+- **多标签工作区**：可同时打开多张表的内容页与多个 **SQL** 标签页，在顶部标签栏切换；批量打开收藏时先创建标签，仅在激活表标签时加载其元数据；每个 SQL 标签独立保留编辑器内容与执行结果
 - **例程（存储过程 / 函数）**：MySQL / MariaDB、PostgreSQL、SQL Server 在数据库概览的「例程」子标签中列出当前库 / schema 的 `PROCEDURE` / `FUNCTION`，支持类型筛选、查看完整 DDL、删除；SQLite / ClickHouse 不展示例程入口
 - **事件调度（EVENT）**：MySQL / MariaDB 在「事件」子标签中列出调度事件，支持查看 DDL、启用/停用、删除；其他数据库不展示 EVENT 入口
 - **数据库 / schema 级 SQL 导入 / 导出**：在概览工具栏可将 **`.sql` 文件**导入当前数据库 / schema（MySQL / PostgreSQL 按语句拆分执行；SQL Server 按 `GO` 批处理分隔符逐批执行；ClickHouse 支持多行 DDL、`INSERT ... VALUES` 与 `INSERT ... FORMAT` 数据块；支持 PostgreSQL dollar-quoted 函数体，带进度与失败摘要；SQLite 支持基础 SQL 脚本导入，触发器脚本限制见下文）；或导出为 **`.sql`**（结构 + 可选 **INSERT** 数据，INSERT 数量上限可在导出对话框中配置，默认与查询导出上限量级一致）。PostgreSQL 导出覆盖 schema、表、视图、索引、外键、触发器、函数/过程；SQLite 导出覆盖表、视图、索引、触发器与 SQLite 方言 INSERT；SQL Server 导出覆盖当前 schema 的表、视图、普通/唯一索引、外键、触发器、函数/过程与 SQL Server 方言 INSERT；ClickHouse 导出通过 `system.tables` 读取表/视图 `create_table_query`，结构导出包含 `CREATE DATABASE`、表和视图，可选数据导出按表执行 `SELECT ... FORMAT Values` 并受每表行数上限保护
@@ -118,7 +118,7 @@ MySQL / MariaDB、PostgreSQL、SQL Server 支持查看和管理外键；SQLite �
 ### SQL 编辑器
 
 - **Monaco Editor**：语法高亮、多语句执行、选择执行
-- **常用 SQL 片段**：将当前编辑器内容**命名保存**到本地，按连接筛选，在下拉列表中载入、载入并运行或删除（[`savedSqlStore`](src/stores/savedSqlStore.ts)）；PostgreSQL 当前不展示侧边栏保存列表，可在表内 SQL 编辑器中载入
+- **常用 SQL 片段**：所有已支持引擎均可将当前编辑器内容**命名保存**到本地，按连接筛选，在侧边栏或表内 SQL 编辑器的下拉列表中载入、载入并运行或删除（[`savedSqlStore`](src/stores/savedSqlStore.ts)）；片段按载入后的编辑器当前数据库 / schema 执行，不绑定保存时的 schema。PostgreSQL 的 schema 属于连接配置所选的实际 database
 - **SQL 自动补全**：根据当前语句、查询块和子句提示表、字段、函数及关键词；支持表别名、JOIN/ON、UPDATE/SET 和 INSERT 列表，自动处理标识符引用。支持 MySQL、PostgreSQL、SQLite、SQL Server、ClickHouse；CTE/派生表输出、相关外部引用和投影别名解析留待后续阶段。元数据按命名空间共享缓存，切库和断线时隔离，结构修改或刷新后重新加载。
 - **SQL 格式化**：美化编辑器内容或选中的 SQL
 - **多语句支持**：按分号拆分并依次执行，遇到首个错误停止；展示成功执行的语句列表，结果区保留最后一条成功语句的结果

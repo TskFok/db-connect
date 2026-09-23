@@ -203,7 +203,7 @@ describe("DatabaseTree capabilities", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("PostgreSQL MVP 阶段显示 schema/table 但隐藏收藏入口", () => {
+  it("PostgreSQL 显示 schema/table、收藏和已保存 SQL 入口", () => {
     useFavoriteStore.setState({
       favorites: [
         { connectionId: "pg-profile", database: "app", table: "users" },
@@ -252,9 +252,10 @@ describe("DatabaseTree capabilities", () => {
 
     expect(screen.getByText("app")).toBeInTheDocument();
     expect(screen.getByText("users")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /收藏/ })).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /收藏/ })
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: /已保存的 SQL/ })
+    ).toBeInTheDocument();
   });
 
   it("表节点只显示单行表名，不显示行数或收藏入口", () => {
@@ -308,9 +309,7 @@ describe("DatabaseTree capabilities", () => {
 
     render(<DatabaseTree />);
 
-    const title = screen
-      .getByText(databaseName)
-      .closest(".ant-typography");
+    const title = screen.getByText(databaseName).closest(".ant-typography");
     expect(title).not.toBeNull();
     expect(title).toHaveStyle({
       whiteSpace: "nowrap",

@@ -104,6 +104,13 @@ interface DatabaseState {
     database: string,
     table: string
   ) => Promise<void>;
+  /** 仅建立并激活表标签；元数据由内容区在激活后按需加载。 */
+  openTableTabs: (connId: string, entries: OpenTableEntry[]) => void;
+  ensureTableMetadata: (
+    connId: string,
+    database: string,
+    table: string
+  ) => Promise<void>;
   /** 切换到指定索引的表 tab */
   switchTableTab: (connId: string, index: number) => void;
   /** 关闭指定索引的表 tab */
@@ -129,6 +136,12 @@ interface DatabaseState {
   setSqlTabActiveResult: (connId: string, tabId: string, index: number) => void;
   /** 请求指定 SQL 标签页在当前连接下一次执行编辑器内容（编辑器内防抖监听） */
   requestSqlTabExecute: (connId: string, tabId: string) => void;
+  /** 原子消费仍待执行的请求，避免新挂载漏执行或重新挂载重复执行。 */
+  consumeSqlTabExecute: (
+    connId: string,
+    tabId: string,
+    nonce: number
+  ) => { database: string | null } | null;
   /**
    * 标记 SQL 标签页的运行中执行状态。
    * execution 非空表示执行中（executionId 供取消查询使用）；传 null 表示执行结束。
@@ -217,6 +230,9 @@ interface DatabaseState {
   removeConnectionState: (connId: string) => void;
   reset: () => void;
 }
+
+// 标签对象同时作为请求身份：关闭后重开同名表不会接收旧请求的结果。
+const tableMetadataRequests = new WeakMap<OpenTabEntry, Promise<void>>();
 
 export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   activeConnId: null,
@@ -343,6 +359,153 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
 
   selectTable: async (connId: string, database: string, table: string) => {
     await get().openOrSwitchToTable(connId, database, table);
+  },
+
+  openTableTabs: (connId, entries) => {
+    if (entries.length === 0) return;
+    set((current) => {
+      const state = current.connectionStates[connId] ?? emptyConnState();
+      const openTabs = [...state.openTabs];
+      const expandedKeys = new Set(state.expandedKeys);
+      let activeTabIndex = state.activeTabIndex;
+      for (const entry of entries) {
+        const index = openTabs.findIndex(
+          (tab) =>
+            tab.type === "table" &&
+            tab.database === entry.database &&
+            tab.table === entry.table
+        );
+        if (index >= 0) {
+          activeTabIndex = index;
+        } else {
+          openTabs.push({
+            type: "table",
+            database: entry.database,
+            table: entry.table,
+          });
+          activeTabIndex = openTabs.length - 1;
+        }
+        // 未缓存的节点展开会触发树的 loadData；等激活表加载完再展开。
+        if (state.tables[entry.database])
+          expandedKeys.add(`db:${entry.database}`);
+      }
+      const updated: ConnectionDatabaseState = {
+        ...state,
+        openTabs,
+        activeTabIndex,
+        expandedKeys: [...expandedKeys],
+        viewMode: "tab",
+      };
+      applyOpenTabDerivedState(updated);
+      return {
+        connectionStates: { ...current.connectionStates, [connId]: updated },
+        ...(current.activeConnId === connId
+          ? {
+              ...syncCurrentView(updated),
+              structureError: null,
+              structureLoading: false,
+            }
+          : {}),
+      };
+    });
+  },
+
+  ensureTableMetadata: async (connId, database, table) => {
+    const current = get();
+    const state = current.connectionStates[connId];
+    const entry = state?.openTabs[state.activeTabIndex];
+    if (
+      current.activeConnId !== connId ||
+      state?.viewMode !== "tab" ||
+      entry?.type !== "table" ||
+      entry.database !== database ||
+      entry.table !== table
+    ) {
+      return;
+    }
+    const key = `${database}|${table}`;
+    if (state.tableStructures[key] && state.tableInfos[key]) return;
+    const pending = tableMetadataRequests.get(entry);
+    if (pending) return pending;
+
+    const isStillActive = () => {
+      const latest = get();
+      const connection = latest.connectionStates[connId];
+      return (
+        latest.activeConnId === connId &&
+        connection?.viewMode === "tab" &&
+        connection.openTabs[connection.activeTabIndex] === entry
+      );
+    };
+    const request = (async () => {
+      let tableList = state.tables[database];
+      let loadedTableList: TableInfo[] | undefined;
+      let tableInfo: TableInfo | undefined =
+        state.tableInfos[key] ?? tableList?.find((item) => item.name === table);
+      if (!tableInfo) {
+        tableList = await api.listTables(connId, database);
+        loadedTableList = tableList;
+        if (!isStillActive()) return;
+        tableInfo = tableList.find((item) => item.name === table);
+      }
+      if (!tableInfo)
+        throw new Error(`找不到表或视图 ${database}.${table}，请刷新后重试`);
+      const loadedTableInfo = tableInfo;
+      const structure =
+        state.tableStructures[key] ??
+        (await api.getTableStructure(connId, database, table));
+
+      set((latest) => {
+        const connection = latest.connectionStates[connId];
+        if (!connection?.openTabs.includes(entry)) return latest;
+        const listUnchanged =
+          connection.tables[database] === state.tables[database];
+        const currentTableList = listUnchanged
+          ? (loadedTableList ?? connection.tables[database])
+          : connection.tables[database];
+        const currentTableInfo = currentTableList?.find(
+          (item) => item.name === table
+        );
+        if (currentTableList && !currentTableInfo) {
+          throw new Error(`找不到表或视图 ${database}.${table}，请刷新后重试`);
+        }
+        const updated: ConnectionDatabaseState = {
+          ...connection,
+          expandedKeys:
+            isStillActive() && tableList
+              ? [...new Set([...connection.expandedKeys, `db:${database}`])]
+              : connection.expandedKeys,
+          // 仅提交本次获取的列表，且不覆盖请求期间刷新/DDL 更新的缓存。
+          tables:
+            loadedTableList && listUnchanged
+              ? { ...connection.tables, [database]: loadedTableList }
+              : connection.tables,
+          tableStructures: {
+            ...connection.tableStructures,
+            [key]: connection.tableStructures[key] ?? structure,
+          },
+          tableInfos: {
+            ...connection.tableInfos,
+            [key]:
+              currentTableInfo ?? connection.tableInfos[key] ?? loadedTableInfo,
+          },
+        };
+        applyOpenTabDerivedState(updated);
+        return {
+          connectionStates: { ...latest.connectionStates, [connId]: updated },
+          ...(latest.activeConnId === connId ? syncCurrentView(updated) : {}),
+          ...(isStillActive()
+            ? { structureError: null, structureLoading: false }
+            : {}),
+        };
+      });
+    })();
+    tableMetadataRequests.set(entry, request);
+    try {
+      await request;
+    } finally {
+      tableMetadataRequests.delete(entry);
+    }
   },
 
   openOrSwitchToTable: async (
@@ -650,16 +813,46 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     const updated: ConnectionDatabaseState = {
       ...state,
       sqlTabExecuteNonce: newSqlTabExecuteNonce,
+      sqlTabExecuteDatabases: {
+        ...state.sqlTabExecuteDatabases,
+        [tabId]: state.selectedDatabase,
+      },
     };
     const newStates = { ...connectionStates, [connId]: updated };
     const res: Partial<DatabaseState> = {
       connectionStates: newStates,
-      sqlTabExecuteNonce: newSqlTabExecuteNonce,
     };
     if (activeConnId === connId) {
       Object.assign(res, syncCurrentView(updated));
     }
     set(res);
+  },
+
+  consumeSqlTabExecute: (connId, tabId, nonce) => {
+    let consumed: { database: string | null } | null = null;
+    set((current) => {
+      const state = current.connectionStates[connId];
+      if (
+        !state ||
+        nonce <= 0 ||
+        state.sqlTabExecuteNonce[tabId] !== nonce ||
+        !state.openTabs.some((tab) => tab.type === "sql" && tab.id === tabId)
+      ) {
+        return current;
+      }
+      consumed = { database: state.sqlTabExecuteDatabases?.[tabId] ?? null };
+      const sqlTabExecuteNonce = { ...state.sqlTabExecuteNonce, [tabId]: 0 };
+      const sqlTabExecuteDatabases = { ...state.sqlTabExecuteDatabases };
+      delete sqlTabExecuteDatabases[tabId];
+      return {
+        connectionStates: {
+          ...current.connectionStates,
+          [connId]: { ...state, sqlTabExecuteNonce, sqlTabExecuteDatabases },
+        },
+        ...(current.activeConnId === connId ? { sqlTabExecuteNonce } : {}),
+      };
+    });
+    return consumed;
   },
 
   setSqlTabExecution: (
@@ -759,16 +952,19 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       const newSqlTabContents = { ...(state.sqlTabContents ?? {}) };
       const newSqlTabResults = { ...(state.sqlTabResults ?? {}) };
       const newSqlTabExecuteNonce = { ...(state.sqlTabExecuteNonce ?? {}) };
+      const newSqlTabExecuteDatabases = { ...state.sqlTabExecuteDatabases };
       const newSqlTabExecutions = { ...(state.sqlTabExecutions ?? {}) };
       delete newSqlTabContents[closedEntry.id];
       delete newSqlTabResults[closedEntry.id];
       delete newSqlTabExecuteNonce[closedEntry.id];
+      delete newSqlTabExecuteDatabases[closedEntry.id];
       delete newSqlTabExecutions[closedEntry.id];
       updated = {
         ...updated,
         sqlTabContents: newSqlTabContents,
         sqlTabResults: newSqlTabResults,
         sqlTabExecuteNonce: newSqlTabExecuteNonce,
+        sqlTabExecuteDatabases: newSqlTabExecuteDatabases,
         sqlTabExecutions: newSqlTabExecutions,
       };
     }

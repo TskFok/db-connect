@@ -7,7 +7,9 @@ import {
 } from "../utils/savedSqlConnection";
 import { favoriteConnectionKey } from "../utils/favoriteConnection";
 
-function baseConfig(overrides: Partial<ConnectionConfig> = {}): ConnectionConfig {
+function baseConfig(
+  overrides: Partial<ConnectionConfig> = {}
+): ConnectionConfig {
   return {
     name: "本地",
     host: "127.0.0.1",
@@ -43,7 +45,11 @@ describe("savedSqlConnection", () => {
       baseConfig({ database_type: "sqlserver", port: 1433, username: "sa" })
     );
     const clickhouse = savedSqlConnectionKey(
-      baseConfig({ database_type: "clickhouse", port: 8123, username: "default" })
+      baseConfig({
+        database_type: "clickhouse",
+        port: 8123,
+        username: "default",
+      })
     );
     expect(mysql).not.toBe(postgres);
     expect(clickhouse).not.toBe(mysql);
@@ -55,10 +61,34 @@ describe("savedSqlConnection", () => {
     expect(sqlserver).not.toBe(mysql);
   });
 
+  it("PostgreSQL 临时连接按实际 database 隔离保存的 SQL", () => {
+    const appKey = savedSqlConnectionKey(
+      baseConfig({ database_type: "postgres", database: "app" })
+    );
+    const auditKey = savedSqlConnectionKey(
+      baseConfig({ database_type: "postgres", database: "audit" })
+    );
+
+    expect(appKey).not.toBe(auditKey);
+    expect(
+      filterSavedSqlByConnectionKey(
+        [
+          { name: "应用查询", connectionKey: appKey },
+          { name: "审计查询", connectionKey: auditKey },
+        ],
+        appKey
+      ).map((item) => item.name)
+    ).toEqual(["应用查询"]);
+  });
+
   it("收藏表连接 key 包含 ClickHouse 类型，避免与同地址 MySQL 串数据", () => {
     const mysql = favoriteConnectionKey(baseConfig({ database_type: "mysql" }));
     const clickhouse = favoriteConnectionKey(
-      baseConfig({ database_type: "clickhouse", port: 8123, username: "default" })
+      baseConfig({
+        database_type: "clickhouse",
+        port: 8123,
+        username: "default",
+      })
     );
 
     expect(mysql).toMatch(/^session:mysql\|/);
@@ -67,11 +97,15 @@ describe("savedSqlConnection", () => {
   });
 
   it("savedSqlConnectionLabel 优先使用连接名称", () => {
-    expect(savedSqlConnectionLabel(baseConfig({ name: "生产库" }))).toBe("生产库");
+    expect(savedSqlConnectionLabel(baseConfig({ name: "生产库" }))).toBe(
+      "生产库"
+    );
   });
 
   it("无可用名称时使用 host:port", () => {
-    expect(savedSqlConnectionLabel(baseConfig({ name: "  " }))).toBe("127.0.0.1:3306");
+    expect(savedSqlConnectionLabel(baseConfig({ name: "  " }))).toBe(
+      "127.0.0.1:3306"
+    );
   });
 });
 

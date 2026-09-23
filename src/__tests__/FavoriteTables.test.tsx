@@ -18,7 +18,7 @@ import {
 import { Modal } from "antd";
 import { FavoriteTables } from "../components/database/FavoriteTables";
 import { useConnectionStore } from "../stores/connectionStore";
-import { useDatabaseStore } from "../stores/databaseStore";
+import { emptyConnState, useDatabaseStore } from "../stores/databaseStore";
 import { useFavoriteStore } from "../stores/favoriteStore";
 import * as tauriCommands from "../services/tauriCommands";
 
@@ -162,7 +162,7 @@ describe("FavoriteTables", () => {
     fireEvent.click(screen.getByRole("button", { name: /收藏/ }));
     expect(screen.getByText("暂无收藏")).toBeInTheDocument();
     expect(
-      screen.getByText(/在数据库树中点击表旁的星标可添加收藏/)
+      screen.getByText(/在数据库概览的表列表中点击星标可添加收藏/)
     ).toBeInTheDocument();
   });
 
@@ -260,144 +260,146 @@ describe("FavoriteTables", () => {
     expect(screen.getByText("myapp.users")).toBeInTheDocument();
   });
 
-  it("点击打开全部收藏会为每个收藏项请求表结构", async () => {
-    const mockCol = [
-      {
-        name: "id",
-        column_type: "int",
-        nullable: false,
-        key: "PRI",
-        default_value: null,
-        extra: "",
-        comment: "",
+  it("打开全部收藏只建立标签，不逐表查询，并保留已有 SQL 标签", () => {
+    useDatabaseStore.setState({
+      connectionStates: {
+        "conn-1": {
+          ...emptyConnState(),
+          openTabs: [{ type: "sql", id: "draft" }],
+          sqlTabContents: { draft: "SELECT 1" },
+        },
       },
-    ];
-    vi.mocked(tauriCommands.listTables).mockResolvedValue([]);
-    vi.mocked(tauriCommands.getTableStructure).mockResolvedValue(mockCol);
-
+    });
     useFavoriteStore.setState({
       favorites: [
-        { connectionId: "conn-1", database: "myapp", table: "users" },
-        { connectionId: "conn-1", database: "myapp", table: "orders" },
+        { connectionId: "conn-1", database: "public", table: "users" },
+        { connectionId: "conn-1", database: "audit", table: "users" },
+        { connectionId: "other", database: "other", table: "secret" },
       ],
     });
-
     render(<FavoriteTables />);
     fireEvent.click(screen.getByRole("button", { name: /收藏/ }));
     fireEvent.click(screen.getByRole("button", { name: "打开全部收藏" }));
 
-    await waitFor(() => {
-      expect(screen.getByText("批量打开收藏的表")).toBeInTheDocument();
-    });
-
-    await waitFor(() => {
-      expect(tauriCommands.getTableStructure).toHaveBeenCalledTimes(2);
-    });
-    expect(tauriCommands.getTableStructure).toHaveBeenCalledWith(
-      "conn-1",
-      "myapp",
-      "users"
-    );
-    expect(tauriCommands.getTableStructure).toHaveBeenCalledWith(
-      "conn-1",
-      "myapp",
-      "orders"
-    );
+    expect(tauriCommands.listTables).not.toHaveBeenCalled();
+    expect(tauriCommands.getTableStructure).not.toHaveBeenCalled();
+    expect(useDatabaseStore.getState().openTabs).toEqual([
+      { type: "sql", id: "draft" },
+      { type: "table", database: "public", table: "users" },
+      { type: "table", database: "audit", table: "users" },
+    ]);
+    expect(useDatabaseStore.getState().selectedDatabase).toBe("audit");
+    expect(useDatabaseStore.getState().sqlTabContents.draft).toBe("SELECT 1");
+    fireEvent.click(screen.getByRole("button", { name: "打开全部收藏" }));
+    expect(useDatabaseStore.getState().openTabs).toHaveLength(3);
   });
 
-  it("批量打开时点击中止仅在当前表加载完成后停止后续表", async () => {
-    const mockCol = [
-      {
-        name: "id",
-        column_type: "int",
-        nullable: false,
-        key: "PRI",
-        default_value: null,
-        extra: "",
-        comment: "",
-      },
-    ];
-    vi.mocked(tauriCommands.listTables).mockResolvedValue([]);
-
-    let resolveFirst!: () => void;
-    const firstGate = new Promise<void>((res) => {
-      resolveFirst = res;
-    });
-
-    vi.mocked(tauriCommands.getTableStructure)
-      .mockReset()
-      .mockImplementationOnce(async () => {
-        await firstGate;
-        return mockCol;
-      })
-      .mockResolvedValue(mockCol);
-
+  it("单条收藏也可直接建立标签且无需批量进度弹窗", () => {
     useFavoriteStore.setState({
       favorites: [
-        { connectionId: "conn-1", database: "myapp", table: "users" },
-        { connectionId: "conn-1", database: "myapp", table: "orders" },
+        { connectionId: "conn-1", database: "public", table: "users" },
       ],
     });
-
     render(<FavoriteTables />);
     fireEvent.click(screen.getByRole("button", { name: /收藏/ }));
     fireEvent.click(screen.getByRole("button", { name: "打开全部收藏" }));
 
-    await waitFor(() => {
-      expect(screen.getByText("批量打开收藏的表")).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "中止批量打开" }));
-
-    await waitFor(() => {
-      expect(screen.getByText(/已中止批量打开/)).toBeInTheDocument();
-    });
-
-    resolveFirst();
-
-    await waitFor(() => {
-      expect(tauriCommands.getTableStructure).toHaveBeenCalledTimes(1);
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "知道了" }));
-    await waitFor(() => {
-      expect(screen.queryByText(/已中止批量打开/)).not.toBeInTheDocument();
-    });
+    expect(tauriCommands.listTables).not.toHaveBeenCalled();
+    expect(tauriCommands.getTableStructure).not.toHaveBeenCalled();
+    expect(useDatabaseStore.getState().openTabs).toEqual([
+      { type: "table", database: "public", table: "users" },
+    ]);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("仅 1 条收藏时打开全部不显示进度弹窗", async () => {
-    const mockCol = [
-      {
-        name: "id",
-        column_type: "int",
-        nullable: false,
-        key: "PRI",
-        default_value: null,
-        extra: "",
-        comment: "",
+  it("PostgreSQL 使用 schema 提示，并隔离临时连接的实际数据库", () => {
+    useConnectionStore.setState({
+      activeConnection: {
+        connId: "pg-1",
+        config: {
+          name: "PG 临时连接",
+          host: "localhost",
+          port: 5432,
+          username: "postgres",
+          database_type: "postgres",
+          database: "appdb",
+        },
       },
-    ];
-    vi.mocked(tauriCommands.listTables).mockResolvedValue([]);
-    vi.mocked(tauriCommands.getTableStructure).mockResolvedValue(mockCol);
-
+    });
     useFavoriteStore.setState({
       favorites: [
-        { connectionId: "conn-1", database: "myapp", table: "users" },
+        {
+          connectionId: "session:postgres|localhost|5432|postgres|otherdb",
+          database: "public",
+          table: "secret",
+        },
       ],
     });
-
     render(<FavoriteTables />);
     fireEvent.click(screen.getByRole("button", { name: /收藏/ }));
-    fireEvent.click(screen.getByRole("button", { name: "打开全部收藏" }));
+    expect(
+      screen.getByPlaceholderText(/搜索 schema 或表名/)
+    ).toBeInTheDocument();
+    expect(screen.getByText("暂无收藏")).toBeInTheDocument();
+    expect(
+      screen.getByText(/在 schema 概览的表列表中点击星标可添加收藏/)
+    ).toBeInTheDocument();
+    expect(screen.queryByText("public.secret")).not.toBeInTheDocument();
+  });
 
-    await waitFor(() => {
-      expect(tauriCommands.getTableStructure).toHaveBeenCalledWith(
-        "conn-1",
-        "myapp",
-        "users"
-      );
+  it("PostgreSQL 单击收藏按 schema 打开，并可单独取消同名表", async () => {
+    useConnectionStore.setState({
+      activeConnection: {
+        connId: "pg-1",
+        config: {
+          id: "pg-profile",
+          name: "PG",
+          host: "localhost",
+          port: 5432,
+          username: "postgres",
+          database_type: "postgres",
+          database: "appdb",
+        },
+      },
     });
-    expect(screen.queryByText(/批量打开收藏的表/)).not.toBeInTheDocument();
+    useDatabaseStore.setState({ activeConnId: "pg-1" });
+    useFavoriteStore.setState({
+      favorites: [
+        { connectionId: "pg-profile", database: "public", table: "users" },
+        { connectionId: "pg-profile", database: "audit", table: "users" },
+      ],
+    });
+    vi.mocked(tauriCommands.listTables).mockResolvedValue([
+      {
+        name: "users",
+        table_type: "VIEW",
+        engine: "PostgreSQL",
+        rows: null,
+        data_length: null,
+        index_length: null,
+        comment: "",
+      },
+    ]);
+    vi.mocked(tauriCommands.getTableStructure).mockResolvedValue([]);
+    render(<FavoriteTables />);
+    fireEvent.click(screen.getByRole("button", { name: /收藏/ }));
+    fireEvent.click(screen.getByText("audit.users"));
+    await waitFor(() => {
+      expect(useDatabaseStore.getState().selectedDatabase).toBe("audit");
+    });
+    expect(tauriCommands.listTables).not.toHaveBeenCalled();
+    expect(tauriCommands.getTableStructure).not.toHaveBeenCalled();
+    expect(useDatabaseStore.getState().openTabs).toEqual([
+      { type: "table", database: "audit", table: "users" },
+    ]);
+    fireEvent.click(
+      screen.getByRole("button", { name: "取消收藏 audit.users" })
+    );
+    expect(screen.queryByText("audit.users")).not.toBeInTheDocument();
+    expect(screen.getByText("public.users")).toBeInTheDocument();
+    expect(useFavoriteStore.getState().favorites).toEqual([
+      { connectionId: "pg-profile", database: "public", table: "users" },
+    ]);
   });
 
   it("下拉内搜索可过滤收藏列表", () => {

@@ -355,6 +355,81 @@ describe("databaseStore", () => {
       expect(useDatabaseStore.getState().sqlTabExecuteNonce?.[sqlId]).toBe(2);
     });
 
+    it("SQL 执行请求仅允许消费当前令牌一次，拒绝过期令牌", () => {
+      const store = useDatabaseStore.getState();
+      store.openSqlTab("conn-1", "SELECT 1");
+      const entry = useDatabaseStore.getState().openTabs[0];
+      if (entry.type !== "sql") throw new Error("预期 SQL 标签");
+      store.requestSqlTabExecute("conn-1", entry.id);
+      store.requestSqlTabExecute("conn-1", entry.id);
+      expect(store.consumeSqlTabExecute("conn-1", entry.id, 1)).toBeNull();
+      expect(useDatabaseStore.getState().sqlTabExecuteNonce[entry.id]).toBe(2);
+      expect(store.consumeSqlTabExecute("conn-1", entry.id, 2)).toEqual({
+        database: null,
+      });
+      expect(useDatabaseStore.getState().sqlTabExecuteNonce[entry.id]).toBe(0);
+      expect(store.consumeSqlTabExecute("conn-1", entry.id, 2)).toBeNull();
+      expect(store.consumeSqlTabExecute("conn-1", entry.id, 0)).toBeNull();
+    });
+
+    it("关闭的 SQL 标签不能消费请求，其他连接的消费不会污染当前连接", () => {
+      const store = useDatabaseStore.getState();
+      store.openSqlTab("conn-1", "SELECT 1");
+      const entry = useDatabaseStore.getState().openTabs[0];
+      if (entry.type !== "sql") throw new Error("预期 SQL 标签");
+      store.requestSqlTabExecute("conn-1", entry.id);
+      store.switchToConnection("conn-2");
+      expect(store.consumeSqlTabExecute("conn-1", entry.id, 1)).toEqual({
+        database: null,
+      });
+      expect(useDatabaseStore.getState().sqlTabExecuteNonce).toEqual({});
+      expect(
+        useDatabaseStore.getState().connectionStates["conn-1"]
+          .sqlTabExecuteNonce[entry.id]
+      ).toBe(0);
+      store.closeTab("conn-1", 0);
+      expect(store.consumeSqlTabExecute("conn-1", entry.id, 1)).toBeNull();
+    });
+
+    it("SQL 执行请求保留发起时 schema，消费和关闭标签后清理上下文", () => {
+      const store = useDatabaseStore.getState();
+      store.openTableTabs("conn-1", [{ database: "public", table: "users" }]);
+      store.openSqlTab("conn-1", "SELECT * FROM users");
+      const entry = useDatabaseStore.getState().openTabs[1];
+      if (entry.type !== "sql") throw new Error("预期 SQL 标签");
+      store.requestSqlTabExecute("conn-1", entry.id);
+      store.openTableTabs("conn-1", [
+        { database: "analytics", table: "events" },
+      ]);
+      expect(store.consumeSqlTabExecute("conn-1", entry.id, 1)).toEqual({
+        database: "public",
+      });
+      expect(
+        useDatabaseStore.getState().connectionStates["conn-1"]
+          .sqlTabExecuteDatabases?.[entry.id]
+      ).toBeUndefined();
+      store.requestSqlTabExecute("conn-1", entry.id);
+      store.closeTab("conn-1", 1);
+      expect(
+        useDatabaseStore.getState().connectionStates["conn-1"]
+          .sqlTabExecuteDatabases?.[entry.id]
+      ).toBeUndefined();
+    });
+
+    it("向非活动连接请求执行仅登记在目标连接，不污染当前连接令牌", () => {
+      const store = useDatabaseStore.getState();
+      store.openSqlTab("conn-1", "SELECT 1");
+      const entry = useDatabaseStore.getState().openTabs[0];
+      if (entry.type !== "sql") throw new Error("预期 SQL 标签");
+      store.switchToConnection("conn-2");
+      store.requestSqlTabExecute("conn-1", entry.id);
+      expect(useDatabaseStore.getState().sqlTabExecuteNonce).toEqual({});
+      expect(
+        useDatabaseStore.getState().connectionStates["conn-1"]
+          .sqlTabExecuteNonce[entry.id]
+      ).toBe(1);
+    });
+
     it("requestSqlTabExecute 对不存在的标签 id 不生效", () => {
       useDatabaseStore.getState().openSqlTab("conn-1", "SELECT 1");
       useDatabaseStore

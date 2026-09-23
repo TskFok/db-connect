@@ -60,6 +60,7 @@ import { tokenizeSql } from "../../utils/sqlCompletionTokenizer";
 
 setupMonacoEditor();
 import { normalizeDatabaseType } from "../../utils/connectionConfig";
+import { getDatabaseCapabilities } from "../../utils/databaseCapabilities";
 import {
   assertCsvRowWithinLimit,
   buildQueryResultWorkbookBase64,
@@ -84,6 +85,8 @@ export interface SqlEditorProps {
   /** 独立 SQL 标签页 id，提供时从 store 读写内容 */
   tabId?: string;
 }
+
+type SqlExecutionContext = { database: string | null };
 
 export function SqlEditor({ tabId }: SqlEditorProps) {
   const activeConnection = useConnectionStore((s) => s.activeConnection);
@@ -129,6 +132,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
   const [prefetchedVersionReadyKey, setPrefetchedVersionReadyKey] =
     useState("");
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const [editorReady, setEditorReady] = useState(false);
   /** 当前正在执行语句的取消令牌（用于「停止」按钮取消运行中的查询） */
   const currentExecutionIdRef = useRef<string | null>(null);
 
@@ -136,6 +140,10 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
   const databaseType = normalizeDatabaseType(
     activeConnection?.config.database_type
   );
+  const databaseContextNoun =
+    getDatabaseCapabilities(databaseType).databaseObjectNoun === "schema"
+      ? "schema"
+      : "数据库";
   const versionProbeKey = `${connId}::${currentDb ?? ""}`;
   const prefetchedVersionLoading =
     !!connId && prefetchedVersionReadyKey !== versionProbeKey;
@@ -433,143 +441,149 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     [getEditorSqlSnippet, tabId, setSqlTabResult, markExecution]
   );
 
-  const doExecute = useCallback(async () => {
-    const ed = editorRef.current;
-    const { connId: cid, currentDb: db } = execParamsRef.current;
-    if (!ed || !cid) return;
+  const doExecute = useCallback(
+    async (context?: SqlExecutionContext) => {
+      const ed = editorRef.current;
+      const { connId: cid, currentDb } = execParamsRef.current;
+      const db = context ? context.database : currentDb;
+      if (!ed || !cid) return;
 
-    const selection = ed.getSelection();
-    const rawSql =
-      selection && !selection.isEmpty()
-        ? (ed.getModel()?.getValueInRange(selection) ?? "")
-        : ed.getValue();
+      const selection = ed.getSelection();
+      const rawSql =
+        selection && !selection.isEmpty()
+          ? (ed.getModel()?.getValueInRange(selection) ?? "")
+          : ed.getValue();
 
-    const sql = rawSql.trim();
-    if (!sql) return;
+      const sql = rawSql.trim();
+      if (!sql) return;
 
-    const statements = splitSqlStatements(sql);
-    const skipDangerConfirm =
-      activeConnection?.config.skip_dangerous_sql_confirm === true;
-    const dangerousStmts = listDangerousSqlStatements(statements);
-    if (dangerousStmts.length > 0 && !skipDangerConfirm) {
-      const confirmed = await new Promise<boolean>((resolve) => {
-        Modal.confirm({
-          title: "确认执行高危语句",
-          width: 560,
-          content: (
-            <div>
-              <p style={{ marginBottom: 8 }}>
-                以下语句可能造成数据或整库不可恢复地丢失，是否仍要执行？
-              </p>
-              <ul
-                style={{
-                  paddingLeft: 20,
-                  margin: 0,
-                  maxHeight: 220,
-                  overflow: "auto",
-                }}
-              >
-                {dangerousStmts.map((s, i) => (
-                  <li
-                    key={i}
-                    style={{
-                      fontFamily: "monospace",
-                      fontSize: 12,
-                      wordBreak: "break-all",
-                    }}
-                  >
-                    {s.length > 500 ? `${s.slice(0, 500)}…` : s}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ),
-          okText: "仍要执行",
-          okType: "danger",
-          cancelText: "取消",
-          onOk: () => resolve(true),
-          onCancel: () => resolve(false),
+      const statements = splitSqlStatements(sql);
+      const skipDangerConfirm =
+        activeConnection?.config.skip_dangerous_sql_confirm === true;
+      const dangerousStmts = listDangerousSqlStatements(statements);
+      if (dangerousStmts.length > 0 && !skipDangerConfirm) {
+        const confirmed = await new Promise<boolean>((resolve) => {
+          Modal.confirm({
+            title: "确认执行高危语句",
+            width: 560,
+            content: (
+              <div>
+                <p style={{ marginBottom: 8 }}>
+                  以下语句可能造成数据或整库不可恢复地丢失，是否仍要执行？
+                </p>
+                <ul
+                  style={{
+                    paddingLeft: 20,
+                    margin: 0,
+                    maxHeight: 220,
+                    overflow: "auto",
+                  }}
+                >
+                  {dangerousStmts.map((s, i) => (
+                    <li
+                      key={i}
+                      style={{
+                        fontFamily: "monospace",
+                        fontSize: 12,
+                        wordBreak: "break-all",
+                      }}
+                    >
+                      {s.length > 500 ? `${s.slice(0, 500)}…` : s}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ),
+            okText: "仍要执行",
+            okType: "danger",
+            cancelText: "取消",
+            onOk: () => resolve(true),
+            onCancel: () => resolve(false),
+          });
         });
-      });
-      if (!confirmed) return;
-    }
-
-    markExecution(cid, { executionId: null });
-    if (tabId && cid) {
-      setSqlTabResult(cid, tabId, null, null, []);
-    } else {
-      setLocalError(null);
-      setLocalResult(null);
-      setLocalStatementResults([]);
-      setLocalActiveResultIndex(0);
-    }
-    const successfulSql: string[] = [];
-    const executionResults: SqlStatementResult[] = [];
-    let lastResult: SqlExecuteResult | null = null;
-    let execError: string | null = null;
-
-    try {
-      for (let i = 0; i < statements.length; i++) {
-        const stmt = statements[i];
-        const execId = `${tabId ?? "local"}-${Date.now()}-${i}`;
-        markExecution(cid, { executionId: execId });
-        const res = await api.executeSql(cid, db, stmt, execId);
-        successfulSql.push(stmt);
-        lastResult = res;
-        executionResults.push({ sql: stmt, result: res, error: null });
+        if (!confirmed) return;
       }
-    } catch (e) {
-      execError = String(e);
-      executionResults.push({
-        sql: statements[successfulSql.length],
-        result: null,
-        error: execError,
-      });
-    } finally {
-      // 成功的 DDL 可能带跨库目标；保守使当前连接失效，不执行额外探测 SQL。
-      if (
-        successfulSql.some((sql) => {
-          const first = tokenizeSql(sql, completionDialectRef.current).find(
-            (token) => token.kind !== "comment"
-          );
-          return (
-            !!first &&
-            !first.quoted &&
-            ["CREATE", "ALTER", "DROP", "RENAME"].includes(
-              first.text.toUpperCase()
-            )
-          );
-        })
-      ) {
-        invalidateSqlCompletion({ connId: cid, reason: "schema-change" });
-      }
-      markExecution(cid, null);
+
+      markExecution(cid, { executionId: null });
       if (tabId && cid) {
-        setSqlTabResult(
-          cid,
-          tabId,
-          lastResult,
-          execError,
-          successfulSql,
-          executionResults
-        );
-        if (execError) {
-          setSqlTabActiveResult(cid, tabId, executionResults.length - 1);
-        }
+        setSqlTabResult(cid, tabId, null, null, []);
       } else {
-        setLocalError(execError);
-        setLocalResult(lastResult);
-        setLocalStatementResults(executionResults);
-        setLocalActiveResultIndex(execError ? executionResults.length - 1 : 0);
+        setLocalError(null);
+        setLocalResult(null);
+        setLocalStatementResults([]);
+        setLocalActiveResultIndex(0);
       }
-    }
-  }, [
-    tabId,
-    setSqlTabResult,
-    setSqlTabActiveResult,
-    markExecution,
-    activeConnection?.config.skip_dangerous_sql_confirm,
-  ]);
+      const successfulSql: string[] = [];
+      const executionResults: SqlStatementResult[] = [];
+      let lastResult: SqlExecuteResult | null = null;
+      let execError: string | null = null;
+
+      try {
+        for (let i = 0; i < statements.length; i++) {
+          const stmt = statements[i];
+          const execId = `${tabId ?? "local"}-${Date.now()}-${i}`;
+          markExecution(cid, { executionId: execId });
+          const res = await api.executeSql(cid, db, stmt, execId);
+          successfulSql.push(stmt);
+          lastResult = res;
+          executionResults.push({ sql: stmt, result: res, error: null });
+        }
+      } catch (e) {
+        execError = String(e);
+        executionResults.push({
+          sql: statements[successfulSql.length],
+          result: null,
+          error: execError,
+        });
+      } finally {
+        // 成功的 DDL 可能带跨库目标；保守使当前连接失效，不执行额外探测 SQL。
+        if (
+          successfulSql.some((sql) => {
+            const first = tokenizeSql(sql, completionDialectRef.current).find(
+              (token) => token.kind !== "comment"
+            );
+            return (
+              !!first &&
+              !first.quoted &&
+              ["CREATE", "ALTER", "DROP", "RENAME"].includes(
+                first.text.toUpperCase()
+              )
+            );
+          })
+        ) {
+          invalidateSqlCompletion({ connId: cid, reason: "schema-change" });
+        }
+        markExecution(cid, null);
+        if (tabId && cid) {
+          setSqlTabResult(
+            cid,
+            tabId,
+            lastResult,
+            execError,
+            successfulSql,
+            executionResults
+          );
+          if (execError) {
+            setSqlTabActiveResult(cid, tabId, executionResults.length - 1);
+          }
+        } else {
+          setLocalError(execError);
+          setLocalResult(lastResult);
+          setLocalStatementResults(executionResults);
+          setLocalActiveResultIndex(
+            execError ? executionResults.length - 1 : 0
+          );
+        }
+      }
+    },
+    [
+      tabId,
+      setSqlTabResult,
+      setSqlTabActiveResult,
+      markExecution,
+      activeConnection?.config.skip_dangerous_sql_confirm,
+    ]
+  );
 
   /** 停止：取消（KILL QUERY）当前正在执行的语句（tab 模式从 store 读取令牌，跨卸载仍可停止） */
   const handleStop = useCallback(async () => {
@@ -598,24 +612,19 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
   const tabExecuteNonce = useDatabaseStore((s) =>
     tabId ? ((s.sqlTabExecuteNonce ?? {})[tabId] ?? 0) : 0
   );
-  const tabExecuteNonceSyncedRef = useRef<number | undefined>(undefined);
   useEffect(() => {
-    tabExecuteNonceSyncedRef.current = undefined;
-  }, [tabId]);
-
-  useEffect(() => {
-    if (!tabId || !connId) return;
-    const n = tabExecuteNonce;
-    const prev = tabExecuteNonceSyncedRef.current;
-    if (prev === undefined) {
-      tabExecuteNonceSyncedRef.current = n;
+    if (!tabId || !connId || !editorReady || tabExecuting || !tabExecuteNonce) {
       return;
     }
-    if (n > prev) {
-      tabExecuteNonceSyncedRef.current = n;
-      void doExecute();
+    // 请求可早于 Monaco 挂载；消费后再运行，切换标签不会重复执行。
+    const context = useDatabaseStore
+      .getState()
+      .consumeSqlTabExecute(connId, tabId, tabExecuteNonce);
+    if (context) {
+      setCurrentDb(context.database);
+      void doExecute(context);
     }
-  }, [tabExecuteNonce, tabId, connId, doExecute]);
+  }, [tabExecuteNonce, tabId, connId, editorReady, tabExecuting, doExecute]);
 
   const completionDisposableRef = useRef<ReturnType<
     typeof registerSqlEditorCompletion
@@ -634,6 +643,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
   const handleEditorMount: OnMount = useCallback(
     (ed: editor.IStandaloneCodeEditor, monaco) => {
       editorRef.current = ed;
+      setEditorReady(true);
 
       ed.addAction({
         id: "execute-sql",
@@ -921,7 +931,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
             type="primary"
             icon={<PlayCircleOutlined />}
             size="small"
-            onClick={doExecute}
+            onClick={() => void doExecute()}
             loading={executing}
           >
             执行
@@ -1040,7 +1050,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
 
         <Space>
           <Text type="secondary" style={{ fontSize: 12 }}>
-            数据库:
+            {databaseContextNoun}:
           </Text>
           <Select
             size="small"
@@ -1050,7 +1060,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
             }
             style={{ width: 180 }}
             allowClear
-            placeholder="选择数据库"
+            placeholder={`选择${databaseContextNoun}`}
             options={databases.map((db) => ({ value: db, label: db }))}
           />
         </Space>

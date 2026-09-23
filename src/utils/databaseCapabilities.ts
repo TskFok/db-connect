@@ -74,8 +74,8 @@ const POSTGRES_CAPABILITIES: DatabaseCapabilities = {
   indexManagement: true,
   foreignKeyManagement: true,
   sqlFileImportExport: true,
-  savedSql: false,
-  favoriteTables: false,
+  savedSql: true,
+  favoriteTables: true,
   // PostgreSQL schema 级别不暴露字符集/排序规则；这些在 PG 是 database（cluster）级别
   charsetAndCollation: false,
   // PostgreSQL 无存储引擎概念

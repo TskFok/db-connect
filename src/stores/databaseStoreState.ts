@@ -62,8 +62,10 @@ export interface ConnectionDatabaseState {
   sqlTabContents: Record<string, string>;
   /** SQL 标签页执行结果及当前选中的结果标签。 */
   sqlTabResults: Record<string, SqlTabResultState>;
-  /** 侧边栏等对指定 SQL 标签页请求执行时的单调递增令牌（编辑器内监听 nonce 触发执行） */
+  /** 侧边栏等发起的待执行令牌；未消费时递增，编辑器成功消费后清零。 */
   sqlTabExecuteNonce: Record<string, number>;
+  /** 待执行请求发起时选择的 database/schema，消费后删除。 */
+  sqlTabExecuteDatabases?: Record<string, string | null>;
   /**
    * SQL 标签页运行中的执行状态：id -> { executionId }。
    * 存在即表示执行中；executionId 供「停止」按钮取消查询。
