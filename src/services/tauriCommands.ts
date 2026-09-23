@@ -833,13 +833,15 @@ export async function queryTableCount(
   connId: string,
   database: string,
   table: string,
-  whereClause?: string
+  whereClause?: string,
+  executionId?: string
 ): Promise<number> {
   return invoke<number>("query_table_count", {
     connId,
     database,
     table,
     whereClause: whereClause ?? null,
+    executionId: executionId ?? null,
   });
 }
 
@@ -865,7 +867,8 @@ export async function queryTableData(
   whereClause?: string,
   selectColumns?: string[],
   skipCount?: boolean,
-  navigation?: TablePageNavigation
+  navigation?: TablePageNavigation,
+  executionId?: string
 ): Promise<TablePageResult> {
   return invoke<TablePageResult>("query_table_data", {
     connId,
@@ -878,7 +881,16 @@ export async function queryTableData(
     selectColumns: selectColumns ?? null,
     skipCount: skipCount ?? null,
     navigation: navigation ?? null,
+    executionId: executionId ?? null,
   });
+}
+
+/** 中断由 executionId 标识的表数据或总数查询。 */
+export async function cancelTableQuery(
+  connId: string,
+  executionId: string
+): Promise<boolean> {
+  return invoke<boolean>("cancel_table_query", { connId, executionId });
 }
 
 /**

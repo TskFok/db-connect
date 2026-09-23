@@ -6,6 +6,7 @@ use crate::db::sql_utils::{
     sqlserver_count_query, sqlserver_id, sqlserver_paginated_select,
     sqlserver_sql_editor_allowed_on_read_only_connection, sqlserver_str, validate_where_clause,
 };
+use crate::db::table_query::TableQueryCancellation;
 use crate::models::types::{
     ColumnInfo, ConnectionConfig, QueryResult, SessionInfo, SqlCompletionColumn,
     SqlCompletionMetadata, SqlCompletionTable, SqlExecuteResult, TableInfo,
@@ -547,21 +548,27 @@ pub async fn query_table_count(
     schema: &str,
     table: &str,
     where_clause: Option<String>,
+    cancellation: &TableQueryCancellation,
 ) -> Result<u64, String> {
     let where_sql = build_where_sql(&where_clause)?;
     let count_sql = sqlserver_count_query(schema, table, &where_sql);
-    let mut client = get_client_with_retry(pool).await?;
-    let row = client
-        .simple_query(count_sql)
-        .await
-        .map_err(|e| normalize_sqlserver_error("查询总数失败", e.to_string()))?
-        .into_row()
-        .await
-        .map_err(|e| normalize_sqlserver_error("读取总数失败", e.to_string()))?;
+    let mut client = cancellation.run(get_client_with_retry(pool)).await?;
+    let result = cancellation
+        .run(async {
+            let row = client
+                .simple_query(count_sql)
+                .await
+                .map_err(|e| normalize_sqlserver_error("查询总数失败", e.to_string()))?
+                .into_row()
+                .await
+                .map_err(|e| normalize_sqlserver_error("读取总数失败", e.to_string()))?;
 
-    Ok(row
-        .and_then(|row| i64_to_u64(row.get::<i64, _>("cnt")))
-        .unwrap_or(0))
+            Ok(row
+                .and_then(|row| i64_to_u64(row.get::<i64, _>("cnt")))
+                .unwrap_or(0))
+        })
+        .await;
+    client.discard_on_error(result)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -575,118 +582,123 @@ pub async fn query_table_data(
     where_clause: Option<String>,
     select_columns: Option<Vec<String>>,
     skip_count: Option<bool>,
+    cancellation: &TableQueryCancellation,
 ) -> Result<QueryResult, String> {
     let start = Instant::now();
     let where_sql = build_where_sql(&where_clause)?;
-    let mut client = get_client_with_retry(pool).await?;
-
-    let total = if skip_count == Some(true) {
-        0
-    } else {
-        let count_sql = sqlserver_count_query(schema, table, &where_sql);
-        let row = client
-            .simple_query(count_sql)
-            .await
-            .map_err(|e| normalize_sqlserver_error("查询总数失败", e.to_string()))?
-            .into_row()
-            .await
-            .map_err(|e| normalize_sqlserver_error("读取总数失败", e.to_string()))?;
-        row.and_then(|row| i64_to_u64(row.get::<i64, _>("cnt")))
-            .unwrap_or(0)
-    };
-
-    let mut pk_cols: Option<Vec<String>> = None;
-    let mut selected_columns_for_empty_result: Option<Vec<String>> = None;
-    let select_part = match &select_columns {
-        Some(cols) if !cols.is_empty() => {
-            let fetched_pk =
-                fetch_row_locator_columns_on_client(&mut client, schema, table).await?;
-            let mut merged = cols.clone();
-            for pk in &fetched_pk {
-                if !merged.iter().any(|c| c == pk) {
-                    merged.push(pk.clone());
-                }
-            }
-            pk_cols = Some(fetched_pk);
-            selected_columns_for_empty_result = Some(merged.clone());
-            merged
-                .iter()
-                .map(|c| sqlserver_id(c))
-                .collect::<Vec<_>>()
-                .join(", ")
-        }
-        _ => "*".to_string(),
-    };
-
-    let order_sql = if order_sql.trim().is_empty() {
-        let pk = match &pk_cols {
-            Some(cols) => cols.clone(),
-            None => {
-                let fetched =
-                    fetch_row_locator_columns_on_client(&mut client, schema, table).await?;
-                fetched
-            }
-        };
-        if !pk.is_empty() {
-            format!(
-                " ORDER BY {}",
-                pk.iter()
-                    .map(|c| format!("{} ASC", sqlserver_id(c)))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        } else {
-            let columns = fetch_column_names_on_client(&mut client, schema, table).await?;
-            if columns.is_empty() {
-                String::new()
+    let mut client = cancellation.run(get_client_with_retry(pool)).await?;
+    let result = cancellation
+        .run(async {
+            let total = if skip_count == Some(true) {
+                0
             } else {
-                format!(
-                    " ORDER BY {}",
-                    columns
+                let count_sql = sqlserver_count_query(schema, table, &where_sql);
+                let row = client
+                    .simple_query(count_sql)
+                    .await
+                    .map_err(|e| normalize_sqlserver_error("查询总数失败", e.to_string()))?
+                    .into_row()
+                    .await
+                    .map_err(|e| normalize_sqlserver_error("读取总数失败", e.to_string()))?;
+                row.and_then(|row| i64_to_u64(row.get::<i64, _>("cnt")))
+                    .unwrap_or(0)
+            };
+
+            let mut pk_cols: Option<Vec<String>> = None;
+            let mut selected_columns_for_empty_result: Option<Vec<String>> = None;
+            let select_part = match &select_columns {
+                Some(cols) if !cols.is_empty() => {
+                    let fetched_pk =
+                        fetch_row_locator_columns_on_client(&mut client, schema, table).await?;
+                    let mut merged = cols.clone();
+                    for pk in &fetched_pk {
+                        if !merged.iter().any(|c| c == pk) {
+                            merged.push(pk.clone());
+                        }
+                    }
+                    pk_cols = Some(fetched_pk);
+                    selected_columns_for_empty_result = Some(merged.clone());
+                    merged
                         .iter()
-                        .map(|c| format!("{} ASC", sqlserver_id(c)))
+                        .map(|c| sqlserver_id(c))
                         .collect::<Vec<_>>()
                         .join(", ")
-                )
+                }
+                _ => "*".to_string(),
+            };
+
+            let order_sql = if order_sql.trim().is_empty() {
+                let pk = match &pk_cols {
+                    Some(cols) => cols.clone(),
+                    None => {
+                        let fetched =
+                            fetch_row_locator_columns_on_client(&mut client, schema, table).await?;
+                        fetched
+                    }
+                };
+                if !pk.is_empty() {
+                    format!(
+                        " ORDER BY {}",
+                        pk.iter()
+                            .map(|c| format!("{} ASC", sqlserver_id(c)))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                } else {
+                    let columns = fetch_column_names_on_client(&mut client, schema, table).await?;
+                    if columns.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            " ORDER BY {}",
+                            columns
+                                .iter()
+                                .map(|c| format!("{} ASC", sqlserver_id(c)))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    }
+                }
+            } else {
+                order_sql
+            };
+
+            let offset = page.saturating_sub(1) as u64 * page_size as u64;
+            let data_sql = sqlserver_paginated_select(
+                &select_part,
+                schema,
+                table,
+                &where_sql,
+                &order_sql,
+                page_size as u64,
+                offset,
+            );
+
+            let rows = client
+                .simple_query(data_sql)
+                .await
+                .map_err(|e| normalize_sqlserver_error("查询数据失败", e.to_string()))?
+                .into_first_result()
+                .await
+                .map_err(|e| normalize_sqlserver_error("读取数据失败", e.to_string()))?;
+            let (mut columns, rows) = rows_to_columns_and_json(&rows);
+
+            if columns.is_empty() && rows.is_empty() {
+                columns = match selected_columns_for_empty_result {
+                    Some(cols) => cols,
+                    None => fetch_column_names_on_client(&mut client, schema, table).await?,
+                };
             }
-        }
-    } else {
-        order_sql
-    };
 
-    let offset = page.saturating_sub(1) as u64 * page_size as u64;
-    let data_sql = sqlserver_paginated_select(
-        &select_part,
-        schema,
-        table,
-        &where_sql,
-        &order_sql,
-        page_size as u64,
-        offset,
-    );
-
-    let rows = client
-        .simple_query(data_sql)
-        .await
-        .map_err(|e| normalize_sqlserver_error("查询数据失败", e.to_string()))?
-        .into_first_result()
-        .await
-        .map_err(|e| normalize_sqlserver_error("读取数据失败", e.to_string()))?;
-    let (mut columns, rows) = rows_to_columns_and_json(&rows);
-
-    if columns.is_empty() && rows.is_empty() {
-        columns = match selected_columns_for_empty_result {
-            Some(cols) => cols,
-            None => fetch_column_names_on_client(&mut client, schema, table).await?,
-        };
-    }
-
-    Ok(QueryResult {
-        columns,
-        rows,
-        total,
-        execution_time_ms: start.elapsed().as_millis() as u64,
-    })
+            Ok(QueryResult {
+                columns,
+                rows,
+                total,
+                execution_time_ms: start.elapsed().as_millis() as u64,
+            })
+        })
+        .await;
+    client.discard_on_error(result)
 }
 
 pub async fn run_sql_on_pool(

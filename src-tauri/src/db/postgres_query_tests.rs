@@ -57,6 +57,7 @@ enum QueryPlan {
     FloodRows { rows: usize },
     OversizedRow { bytes: usize },
     HoldAfterDescription,
+    HoldBeforeResponse,
 }
 
 #[derive(Debug)]
@@ -269,7 +270,7 @@ async fn serve_queries(
         if tag == b'X' {
             return Ok(());
         }
-        assert_eq!(tag, b'Q', "fake server only supports simple-query messages");
+        assert!(matches!(tag, b'Q' | b'P'), "expected simple query or Parse");
         assert_eq!(payload.last(), Some(&0), "query must be NUL terminated");
         state.queries.fetch_add(1, Ordering::SeqCst);
         state.query_notify.notify_waiters();
@@ -325,6 +326,7 @@ async fn send_query_plan(socket: &mut TcpStream, plan: QueryPlan) -> io::Result<
             socket.flush().await?;
             Ok(true)
         }
+        QueryPlan::HoldBeforeResponse => Ok(true),
         QueryPlan::HoldAfterDescription => {
             socket
                 .write_all(&row_description(&["waiting".to_string()]))
@@ -684,4 +686,53 @@ async fn completed_query_disables_stale_cancel_and_keeps_connection_reusable() {
         Some(vec![vec![json!("second")]])
     );
     assert_eq!(server.normal_connections(), 1);
+}
+
+#[tokio::test]
+async fn table_count_cancellation_closes_connection_and_stale_cancel_does_not_reach_next_query() {
+    use crate::db::table_query::TableQueryRegistry;
+
+    let server = FakePostgresServer::start([
+        ConnectionPlan::one(QueryPlan::HoldBeforeResponse),
+        ConnectionPlan::one(QueryPlan::Respond(QueryResponse::select(
+            &["value"],
+            vec![vec![Some("42")]],
+        ))),
+    ])
+    .await;
+    let pool = server.pool();
+    let handle = super::PostgresPoolHandle {
+        pool: pool.clone(),
+        cancel_tls: PostgresCancelTls::NoTls,
+    };
+    let registry = TableQueryRegistry::default();
+    let guard = registry.register("pg", Some("table-count")).unwrap();
+    let query = tokio::spawn(async move {
+        super::query_table_count(&handle, "public", "large_table", None, &guard.cancellation).await
+    });
+
+    server.wait_for_queries(1).await;
+    assert!(registry.cancel("pg", "table-count"));
+    let result = timeout(TEST_TIMEOUT, query)
+        .await
+        .expect("COUNT cancellation timed out")
+        .unwrap();
+    assert!(result.unwrap_err().contains("中断"));
+    server.wait_for_cancel_requests(1).await;
+    server.wait_for_closed_connections(1).await;
+    assert_eq!(
+        pool.status().size,
+        0,
+        "cancelled connection must leave the pool"
+    );
+
+    assert!(!registry.cancel("pg", "table-count"));
+    let (next, _) = execute(&pool, "SELECT 42 AS value").await;
+    assert_eq!(next.unwrap().rows, Some(vec![vec![json!(42)]]));
+    assert_eq!(server.normal_connections(), 2);
+    assert_eq!(
+        server.cancel_requests(),
+        1,
+        "stale cancellation must not target the new session"
+    );
 }

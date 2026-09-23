@@ -19,3 +19,4 @@ pub mod sqlserver_ddl;
 pub mod sqlserver_objects;
 pub mod ssh_tunnel;
 pub mod table_pagination;
+pub mod table_query;

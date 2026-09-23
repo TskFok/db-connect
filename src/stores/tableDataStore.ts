@@ -94,6 +94,8 @@ interface TableDataState {
   dataLoading: boolean;
   /** 是否正在加载总数（与数据分离请求时，count 可能晚于数据返回） */
   totalCountLoading: boolean;
+  /** 当前表存在可中断的只读加载请求（不包含写入）。 */
+  canCancelLoad: boolean;
   /** 增删改后总数可能已过期，需手动刷新分页 */
   totalCountStale: boolean;
   /** 数据加载错误 */
@@ -120,12 +122,14 @@ interface TableDataState {
     table: string,
     selectColumns?: string[]
   ) => Promise<void>;
+  /** 立即停止当前表的加载状态，并请求后端取消尚未完成的查询。 */
+  cancelLoad: () => Promise<void>;
   /** 仅重新统计总行数（刷新分页），不重新加载当前页数据 */
   refreshPagination: (
     connId: string,
     database: string,
     table: string
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   /** 切换页码 */
   setPage: (page: number, direction?: "next" | "previous") => void;
   /** 切换每页大小 */
@@ -452,9 +456,61 @@ const initialSlice = {
   _pendingNavigation: null as PendingPageNavigation | null,
   lastSelectColumns: undefined as string[] | undefined,
   _filterTrigger: 0,
+  canCancelLoad: false,
 };
 
 let _loadCounter = 0;
+let _requestCounter = 0;
+
+interface PendingTableRequest {
+  connId: string;
+  key: string;
+  executionId: string;
+  loadId: number;
+  kind: "data" | "count";
+  cancelled: boolean;
+}
+
+const pendingTableRequests = new Set<PendingTableRequest>();
+const pendingTableWrites = new Set<{ key: string }>();
+
+function registerTableWrite(key: string) {
+  const write = { key };
+  pendingTableWrites.add(write);
+  return () => pendingTableWrites.delete(write);
+}
+
+function registerTableRequest(
+  connId: string,
+  key: string,
+  kind: PendingTableRequest["kind"]
+): PendingTableRequest {
+  const request = {
+    connId,
+    key,
+    kind,
+    executionId:
+      globalThis.crypto?.randomUUID?.() ??
+      `table-${Date.now()}-${++_requestCounter}`,
+    loadId: _loadCounter,
+    cancelled: false,
+  };
+  pendingTableRequests.add(request);
+  return request;
+}
+
+function currentTableRequests(key: string | null) {
+  return [...pendingTableRequests].filter(
+    (request) => request.key === key && !request.cancelled
+  );
+}
+
+function canCancelTableLoad(key: string | null) {
+  return (
+    ![...pendingTableWrites].some((write) => write.key === key) &&
+    currentTableRequests(key).length > 0
+  );
+}
 
 export const useTableDataStore = create<TableDataState>((set, get) => ({
   activeTableKey: null,
@@ -498,8 +554,19 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
         ? _pendingNavigation.navigation
         : undefined;
 
+    const dataRequest = registerTableRequest(connId, key, "data");
+    const countRequest =
+      cachedTotal === undefined
+        ? registerTableRequest(connId, key, "count")
+        : null;
+    const finishRequest = (request: PendingTableRequest) => {
+      pendingTableRequests.delete(request);
+      set({ canCancelLoad: canCancelTableLoad(get().activeTableKey) });
+    };
+
     set({
       dataLoading: true,
+      canCancelLoad: canCancelTableLoad(key),
       totalCountLoading: cachedTotal === undefined,
       dataError: null,
       lastSelectColumns: selectColumns,
@@ -522,9 +589,11 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
       selectColumns,
       true,
     ] as const;
-    const dataPromise = navigation
-      ? api.queryTableData(...queryArgs, navigation)
-      : api.queryTableData(...queryArgs);
+    const dataPromise = api.queryTableData(
+      ...queryArgs,
+      navigation,
+      dataRequest.executionId
+    );
 
     const countPromise =
       cachedTotal !== undefined
@@ -533,13 +602,15 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
             connId,
             database,
             table,
-            whereClause || undefined
+            whereClause || undefined,
+            countRequest!.executionId
           );
 
     const isLatest = () => _loadCounter === myLoadId;
 
     dataPromise
       .then((result) => {
+        finishRequest(dataRequest);
         if (!isLatest()) return;
         const totalForSnapshot = get().countCache[ccKey] ?? cachedTotal ?? 0;
         const loadedPageContext = { page, queryKey };
@@ -571,38 +642,110 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
         }));
       })
       .catch((e) => {
+        finishRequest(dataRequest);
         if (!isLatest()) return;
         const msg = String(e);
         console.error("加载表数据失败:", msg);
-        set({ dataLoading: false, totalCountLoading: false, dataError: msg });
+        set({ dataLoading: false, dataError: msg });
       });
 
     if (cachedTotal !== undefined) return;
 
     countPromise
       .then((total) => {
+        finishRequest(countRequest!);
         if (!isLatest()) return;
         set((s) => ({
           total,
           totalCountLoading: false,
           totalCountStale: false,
           countCache: { ...s.countCache, [ccKey]: total },
-          tableDataCache: s.tableDataCache[key]
-            ? {
-                ...s.tableDataCache,
-                [key]: {
-                  ...s.tableDataCache[key],
-                  total,
-                  totalCountStale: false,
-                },
-              }
-            : s.tableDataCache,
+          tableDataCache:
+            s.tableDataCache[key]?.whereClause === whereClause
+              ? {
+                  ...s.tableDataCache,
+                  [key]: {
+                    ...s.tableDataCache[key],
+                    total,
+                    totalCountStale: false,
+                  },
+                }
+              : s.tableDataCache,
         }));
       })
       .catch(() => {
+        finishRequest(countRequest!);
         if (!isLatest()) return;
         set({ totalCountLoading: false });
       });
+  },
+
+  cancelLoad: async () => {
+    if (!get().canCancelLoad) return;
+    const { activeTableKey, tableDataCache } = get();
+    const requests = currentTableRequests(activeTableKey);
+    if (requests.length === 0) return;
+    const cancelledData = requests.some(
+      (request) => request.kind === "data" && request.loadId === _loadCounter
+    );
+    const cancelledCount = requests.some((request) => request.kind === "count");
+    for (const request of requests) {
+      request.cancelled = true;
+      pendingTableRequests.delete(request);
+    }
+    ++_loadCounter;
+    const snapshot = activeTableKey
+      ? tableDataCache[activeTableKey]
+      : undefined;
+    // 翻页、排序或筛选尚未成功时恢复整份快照，避免旧行与新查询条件混用。
+    const restored: Partial<TableDataState> = !cancelledData
+      ? {}
+      : snapshot
+        ? {
+            columns: snapshot.columns,
+            rows: snapshot.rows,
+            total: snapshot.total,
+            page: snapshot.page,
+            pageSize: snapshot.pageSize,
+            sortFields: snapshot.sortFields,
+            whereClause: snapshot.whereClause,
+            filterRows: snapshot.filterRows,
+            executionTime: snapshot.executionTime,
+            lastSelectColumns: snapshot.lastSelectColumns,
+            pagination: snapshot.pagination ?? null,
+            executedSql: snapshot.executedSql ?? null,
+            _loadedPageContext: snapshot.loadedPageContext ?? null,
+          }
+        : { columns: [], rows: [], executionTime: null, ...clearPageContext() };
+    set((s) => ({
+      ...restored,
+      dataLoading: false,
+      totalCountLoading: false,
+      canCancelLoad: false,
+      dataError: null,
+      _pendingNavigation: null,
+      totalCountStale: cancelledCount || s.totalCountStale,
+      tableDataCache:
+        cancelledCount && snapshot && activeTableKey
+          ? {
+              ...s.tableDataCache,
+              [activeTableKey]: {
+                ...snapshot,
+                total: restored.total ?? s.total,
+                totalCountStale: true,
+              },
+            }
+          : s.tableDataCache,
+    }));
+    const results = await Promise.allSettled(
+      requests.map((request) =>
+        api.cancelTableQuery(request.connId, request.executionId)
+      )
+    );
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") {
+      throw new Error(`已停止加载，但后端中断失败：${String(failure.reason)}`);
+    }
   },
 
   refreshPagination: async (
@@ -614,9 +757,10 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
     const { whereClause, activeTableKey } = get();
     const ccKey = countCacheKey(key, whereClause);
     const isActive = activeTableKey === key;
+    const request = registerTableRequest(connId, key, "count");
 
     if (isActive) {
-      set({ totalCountLoading: true });
+      set({ totalCountLoading: true, canCancelLoad: canCancelTableLoad(key) });
     }
 
     try {
@@ -624,8 +768,10 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
         connId,
         database,
         table,
-        whereClause || undefined
+        whereClause || undefined,
+        request.executionId
       );
+      if (request.cancelled) return false;
       set((s) => {
         const nextCount = { ...s.countCache, [ccKey]: total };
         const cached = s.tableDataCache[key];
@@ -659,7 +805,9 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
           ...(nextPage !== s.page ? clearPageContext() : {}),
         };
       });
+      return true;
     } catch (e) {
+      if (request.cancelled) return false;
       console.error("刷新分页失败:", e);
       if (
         isActive &&
@@ -669,6 +817,9 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
         set({ totalCountLoading: false });
       }
       throw e;
+    } finally {
+      pendingTableRequests.delete(request);
+      set({ canCancelLoad: canCancelTableLoad(get().activeTableKey) });
     }
   },
 
@@ -783,8 +934,9 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
 
   updateCell: async (connId, database, table, primaryKeys, updates) => {
     const key = tableKey(connId, database, table);
+    const finishWrite = registerTableWrite(key);
     try {
-      set({ dataLoading: true, dataError: null });
+      set({ dataLoading: true, dataError: null, canCancelLoad: false });
       await api.updateRow(connId, database, table, primaryKeys, updates);
       await reloadAfterMutation(set, get, connId, database, table, key);
     } catch (e) {
@@ -796,12 +948,16 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
         if (navigatedAway) return {};
         return { dataLoading: false, dataError: msg };
       });
+    } finally {
+      finishWrite();
+      set({ canCancelLoad: canCancelTableLoad(get().activeTableKey) });
     }
   },
 
   batchUpdateCells: async (connId, database, table, rows) => {
     const key = tableKey(connId, database, table);
-    set({ dataLoading: true, dataError: null });
+    const finishWrite = registerTableWrite(key);
+    set({ dataLoading: true, dataError: null, canCancelLoad: false });
     try {
       await api.batchUpdateRows(connId, database, table, rows);
       await reloadAfterMutation(set, get, connId, database, table, key);
@@ -816,13 +972,17 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
       });
       // 重新抛出，让调用方区分「全成功」与「整批回滚」并据此决定是否清空待提交
       throw e;
+    } finally {
+      finishWrite();
+      set({ canCancelLoad: canCancelTableLoad(get().activeTableKey) });
     }
   },
 
   insertRow: async (connId, database, table, values) => {
     const key = tableKey(connId, database, table);
+    const finishWrite = registerTableWrite(key);
     try {
-      set({ dataLoading: true, dataError: null });
+      set({ dataLoading: true, dataError: null, canCancelLoad: false });
       await api.insertRow(connId, database, table, values);
       await reloadAfterMutation(set, get, connId, database, table, key);
     } catch (e) {
@@ -834,13 +994,17 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
         if (navigatedAway) return {};
         return { dataLoading: false, dataError: msg };
       });
+    } finally {
+      finishWrite();
+      set({ canCancelLoad: canCancelTableLoad(get().activeTableKey) });
     }
   },
 
   deleteRows: async (connId, database, table, primaryKeys) => {
     const key = tableKey(connId, database, table);
+    const finishWrite = registerTableWrite(key);
     try {
-      set({ dataLoading: true, dataError: null });
+      set({ dataLoading: true, dataError: null, canCancelLoad: false });
       await api.deleteRows(connId, database, table, primaryKeys);
       await reloadAfterMutation(set, get, connId, database, table, key);
     } catch (e) {
@@ -852,11 +1016,16 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
         if (navigatedAway) return {};
         return { dataLoading: false, dataError: msg };
       });
+    } finally {
+      finishWrite();
+      set({ canCancelLoad: canCancelTableLoad(get().activeTableKey) });
     }
   },
 
   reset: () => {
     ++_loadCounter;
+    pendingTableRequests.clear();
+    pendingTableWrites.clear();
     set({
       activeTableKey: null,
       tableDataCache: {},
@@ -874,6 +1043,15 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
   switchToTable: (connId: string, database: string, table: string) => {
     const key = tableKey(connId, database, table);
     const { activeTableKey, tableDataCache } = get();
+    // 同一张表切换数据/结构页时，保留在途请求，不能用旧快照清掉加载状态。
+    if (
+      activeTableKey === key &&
+      (currentTableRequests(key).length > 0 ||
+        [...pendingTableWrites].some((write) => write.key === key))
+    ) {
+      set({ canCancelLoad: canCancelTableLoad(key) });
+      return true;
+    }
     if (activeTableKey !== key) ++_loadCounter;
     const loaded = get()._loadedPageContext;
     // 尚未完成的翻页不能把新页码与旧行一起写入切表快照。
@@ -928,6 +1106,7 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
         executionTime: cached.executionTime,
         lastSelectColumns: cached.lastSelectColumns,
         dataLoading: false,
+        canCancelLoad: false,
         totalCountLoading: false,
         totalCountStale: cached.totalCountStale ?? false,
         pagination: cached.pagination ?? null,
@@ -947,6 +1126,8 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
       tableDataCache: newCache,
       ...initialSlice,
       dataLoading: false,
+      totalCountLoading: false,
+      totalCountStale: false,
     });
     return false;
   },

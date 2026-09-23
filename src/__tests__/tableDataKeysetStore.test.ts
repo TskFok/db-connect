@@ -91,7 +91,7 @@ describe("表数据游标导航状态", () => {
     await load();
     state().setPage(2);
     await load(2);
-    expect(mockApi.queryTableData.mock.lastCall).toHaveLength(9);
+    expect(lastNavigation()).toBeUndefined();
     state().setPage(20);
     await load(20);
     expect(lastNavigation()).toBeUndefined();
@@ -367,7 +367,7 @@ describe("表数据游标导航状态", () => {
     errorLog.mockRestore();
   });
 
-  it("无可用边界的表保持原九参数 OFFSET 请求", async () => {
+  it("无可用边界的表保持无导航的 OFFSET 请求", async () => {
     mockApi.queryTableData.mockResolvedValue({
       ...result(1),
       pagination: null,
@@ -375,6 +375,6 @@ describe("表数据游标导航状态", () => {
     await state().loadData(...tableArgs);
     state().setPage(2, "next");
     await state().loadData(...tableArgs);
-    expect(mockApi.queryTableData.mock.lastCall).toHaveLength(9);
+    expect(lastNavigation()).toBeUndefined();
   });
 });

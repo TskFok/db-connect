@@ -11,6 +11,7 @@ use crate::db::table_pagination::{
     cached_metadata_for_navigation, remember_metadata, ColumnMetadata, Engine, IntegerKind,
     IntegerValue, PageContext, PagePlan, TableMetadata,
 };
+use crate::db::table_query::TableQueryCancellation;
 use crate::db::{clickhouse, postgres, sqlite, sqlserver};
 use crate::models::types::{
     QueryResult, SessionInfo, SqlExecuteResult, TablePageNavigation, TablePageResult,
@@ -560,6 +561,43 @@ async fn fetch_table_page_metadata(
     Ok(metadata.with_primary_key_evidence(&complete_primary_keys))
 }
 
+/// 查询拥有连接直到取消清理完成，旧取消不能命中连接池中的下一条查询。
+async fn finish_mysql_table_query<T>(
+    conn: mysql_async::Conn,
+    result: Result<T, String>,
+    cancellation: &TableQueryCancellation,
+) -> Result<T, String> {
+    if result.is_err() {
+        if cancellation.is_cancelled() {
+            let thread_id = conn.id();
+            let opts = conn.opts().clone();
+            // 使用独立连接，避免原池已耗尽时取消也在等待连接。
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                let mut killer = mysql_async::Conn::new(opts).await?;
+                // 原连接将被丢弃，终止会话也能覆盖 COM_QUERY 尚未开始的竞态。
+                let killed = killer
+                    .query_drop(format!("KILL CONNECTION {}", thread_id))
+                    .await;
+                let _ = killer.disconnect().await;
+                killed
+            })
+            .await;
+        }
+        // 不归还含未读结果的连接，也不为清理而排空昂贵的结果集。
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), conn.disconnect()).await;
+    }
+    result
+}
+
+#[tauri::command]
+pub async fn cancel_table_query(
+    state: State<'_, AppState>,
+    conn_id: String,
+    execution_id: String,
+) -> Result<bool, String> {
+    Ok(state.table_queries.cancel(&conn_id, &execution_id))
+}
+
 /// 查询表总行数 (用于分页，可与 query_table_data skip_count 配合实现数据与数量分离请求)
 #[tauri::command]
 pub async fn query_table_count(
@@ -568,28 +606,69 @@ pub async fn query_table_count(
     database: String,
     table: String,
     where_clause: Option<String>,
+    execution_id: Option<String>,
 ) -> Result<u64, String> {
-    let pool_handle = {
-        let mut manager = state.connection_manager.lock().await;
-        manager.get_database_pool_and_touch(&conn_id)?
-    };
+    let guard = state
+        .table_queries
+        .register(&conn_id, execution_id.as_deref())?;
+    let cancellation = &guard.cancellation;
+    let pool_handle = cancellation
+        .run(async {
+            let mut manager = state.connection_manager.lock().await;
+            manager.get_database_pool_and_touch(&conn_id)
+        })
+        .await?;
 
     let pool = match pool_handle {
         DatabasePoolHandle::MySql(pool) => pool,
         DatabasePoolHandle::Postgres(handle) => {
-            return postgres::query_table_count(&handle.pool, &database, &table, where_clause)
-                .await;
+            return postgres::query_table_count(
+                &handle,
+                &database,
+                &table,
+                where_clause,
+                cancellation,
+            )
+            .await;
         }
         DatabasePoolHandle::Sqlite(handle) => {
-            return sqlite::query_table_count(&handle.pool, &database, &table, where_clause).await;
+            return sqlite::query_table_count(
+                &handle.pool,
+                &database,
+                &table,
+                where_clause,
+                cancellation,
+            )
+            .await;
         }
         DatabasePoolHandle::SqlServer(handle) => {
-            return sqlserver::query_table_count(&handle.pool, &database, &table, where_clause)
-                .await;
+            return sqlserver::query_table_count(
+                &handle.pool,
+                &database,
+                &table,
+                where_clause,
+                cancellation,
+            )
+            .await;
         }
         DatabasePoolHandle::ClickHouse(handle) => {
-            return clickhouse::query_table_count(&handle.client, &database, &table, where_clause)
+            if execution_id.is_none() {
+                return clickhouse::query_table_count(
+                    &handle.client,
+                    &database,
+                    &table,
+                    where_clause,
+                )
                 .await;
+            }
+            return clickhouse::query_table_count_cancellable(
+                &handle.client,
+                &database,
+                &table,
+                where_clause,
+                cancellation,
+            )
+            .await;
         }
     };
 
@@ -603,12 +682,17 @@ pub async fn query_table_count(
 
     let count_sql = mysql_count_query(&database, &table, &where_sql);
 
-    let mut conn = get_conn_with_retry(&pool).await?;
-    Ok(conn
-        .query_first(&count_sql)
-        .await
-        .map_err(|e| format!("查询总数失败: {}", e))?
-        .unwrap_or(0))
+    let mut conn = cancellation.run(get_conn_with_retry(&pool)).await?;
+    let result = cancellation
+        .run(async {
+            Ok(conn
+                .query_first(&count_sql)
+                .await
+                .map_err(|e| format!("查询总数失败: {}", e))?
+                .unwrap_or(0))
+        })
+        .await;
+    finish_mysql_table_query(conn, result, cancellation).await
 }
 
 /// 表数据排序字段（与前端 `TableSortField` 对应，顺序为 ORDER BY 优先级）
@@ -680,11 +764,18 @@ pub async fn query_table_data(
     select_columns: Option<Vec<String>>,
     skip_count: Option<bool>,
     navigation: Option<TablePageNavigation>,
+    execution_id: Option<String>,
 ) -> Result<TablePageResult, String> {
-    let pool_handle = {
-        let mut manager = state.connection_manager.lock().await;
-        manager.get_database_pool_and_touch(&conn_id)?
-    };
+    let guard = state
+        .table_queries
+        .register(&conn_id, execution_id.as_deref())?;
+    let cancellation = &guard.cancellation;
+    let pool_handle = cancellation
+        .run(async {
+            let mut manager = state.connection_manager.lock().await;
+            manager.get_database_pool_and_touch(&conn_id)
+        })
+        .await?;
 
     let pool = match pool_handle {
         DatabasePoolHandle::MySql(pool) => pool,
@@ -705,7 +796,7 @@ pub async fn query_table_data(
                 page_size,
             };
             return postgres::query_table_data(
-                &handle.pool,
+                &handle,
                 &database,
                 &table,
                 page,
@@ -716,6 +807,7 @@ pub async fn query_table_data(
                 skip_count,
                 context,
                 navigation,
+                cancellation,
             )
             .await;
         }
@@ -731,6 +823,7 @@ pub async fn query_table_data(
                 where_clause,
                 select_columns,
                 skip_count,
+                cancellation,
             )
             .await
             .map(Into::into);
@@ -747,6 +840,7 @@ pub async fn query_table_data(
                 where_clause,
                 select_columns,
                 skip_count,
+                cancellation,
             )
             .await
             .map(Into::into);
@@ -758,20 +852,22 @@ pub async fn query_table_data(
                 .iter()
                 .map(|field| (field.column.as_str(), field.order.as_str()))
                 .collect::<Vec<_>>();
-            return clickhouse::query_table_data(
-                &handle.client,
-                clickhouse::ClickHouseTableDataQuery {
-                    database: &database,
-                    table: &table,
-                    page,
-                    page_size,
-                    sort_fields: borrowed_sort_fields,
-                    where_clause,
-                    select_columns,
-                    skip_count,
-                },
-            )
-            .await
+            let request = clickhouse::ClickHouseTableDataQuery {
+                database: &database,
+                table: &table,
+                page,
+                page_size,
+                sort_fields: borrowed_sort_fields,
+                where_clause,
+                select_columns,
+                skip_count,
+            };
+            return if execution_id.is_some() {
+                clickhouse::query_table_data_cancellable(&handle.client, request, cancellation)
+                    .await
+            } else {
+                clickhouse::query_table_data(&handle.client, request).await
+            }
             .map(Into::into);
         }
     };
@@ -787,101 +883,107 @@ pub async fn query_table_data(
         _ => String::new(),
     };
 
-    let mut conn = get_conn_with_retry(&pool).await?;
-    let context = PageContext {
-        engine: Engine::MySql,
-        connection: conn_id,
-        database: database.clone(),
-        table: table.clone(),
-        filter: where_clause.as_deref().unwrap_or("").trim().to_string(),
-        sort: sort_fields
-            .as_deref()
-            .unwrap_or(&[])
-            .iter()
-            .map(|f| (f.column.clone(), f.order.clone()))
-            .collect(),
-        page_size,
-    };
-    let metadata = match cached_metadata_for_navigation(&context, page, navigation.as_ref()) {
-        Some(metadata) => metadata,
-        None => remember_metadata(
-            &context,
-            fetch_table_page_metadata(&mut conn, &database, &table).await?,
-        ),
-    };
+    let mut conn = cancellation.run(get_conn_with_retry(&pool)).await?;
+    let result = cancellation
+        .run(async {
+            let context = PageContext {
+                engine: Engine::MySql,
+                connection: conn_id,
+                database: database.clone(),
+                table: table.clone(),
+                filter: where_clause.as_deref().unwrap_or("").trim().to_string(),
+                sort: sort_fields
+                    .as_deref()
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(|f| (f.column.clone(), f.order.clone()))
+                    .collect(),
+                page_size,
+            };
+            let metadata = match cached_metadata_for_navigation(&context, page, navigation.as_ref())
+            {
+                Some(metadata) => metadata,
+                None => remember_metadata(
+                    &context,
+                    fetch_table_page_metadata(&mut conn, &database, &table).await?,
+                ),
+            };
 
-    // 1) 查询总数（skip_count 为 true 时跳过，用于大数据量表加快首屏显示）
-    let total: u64 = if skip_count == Some(true) {
-        0
-    } else {
-        let count_sql = mysql_count_query(&database, &table, &where_sql);
-        conn.query_first(&count_sql)
-            .await
-            .map_err(|e| format!("查询总数失败: {}", e))?
-            .unwrap_or(0)
-    };
+            // 1) 查询总数（skip_count 为 true 时跳过，用于大数据量表加快首屏显示）
+            let total: u64 = if skip_count == Some(true) {
+                0
+            } else {
+                let count_sql = mysql_count_query(&database, &table, &where_sql);
+                conn.query_first(&count_sql)
+                    .await
+                    .map_err(|e| format!("查询总数失败: {}", e))?
+                    .unwrap_or(0)
+            };
 
-    // 保留自动补主键的既有行为：前端隐藏列仍可用于编辑和行选择。
-    let selected_columns = metadata.selected_columns(&select_columns);
-    let projection = Projection::new(
-        &metadata.mysql_columns,
-        &metadata.primary_keys,
-        metadata.reliable_primary_keys,
-        selected_columns.as_deref(),
-    );
-    let select_part = &projection.sql;
-    // 必须限定原表列，避免同名 SELECT 预览别名改变排序。
-    let fallback_order = build_order_by_sql(&sort_fields, &table);
-    let plan = PagePlan::new(context, metadata.clone(), page, navigation.as_ref());
-    let qualified_table = format!("{}.{}", esc_id(&database), esc_id(&table));
-    let quoted_key = plan.key_column.as_deref().map(esc_id).unwrap_or_default();
-    let data_sql = plan.sql(select_part, &qualified_table, &quoted_key, &fallback_order);
-    // 保留文本协议，避免切换 prepared/binary 后日期微秒、午夜时间等展示发生变化。
-    // 边界来自真实整数主键的 i64/u64 解析后规范十进制，客户端文本不会进入 SQL。
-    let mut rows: Vec<mysql_async::Row> = conn
-        .query(&data_sql)
-        .await
-        .map_err(|e| format!("查询数据失败: {}", e))?;
-    if plan.reverse {
-        rows.reverse();
-    }
+            // 保留自动补主键的既有行为：前端隐藏列仍可用于编辑和行选择。
+            let selected_columns = metadata.selected_columns(&select_columns);
+            let projection = Projection::new(
+                &metadata.mysql_columns,
+                &metadata.primary_keys,
+                metadata.reliable_primary_keys,
+                selected_columns.as_deref(),
+            );
+            let select_part = &projection.sql;
+            // 必须限定原表列，避免同名 SELECT 预览别名改变排序。
+            let fallback_order = build_order_by_sql(&sort_fields, &table);
+            let plan = PagePlan::new(context, metadata.clone(), page, navigation.as_ref());
+            let qualified_table = format!("{}.{}", esc_id(&database), esc_id(&table));
+            let quoted_key = plan.key_column.as_deref().map(esc_id).unwrap_or_default();
+            let data_sql = plan.sql(select_part, &qualified_table, &quoted_key, &fallback_order);
+            // 保留文本协议，避免切换 prepared/binary 后日期微秒、午夜时间等展示发生变化。
+            // 边界来自真实整数主键的 i64/u64 解析后规范十进制，客户端文本不会进入 SQL。
+            let mut rows: Vec<mysql_async::Row> = conn
+                .query(&data_sql)
+                .await
+                .map_err(|e| format!("查询数据失败: {}", e))?;
+            if plan.reverse {
+                rows.reverse();
+            }
 
-    let mut columns: Vec<String> = rows
-        .first()
-        .map(|row| {
-            row.columns_ref()
-                .iter()
-                .map(|c| c.name_str().to_string())
-                .collect()
+            let mut columns: Vec<String> = rows
+                .first()
+                .map(|row| {
+                    row.columns_ref()
+                        .iter()
+                        .map(|c| c.name_str().to_string())
+                        .collect()
+                })
+                .unwrap_or_else(|| projection.columns.clone());
+            let key_index = plan
+                .key_column
+                .as_ref()
+                .and_then(|key| columns.iter().position(|column| column == key));
+            let boundary = |row: &mysql_async::Row| {
+                key_index
+                    .and_then(|i| row.as_ref(i))
+                    .and_then(|value| IntegerValue::from_mysql(value, plan.integer_kind()?))
+            };
+            // 游标必须在展示值转换前解析原始整数文本，不能借道 JavaScript 数字。
+            let pagination = plan.pagination(
+                rows.first().and_then(boundary),
+                rows.last().and_then(boundary),
+                rows.len(),
+            );
+            let mut json_rows = rows_to_json_with_columns(&rows, columns.len());
+            projection.finish(&mut columns, &mut json_rows);
+            Ok(TablePageResult {
+                result: QueryResult {
+                    columns,
+                    rows: json_rows,
+                    total,
+                    execution_time_ms: start.elapsed().as_millis() as u64,
+                },
+                pagination,
+                executed_sql: Some(data_sql),
+            })
         })
-        .unwrap_or_else(|| projection.columns.clone());
-    let key_index = plan
-        .key_column
-        .as_ref()
-        .and_then(|key| columns.iter().position(|column| column == key));
-    let boundary = |row: &mysql_async::Row| {
-        key_index
-            .and_then(|i| row.as_ref(i))
-            .and_then(|value| IntegerValue::from_mysql(value, plan.integer_kind()?))
-    };
-    // 游标必须在展示值转换前解析原始整数文本，不能借道 JavaScript 数字。
-    let pagination = plan.pagination(
-        rows.first().and_then(boundary),
-        rows.last().and_then(boundary),
-        rows.len(),
-    );
-    let mut json_rows = rows_to_json_with_columns(&rows, columns.len());
-    projection.finish(&mut columns, &mut json_rows);
-    Ok(TablePageResult {
-        result: QueryResult {
-            columns,
-            rows: json_rows,
-            total,
-            execution_time_ms: start.elapsed().as_millis() as u64,
-        },
-        pagination,
-        executed_sql: Some(data_sql),
-    })
+        .await;
+    finish_mysql_table_query(conn, result, cancellation).await
 }
 
 /// 插入一行数据

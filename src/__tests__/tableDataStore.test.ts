@@ -265,13 +265,16 @@ describe("tableDataStore", () => {
         undefined,
         undefined,
         undefined,
-        true // skipCount
+        true, // skipCount
+        undefined,
+        expect.any(String)
       );
       expect(mockApi.queryTableCount).toHaveBeenCalledWith(
         "conn-1",
         "mydb",
         "users",
-        undefined
+        undefined,
+        expect.any(String)
       );
     });
 
@@ -307,13 +310,16 @@ describe("tableDataStore", () => {
         undefined,
         undefined,
         ["name", "email"],
-        true
+        true,
+        undefined,
+        expect.any(String)
       );
       expect(mockApi.queryTableCount).toHaveBeenCalledWith(
         "conn-1",
         "mydb",
         "users",
-        undefined
+        undefined,
+        expect.any(String)
       );
     });
 
@@ -388,7 +394,8 @@ describe("tableDataStore", () => {
         "conn-1",
         "mydb",
         "users",
-        undefined
+        undefined,
+        expect.any(String)
       );
       const state = useTableDataStore.getState();
       expect(state.total).toBe(42);
@@ -460,13 +467,16 @@ describe("tableDataStore", () => {
             [{ column: "name", order: "DESC" }],
             "id > 10",
             undefined,
-            true
+            true,
+            undefined,
+            expect.any(String)
           );
           expect(mockApi.queryTableCount).toHaveBeenCalledWith(
             "conn-1",
             "mydb",
             "users",
-            "id > 10"
+            "id > 10",
+            expect.any(String)
           );
         },
         { timeout: 2000 }

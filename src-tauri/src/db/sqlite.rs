@@ -6,6 +6,7 @@ use crate::db::sql_utils::{
     sqlite_count_query, sqlite_id, sqlite_paginated_select, sqlite_str, validate_column_type,
     validate_where_clause,
 };
+use crate::db::table_query::TableQueryCancellation;
 use crate::models::types::{
     AddColumnRequest, ColumnInfo, ConnectionConfig, CreateIndexRequest, CreateTableRequest,
     CreateTriggerRequest, ForeignKeyInfo, IndexColumnInfo, IndexInfo, QueryResult, SessionInfo,
@@ -1233,26 +1234,79 @@ pub fn build_order_by_sql(fields: &[(&str, &str)]) -> String {
     }
 }
 
+async fn interact_table_query<T, F>(
+    pool: &Pool,
+    cancellation: &TableQueryCancellation,
+    query: F,
+) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&mut rusqlite::Connection) -> Result<T, String> + Send + 'static,
+{
+    let conn = cancellation
+        .run(async {
+            pool.get()
+                .await
+                .map_err(|e| format!("获取 SQLite 连接失败: {}", e))
+        })
+        .await?;
+    let interrupt = cancellation
+        .run(async {
+            conn.interact(|conn| conn.get_interrupt_handle())
+                .await
+                .map_err(|e| format!("SQLite 查询任务失败: {}", e))
+        })
+        .await?;
+
+    let worker_cancellation = cancellation.clone();
+    let worker = conn.interact(move |conn| {
+        worker_cancellation.check()?;
+        let progress_cancellation = worker_cancellation.clone();
+        // interrupt 对尚未开始的语句无效；progress handler 覆盖 COUNT 与数据查询的间隙。
+        conn.progress_handler(1000, Some(move || progress_cancellation.is_cancelled()))
+            .map_err(|e| format!("设置 SQLite 查询中断失败: {}", e))?;
+        let result = query(conn);
+        let cleared = conn
+            .progress_handler(0, None::<fn() -> bool>)
+            .map_err(|e| format!("清理 SQLite 查询中断失败: {}", e));
+        worker_cancellation.check()?;
+        cleared?;
+        result
+    });
+    tokio::pin!(worker);
+    let mut finished = false;
+    let result = cancellation
+        .run(async {
+            let result = (&mut worker).await;
+            finished = true;
+            result.map_err(|e| format!("SQLite 查询任务失败: {}", e))?
+        })
+        .await;
+    if !finished {
+        interrupt.interrupt();
+        // 丢弃 interact future 不会停止后台线程；等它退出后才可归还连接。
+        let _ = worker.await;
+    }
+    cancellation.check()?;
+    result
+}
+
 pub async fn query_table_count(
     pool: &Pool,
     database: &str,
     table: &str,
     where_clause: Option<String>,
+    cancellation: &TableQueryCancellation,
 ) -> Result<u64, String> {
     let where_sql = build_where_sql(&where_clause)?;
     let count_sql = sqlite_count_query(database, table, &where_sql);
-    let conn = pool
-        .get()
-        .await
-        .map_err(|e| format!("获取 SQLite 连接失败: {}", e))?;
-    conn.interact(move |conn| {
+    interact_table_query(pool, cancellation, move |conn| {
         let count = conn
             .query_row(&count_sql, [], |row| row.get::<_, i64>(0))
             .map_err(|e| e.to_string())?;
         Ok(i64_to_u64(count))
     })
     .await
-    .map_err(|e| format!("SQLite 查询任务失败: {}", e))?
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1266,6 +1320,7 @@ pub async fn query_table_data(
     where_clause: Option<String>,
     select_columns: Option<Vec<String>>,
     skip_count: Option<bool>,
+    cancellation: &TableQueryCancellation,
 ) -> Result<QueryResult, String> {
     let start = Instant::now();
     let where_sql = build_where_sql(&where_clause)?;
@@ -1282,46 +1337,40 @@ pub async fn query_table_data(
         offset,
     );
 
-    let conn = pool
-        .get()
-        .await
-        .map_err(|e| format!("获取 SQLite 连接失败: {}", e))?;
-    let (columns, rows, total) = conn
-        .interact(move |conn| {
-            let total = if skip_count == Some(true) {
-                0
-            } else {
-                let count = conn
-                    .query_row(&count_sql, [], |row| row.get::<_, i64>(0))
-                    .map_err(|e| e.to_string())?;
-                i64_to_u64(count)
-            };
-
-            let mut stmt = conn.prepare(&data_sql).map_err(|e| e.to_string())?;
-            let columns = stmt
-                .column_names()
-                .iter()
-                .map(|name| (*name).to_string())
-                .collect::<Vec<_>>();
-            let col_count = stmt.column_count();
-            let row_iter = stmt
-                .query_map([], |row| {
-                    let mut values = Vec::with_capacity(col_count);
-                    for idx in 0..col_count {
-                        let value: SqliteValue = row.get(idx)?;
-                        values.push(sqlite_value_to_json(&value));
-                    }
-                    Ok(values)
-                })
+    let (columns, rows, total) = interact_table_query(pool, cancellation, move |conn| {
+        let total = if skip_count == Some(true) {
+            0
+        } else {
+            let count = conn
+                .query_row(&count_sql, [], |row| row.get::<_, i64>(0))
                 .map_err(|e| e.to_string())?;
-            let mut rows = Vec::new();
-            for row in row_iter {
-                rows.push(row.map_err(|e| e.to_string())?);
-            }
-            Ok::<(Vec<String>, Vec<Vec<JsonValue>>, u64), String>((columns, rows, total))
-        })
-        .await
-        .map_err(|e| format!("SQLite 查询任务失败: {}", e))??;
+            i64_to_u64(count)
+        };
+
+        let mut stmt = conn.prepare(&data_sql).map_err(|e| e.to_string())?;
+        let columns = stmt
+            .column_names()
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect::<Vec<_>>();
+        let col_count = stmt.column_count();
+        let row_iter = stmt
+            .query_map([], |row| {
+                let mut values = Vec::with_capacity(col_count);
+                for idx in 0..col_count {
+                    let value: SqliteValue = row.get(idx)?;
+                    values.push(sqlite_value_to_json(&value));
+                }
+                Ok(values)
+            })
+            .map_err(|e| e.to_string())?;
+        let mut rows = Vec::new();
+        for row in row_iter {
+            rows.push(row.map_err(|e| e.to_string())?);
+        }
+        Ok::<(Vec<String>, Vec<Vec<JsonValue>>, u64), String>((columns, rows, total))
+    })
+    .await?;
 
     Ok(QueryResult {
         columns,
@@ -2351,9 +2400,15 @@ mod tests {
             .await
             .expect("select statements are allowed during import");
 
-        let count = query_table_count(&pool, "main", "imported", None)
-            .await
-            .expect("imported count");
+        let count = query_table_count(
+            &pool,
+            "main",
+            "imported",
+            None,
+            &TableQueryCancellation::default(),
+        )
+        .await
+        .expect("imported count");
         assert_eq!(count, 1);
 
         let err = run_one_statement(&conn, "INSERT INTO missing_table VALUES (1);")
@@ -2458,9 +2513,15 @@ mod tests {
     async fn sqlite_data_queries_count_page_sort_and_convert_values() {
         let (pool, path) = test_pool_with_schema().await;
 
-        let count = query_table_count(&pool, "main", "users", Some("\"age\" >= 20".to_string()))
-            .await
-            .expect("query count");
+        let count = query_table_count(
+            &pool,
+            "main",
+            "users",
+            Some("\"age\" >= 20".to_string()),
+            &TableQueryCancellation::default(),
+        )
+        .await
+        .expect("query count");
         assert_eq!(count, 2);
 
         let order_sql = build_order_by_sql(&[("age", "DESC"), ("name", "invalid")]);
@@ -2480,6 +2541,7 @@ mod tests {
                 "payload".to_string(),
             ]),
             Some(false),
+            &TableQueryCancellation::default(),
         )
         .await
         .expect("query data");
@@ -2497,6 +2559,192 @@ mod tests {
             JsonValue::String("[binary 3 bytes]".to_string())
         );
 
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_table_count_cancellation_interrupts_worker_and_reuses_connection() {
+        assert_table_query_cancellation(false).await;
+    }
+
+    #[tokio::test]
+    async fn sqlite_table_data_cancellation_interrupts_worker_and_reuses_connection() {
+        assert_table_query_cancellation(true).await;
+    }
+
+    async fn assert_table_query_cancellation(data: bool) {
+        use crate::db::table_query::TableQueryRegistry;
+        use std::time::Duration;
+
+        let (pool, path) = single_connection_test_pool_with_schema().await;
+        let conn = pool.get().await.expect("get connection");
+        let interrupt = conn
+            .interact(|conn| {
+                conn.execute_batch(
+                    "CREATE VIEW slow_query AS
+                     WITH RECURSIVE nums(value) AS (
+                         SELECT 1 UNION ALL SELECT value + 1 FROM nums WHERE value < 100000000
+                     ) SELECT SUM(value) AS total FROM nums;",
+                )
+                .expect("create slow query view");
+                conn.get_interrupt_handle()
+            })
+            .await
+            .expect("prepare slow query");
+        drop(conn);
+
+        let registry = TableQueryRegistry::default();
+        let guard = registry.register("sqlite", Some("slow")).unwrap();
+        let cancellation = guard.cancellation.clone();
+        let query_pool = pool.clone();
+        let mut query = tokio::spawn(async move {
+            if data {
+                query_table_data(
+                    &query_pool,
+                    "main",
+                    "slow_query",
+                    1,
+                    1,
+                    String::new(),
+                    None,
+                    None,
+                    Some(true),
+                    &cancellation,
+                )
+                .await
+                .map(|_| ())
+            } else {
+                query_table_count(&query_pool, "main", "slow_query", None, &cancellation)
+                    .await
+                    .map(|_| ())
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        registry.cancel("sqlite", "slow");
+        let result = tokio::time::timeout(Duration::from_secs(1), &mut query).await;
+        // 即使取消实现回归，也中断测试工作线程，避免慢查询拖住整个测试进程。
+        if result.is_err() {
+            interrupt.interrupt();
+            let _ = query.await;
+        }
+        assert!(
+            matches!(result, Ok(Ok(Err(_)))),
+            "取消应及时结束真实 SQLite 查询: {result:?}"
+        );
+
+        let conn = tokio::time::timeout(Duration::from_secs(1), pool.get())
+            .await
+            .expect("cancelled worker must release pool connection")
+            .expect("reuse cancelled connection");
+        let sum = conn
+            .interact(|conn| {
+                conn.query_row(
+                    "WITH RECURSIVE nums(value) AS (
+                    SELECT 1 UNION ALL SELECT value + 1 FROM nums WHERE value < 10000
+                 ) SELECT SUM(value) FROM nums",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+            })
+            .await
+            .expect("reused worker should run")
+            .expect("no cancelled progress hook may remain");
+        assert_eq!(sum, 50_005_000);
+        drop(conn);
+        let count = query_table_count(
+            &pool,
+            "main",
+            "users",
+            None,
+            &TableQueryCancellation::default(),
+        )
+        .await
+        .expect("subsequent table query must succeed");
+        assert_eq!(count, 2);
+        drop(pool);
+        let _ = fs::remove_file(path);
+    }
+
+    async fn single_connection_test_pool_with_schema() -> (Pool, PathBuf) {
+        let (_, path) = test_pool_with_schema().await;
+        let pool = SqliteConfig::new(&path)
+            .builder(Runtime::Tokio1)
+            .unwrap()
+            .max_size(1)
+            .build()
+            .unwrap();
+        (pool, path)
+    }
+
+    #[tokio::test]
+    async fn sqlite_table_query_cancellation_between_statements_stops_next_statement() {
+        use std::time::Duration;
+
+        let (pool, path) = single_connection_test_pool_with_schema().await;
+        let conn = pool.get().await.unwrap();
+        let interrupt = conn
+            .interact(|conn| conn.get_interrupt_handle())
+            .await
+            .unwrap();
+        drop(conn);
+        let token = TableQueryCancellation::default();
+        let worker_token = token.clone();
+        let query_pool = pool.clone();
+        let mut query = tokio::spawn(async move {
+            interact_table_query(&query_pool, &token, move |conn| {
+                conn.query_row("SELECT 1", [], |row| row.get::<_, i64>(0))
+                    .map_err(|e| e.to_string())?;
+                worker_token.cancel();
+                // 让异步端在两条 SQL 之间调用 interrupt；后续 SQL 仍须被 progress hook 中断。
+                std::thread::sleep(Duration::from_millis(50));
+                conn.query_row(
+                    "WITH RECURSIVE nums(value) AS (
+                        SELECT 1 UNION ALL SELECT value + 1 FROM nums WHERE value < 100000000
+                     ) SELECT SUM(value) FROM nums",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|e| e.to_string())
+            })
+            .await
+        });
+        let result = tokio::time::timeout(Duration::from_secs(1), &mut query).await;
+        if result.is_err() {
+            interrupt.interrupt();
+            let _ = query.await;
+        }
+        assert!(
+            matches!(result, Ok(Ok(Err(_)))),
+            "阶段间取消也应停止后续 SQL: {result:?}"
+        );
+        drop(pool);
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn sqlite_table_count_cancellation_does_not_wait_for_pool_connection() {
+        use crate::db::table_query::TableQueryRegistry;
+        use std::time::Duration;
+
+        let (pool, path) = single_connection_test_pool_with_schema().await;
+        let held = pool.get().await.expect("hold only pool connection");
+        let registry = TableQueryRegistry::default();
+        let guard = registry.register("sqlite", Some("waiting")).unwrap();
+        let query = query_table_count(&pool, "main", "users", None, &guard.cancellation);
+        let cancel = async {
+            tokio::task::yield_now().await;
+            registry.cancel("sqlite", "waiting");
+        };
+        let result = tokio::time::timeout(Duration::from_millis(500), async {
+            tokio::join!(query, cancel).0
+        })
+        .await;
+        assert!(
+            matches!(result, Ok(Err(_))),
+            "取消不应等待连接归还: {result:?}"
+        );
+        drop(held);
+        drop(pool);
         let _ = fs::remove_file(path);
     }
 
@@ -2707,9 +2955,15 @@ mod tests {
             .expect("delete rows"),
             1
         );
-        let remaining = query_table_count(&pool, "main", "users", None)
-            .await
-            .expect("remaining count");
+        let remaining = query_table_count(
+            &pool,
+            "main",
+            "users",
+            None,
+            &TableQueryCancellation::default(),
+        )
+        .await
+        .expect("remaining count");
         assert_eq!(remaining, 2);
 
         let _ = fs::remove_file(path);

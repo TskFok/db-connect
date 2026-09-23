@@ -1,6 +1,7 @@
 use crate::db::result_budget::{
     result_bytes_exceeded, ResultBudget, MAX_RESULT_BYTES, MAX_RESULT_ROWS,
 };
+use crate::db::table_query::TableQueryCancellation;
 use crate::models::types::{
     ColumnInfo, ConnectionConfig, QueryResult, SessionInfo, SqlCompletionColumn,
     SqlCompletionMetadata, SqlCompletionTable, SqlExecuteResult, TableInfo,
@@ -304,7 +305,7 @@ pub(crate) struct ClickHouseSelectPage<'a> {
     pub(crate) offset: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct ClickHouseTableDataQuery<'a> {
     pub(crate) database: &'a str,
     pub(crate) table: &'a str,
@@ -914,6 +915,84 @@ fn clickhouse_count_from_json(body: &str) -> Result<u64, String> {
             .map_err(|e| format!("解析 ClickHouse count 失败: {}", e)),
         _ => Err("ClickHouse count 返回了非数字结果".to_string()),
     }
+}
+
+pub async fn query_table_count_cancellable(
+    client: &Client,
+    database: &str,
+    table: &str,
+    where_clause: Option<String>,
+    cancellation: &TableQueryCancellation,
+) -> Result<u64, String> {
+    run_cancellable_table_query(client, cancellation, |query_client| {
+        let where_clause = where_clause.clone();
+        async move { query_table_count(&query_client, database, table, where_clause).await }
+    })
+    .await
+}
+
+pub async fn query_table_data_cancellable(
+    client: &Client,
+    request: ClickHouseTableDataQuery<'_>,
+    cancellation: &TableQueryCancellation,
+) -> Result<QueryResult, String> {
+    run_cancellable_table_query(client, cancellation, |query_client| {
+        let request = request.clone();
+        async move { query_table_data(&query_client, request).await }
+    })
+    .await
+}
+
+async fn run_cancellable_table_query<T, F, Q>(
+    client: &Client,
+    cancellation: &TableQueryCancellation,
+    query: F,
+) -> Result<T, String>
+where
+    F: Fn(Client) -> Q,
+    Q: std::future::Future<Output = Result<T, String>>,
+{
+    // 使用后端生成的 UUID，取消 SQL 无需拼接任何前端标识。
+    let query_id = format!("table-{}", uuid::Uuid::new_v4());
+    let query_client = client.clone().with_setting("query_id", query_id.clone());
+    const CLOSE_SETTING: &str = "cancel_http_readonly_queries_on_client_close";
+    let mut result = cancellation
+        .run(query(query_client.clone().with_setting(CLOSE_SETTING, "1")))
+        .await;
+    let unsupported_setting = result.as_ref().err().is_some_and(|error| {
+        error.contains(CLOSE_SETTING)
+            && [
+                "UNKNOWN_SETTING",
+                "READONLY",
+                "SETTING_CONSTRAINT_VIOLATION",
+                "CANNOT_SET",
+            ]
+            .iter()
+            .any(|kind| error.contains(kind))
+    });
+    if unsupported_setting {
+        // 旧版本/受限账号可能禁止此设置，仅重试本次只读请求；仍使用原 query_id 主动 KILL。
+        // 其他 SQL 错误不重试，取消后的请求也由 run 在执行前拒绝。
+        result = cancellation.run(query(query_client)).await;
+    }
+    finish_table_query(client, &query_id, result, cancellation).await
+}
+
+async fn finish_table_query<T>(
+    client: &Client,
+    query_id: &str,
+    result: Result<T, String>,
+    cancellation: &TableQueryCancellation,
+) -> Result<T, String> {
+    if cancellation.is_cancelled() {
+        let kill = format!("KILL QUERY WHERE query_id = '{}' SYNC", query_id);
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            client.query(&kill).execute(),
+        )
+        .await;
+    }
+    result
 }
 
 pub async fn query_table_count(
@@ -1692,5 +1771,61 @@ mod tests {
             .await
             .expect("ClickHouse disconnect should close active resources");
         assert!(!manager.has_connection(&conn_id));
+    }
+}
+
+#[cfg(test)]
+mod table_cancellation_compatibility_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[tokio::test]
+    async fn readonly_setting_rejection_retries_without_changing_normal_table_loading() {
+        let attempts = AtomicUsize::new(0);
+        let result = run_cancellable_table_query(
+            &Client::default(), &TableQueryCancellation::default(), |client| {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                std::future::ready(if client.get_setting("cancel_http_readonly_queries_on_client_close").is_some() {
+                    Err("Cannot modify 'cancel_http_readonly_queries_on_client_close' setting in readonly mode. (READONLY)".into())
+                } else { Ok(42) })
+            },
+        ).await;
+        assert_eq!(result, Ok(42));
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn unknown_close_setting_retries_once_with_the_same_query_id() {
+        let ids = std::sync::Mutex::new(Vec::new());
+        let result = run_cancellable_table_query(
+            &Client::default(), &TableQueryCancellation::default(), |client| {
+                ids.lock().unwrap().push(client.get_setting("query_id").unwrap().to_string());
+                std::future::ready(if client.get_setting("cancel_http_readonly_queries_on_client_close").is_some() {
+                    Err("Unknown setting cancel_http_readonly_queries_on_client_close. (UNKNOWN_SETTING)".into())
+                } else { Ok(42) })
+            },
+        ).await;
+        assert_eq!(result, Ok(42));
+        let ids = ids.into_inner().unwrap();
+        assert_eq!(ids.len(), 2);
+        assert_eq!(ids[0], ids[1]);
+    }
+
+    #[tokio::test]
+    async fn ordinary_query_errors_are_not_retried() {
+        let attempts = AtomicUsize::new(0);
+        let result = run_cancellable_table_query(
+            &Client::default(),
+            &TableQueryCancellation::default(),
+            |_| {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                std::future::ready(Err::<u64, String>(
+                    "Unknown setting another_setting. (UNKNOWN_SETTING)".into(),
+                ))
+            },
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
 }

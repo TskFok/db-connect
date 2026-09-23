@@ -48,6 +48,7 @@ import {
   CalculatorOutlined,
   ArrowUpOutlined,
   ArrowDownOutlined,
+  StopOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType, ColumnType } from "antd/es/table";
 import { useShallow } from "zustand/react/shallow";
@@ -230,6 +231,7 @@ export function TableData() {
     whereClause,
     filterRows,
     dataLoading,
+    canCancelLoad,
     totalCountLoading,
     totalCountStale,
     dataError,
@@ -250,6 +252,7 @@ export function TableData() {
       whereClause: s.whereClause,
       filterRows: s.filterRows,
       dataLoading: s.dataLoading,
+      canCancelLoad: s.canCancelLoad,
       totalCountLoading: s.totalCountLoading,
       totalCountStale: s.totalCountStale,
       dataError: s.dataError,
@@ -263,6 +266,7 @@ export function TableData() {
   );
   const {
     loadData,
+    cancelLoad,
     refreshPagination,
     setPage,
     setPageSize,
@@ -283,6 +287,7 @@ export function TableData() {
   } = useTableDataStore(
     useShallow((s) => ({
       loadData: s.loadData,
+      cancelLoad: s.cancelLoad,
       refreshPagination: s.refreshPagination,
       setPage: s.setPage,
       setPageSize: s.setPageSize,
@@ -829,6 +834,7 @@ export function TableData() {
     clearPendingChanges(connId, database, table);
   }, [
     activeTableKey,
+    canCancelLoad,
     clearPendingChanges,
     connId,
     database,
@@ -850,12 +856,27 @@ export function TableData() {
     }
   }, [clearPendingChanges, connId, database, table, loadData]);
 
+  const handleCancelLoad = useCallback(async () => {
+    // 中断可能恢复上次成功加载的查询条件，避免将恢复误判为新查询。
+    // canCancelLoad 变化也会同步 effect 状态，以便随后正常翻页和筛选。
+    queryEffectStateRef.current = null;
+    try {
+      await cancelLoad();
+      messageApi.info("已中断加载");
+    } catch (error) {
+      messageApi.warning(
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+  }, [cancelLoad, messageApi]);
+
   // 刷新分页（仅重新统计总行数）
   const handleRefreshPagination = useCallback(async () => {
     if (!connId || !database || !table) return;
     try {
-      await refreshPagination(connId, database, table);
-      messageApi.success("分页已刷新");
+      if (await refreshPagination(connId, database, table)) {
+        messageApi.success("分页已刷新");
+      }
     } catch {
       messageApi.error("刷新分页失败");
     }
@@ -1765,10 +1786,22 @@ export function TableData() {
             <Button
               icon={<ReloadOutlined />}
               size="small"
+              aria-label="刷新数据"
               onClick={handleRefresh}
               loading={dataLoading}
             />
           </Tooltip>
+          {canCancelLoad && (
+            <Button
+              icon={<StopOutlined />}
+              size="small"
+              danger
+              aria-label="中断加载"
+              onClick={() => void handleCancelLoad()}
+            >
+              中断加载
+            </Button>
+          )}
           <Tooltip title="刷新分页（重新统计总行数，不重新加载当前页数据，Cmd/Ctrl+Shift+R）">
             <Button
               icon={<CalculatorOutlined />}

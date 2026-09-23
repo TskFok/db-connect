@@ -27,6 +27,8 @@ pub struct AppState {
     pub connection_manager: Arc<Mutex<ConnectionManager>>,
     /// 正在执行的查询：执行令牌（execution_id）-> 数据库特定取消句柄。
     pub running_queries: Arc<Mutex<HashMap<String, RunningQuery>>>,
+    /// 表数据/行数查询的取消状态，按连接和执行标识隔离。
+    pub table_queries: db::table_query::TableQueryRegistry,
     /// 正在导出的 SQL 文件：导出令牌（export_id）-> 协作式取消标记。
     pub running_sql_exports: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
 }
@@ -36,6 +38,7 @@ impl AppState {
         Self {
             connection_manager: Arc::new(Mutex::new(ConnectionManager::new())),
             running_queries: Arc::new(Mutex::new(HashMap::new())),
+            table_queries: db::table_query::TableQueryRegistry::default(),
             running_sql_exports: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -110,6 +113,7 @@ pub fn run() {
             database::truncate_table,
             data::query_table_data,
             data::query_table_count,
+            data::cancel_table_query,
             data::insert_row,
             data::update_row,
             data::batch_update_rows,

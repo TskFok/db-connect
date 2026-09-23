@@ -18,6 +18,7 @@ import * as api from "../services/tauriCommands";
 vi.mock("../services/tauriCommands", () => ({
   queryTableData: vi.fn(),
   queryTableCount: vi.fn(),
+  cancelTableQuery: vi.fn(),
   queryFullRows: vi.fn(),
   insertRow: vi.fn(),
   updateRow: vi.fn(),
@@ -67,6 +68,21 @@ const usersSnapshot = {
   executionTime: 10,
   lastSelectColumns: undefined,
 };
+
+const refreshedUsers = {
+  columns: ["id"],
+  rows: [[2]],
+  total: 0,
+  execution_time_ms: 1,
+};
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
 
 function seedStores(
   overrides: Partial<ReturnType<typeof useTableDataStore.getState>> = {}
@@ -132,7 +148,9 @@ describe("TableData 分页栏", () => {
   const originalSetPage = useTableDataStore.getState().setPage;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
+    vi.mocked(api.cancelTableQuery).mockResolvedValue(true);
+    vi.mocked(writeText).mockResolvedValue(undefined);
     useTableDataStore.setState({ setPage: originalSetPage });
     localStorage.clear();
 
@@ -230,6 +248,186 @@ describe("TableData 分页栏", () => {
     await act(async () => useTableDataStore.setState({ dataLoading: true }));
     fireEvent.click(container.querySelector(".ant-pagination-next")!);
     expect(setPage).not.toHaveBeenCalled();
+  });
+
+  it("中断刷新立即结束加载，忽略迟到结果，并允许继续翻页", async () => {
+    seedStores();
+    const data = deferred<typeof refreshedUsers>();
+    const cancellation = deferred<boolean>();
+    vi.mocked(api.queryTableData)
+      .mockReturnValueOnce(data.promise)
+      .mockResolvedValue(refreshedUsers);
+    vi.mocked(api.cancelTableQuery).mockReturnValue(cancellation.promise);
+    const { container } = render(<TableData />);
+
+    fireEvent.click(screen.getByRole("button", { name: "刷新数据" }));
+    const cancelButton = await screen.findByRole("button", {
+      name: "中断加载",
+    });
+    expect(useTableDataStore.getState().dataLoading).toBe(true);
+    fireEvent.click(cancelButton);
+
+    expect(useTableDataStore.getState().dataLoading).toBe(false);
+    expect(screen.queryByRole("button", { name: "中断加载" })).toBeNull();
+    expect(screen.getByRole("button", { name: "刷新数据" })).not.toHaveClass(
+      "ant-btn-loading"
+    );
+    await act(async () => {
+      data.resolve(refreshedUsers);
+      cancellation.resolve(true);
+    });
+    expect(useTableDataStore.getState().rows).toEqual([[1]]);
+    expect(api.queryTableData).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("已中断加载")).toBeInTheDocument();
+
+    fireEvent.click(container.querySelector(".ant-pagination-next")!);
+    await waitFor(() =>
+      expect(useTableDataStore.getState().rows).toEqual([[2]])
+    );
+    expect(api.queryTableData).toHaveBeenCalledTimes(2);
+  });
+
+  it("中断翻页恢复已加载页且不自动重新查询", async () => {
+    seedStores();
+    const data = deferred<typeof refreshedUsers>();
+    vi.mocked(api.queryTableData).mockReturnValue(data.promise);
+    const { container } = render(<TableData />);
+
+    fireEvent.click(container.querySelector(".ant-pagination-next")!);
+    fireEvent.click(await screen.findByRole("button", { name: "中断加载" }));
+
+    await waitFor(() =>
+      expect(useTableDataStore.getState().dataLoading).toBe(false)
+    );
+    expect(useTableDataStore.getState().page).toBe(1);
+    expect(useTableDataStore.getState().rows).toEqual([[1]]);
+    expect(
+      container.querySelector(".ant-pagination-item-active")
+    ).toHaveTextContent("1");
+    await act(async () => data.resolve(refreshedUsers));
+    expect(api.queryTableData).toHaveBeenCalledTimes(1);
+    expect(useTableDataStore.getState().rows).toEqual([[1]]);
+    expect(screen.queryByRole("button", { name: "中断加载" })).toBeNull();
+  });
+
+  it("数据已完成但仍在统计行数时可以中断", async () => {
+    seedStores();
+    const count = deferred<number>();
+    vi.mocked(api.queryTableData).mockResolvedValue(refreshedUsers);
+    vi.mocked(api.queryTableCount).mockReturnValue(count.promise);
+    render(<TableData />);
+    act(() => useTableDataStore.setState({ countCache: {} }));
+
+    fireEvent.click(screen.getByRole("button", { name: "刷新数据" }));
+    await waitFor(() =>
+      expect(useTableDataStore.getState().dataLoading).toBe(false)
+    );
+    expect(screen.getByText("正在统计行数…")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "中断加载" }));
+
+    expect(useTableDataStore.getState().totalCountLoading).toBe(false);
+    expect(screen.queryByText("正在统计行数…")).toBeNull();
+    await act(async () => count.resolve(500));
+    expect(useTableDataStore.getState().total).toBe(100);
+    expect(useTableDataStore.getState().rows).toEqual([[2]]);
+    expect(screen.queryByRole("button", { name: "中断加载" })).toBeNull();
+  });
+
+  it("正常加载完成后隐藏中断按钮", async () => {
+    seedStores();
+    const data = deferred<typeof refreshedUsers>();
+    vi.mocked(api.queryTableData).mockReturnValue(data.promise);
+    render(<TableData />);
+
+    fireEvent.click(screen.getByRole("button", { name: "刷新数据" }));
+    expect(
+      await screen.findByRole("button", { name: "中断加载" })
+    ).toBeInTheDocument();
+    await act(async () => data.resolve(refreshedUsers));
+
+    expect(useTableDataStore.getState().rows).toEqual([[2]]);
+    expect(screen.queryByRole("button", { name: "中断加载" })).toBeNull();
+  });
+
+  it("慢查询切到结构再回数据后仍可中断且不重复请求", async () => {
+    seedStores();
+    const data = deferred<typeof refreshedUsers>();
+    vi.mocked(api.queryTableData).mockReturnValue(data.promise);
+    render(<TableData />);
+
+    fireEvent.click(screen.getByRole("button", { name: "刷新数据" }));
+    expect(
+      await screen.findByRole("button", { name: "中断加载" })
+    ).toBeInTheDocument();
+    act(() =>
+      useDatabaseStore.setState({ tableContentActiveTab: "structure" })
+    );
+    act(() => useDatabaseStore.setState({ tableContentActiveTab: "data" }));
+
+    expect(useTableDataStore.getState().dataLoading).toBe(true);
+    expect(api.queryTableData).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "中断加载" }));
+    await act(async () => data.resolve(refreshedUsers));
+
+    expect(useTableDataStore.getState().dataLoading).toBe(false);
+    expect(useTableDataStore.getState().rows).toEqual([[1]]);
+    expect(api.queryTableData).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "中断加载" })).toBeNull();
+  });
+
+  it("中断刷新分页后不显示刷新成功提示", async () => {
+    seedStores();
+    const count = deferred<number>();
+    vi.mocked(api.queryTableCount).mockReturnValue(count.promise);
+    render(<TableData />);
+
+    fireEvent.click(screen.getByRole("button", { name: "刷新分页" }));
+    fireEvent.click(await screen.findByRole("button", { name: "中断加载" }));
+    await act(async () => count.resolve(500));
+
+    expect(useTableDataStore.getState().totalCountLoading).toBe(false);
+    expect(useTableDataStore.getState().total).toBe(100);
+    expect(screen.queryByText("分页已刷新")).toBeNull();
+    expect(api.queryTableData).not.toHaveBeenCalled();
+  });
+
+  it("后端中断失败时停止界面加载并展示原因", async () => {
+    seedStores();
+    const data = deferred<typeof refreshedUsers>();
+    vi.mocked(api.queryTableData).mockReturnValue(data.promise);
+    vi.mocked(api.cancelTableQuery).mockRejectedValue(new Error("连接已断开"));
+    render(<TableData />);
+
+    fireEvent.click(screen.getByRole("button", { name: "刷新数据" }));
+    fireEvent.click(await screen.findByRole("button", { name: "中断加载" }));
+
+    expect(await screen.findByText(/连接已断开/)).toBeInTheDocument();
+    expect(screen.queryByText("已中断加载")).toBeNull();
+    expect(useTableDataStore.getState().dataLoading).toBe(false);
+    await act(async () => data.resolve(refreshedUsers));
+    expect(useTableDataStore.getState().rows).toEqual([[1]]);
+  });
+
+  it("正在执行写入操作时不显示中断加载按钮", async () => {
+    seedStores();
+    const mutation = deferred<number>();
+    vi.mocked(api.insertRow).mockReturnValue(mutation.promise);
+    vi.mocked(api.queryTableData).mockResolvedValue(refreshedUsers);
+    render(<TableData />);
+    let writing!: Promise<void>;
+
+    act(() => {
+      writing = useTableDataStore
+        .getState()
+        .insertRow("conn-1", "mydb", "users", { id: 2 });
+    });
+
+    expect(useTableDataStore.getState().dataLoading).toBe(true);
+    expect(screen.queryByRole("button", { name: "中断加载" })).toBeNull();
+    await act(async () => {
+      mutation.resolve(1);
+      await writing;
+    });
   });
 
   it("真实 Store 串联前进、后退和跳页后的继续翻页", async () => {

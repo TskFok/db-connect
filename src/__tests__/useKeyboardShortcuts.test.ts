@@ -168,7 +168,7 @@ describe("键盘快捷键系统 (逻辑测试)", () => {
       await vi.waitFor(() => {
         expect(api.queryTableData).toHaveBeenCalled();
       });
-      expect(api.queryTableData).toHaveBeenCalledWith("conn-1", "mydb", "users", expect.any(Number), expect.any(Number), undefined, undefined, undefined, true);
+      expect(api.queryTableData).toHaveBeenCalledWith("conn-1", "mydb", "users", expect.any(Number), expect.any(Number), undefined, undefined, undefined, true, undefined, expect.any(String));
     });
 
     it("不在数据行页面时应刷新数据库树 (调用 refresh)", async () => {
@@ -236,7 +236,7 @@ describe("键盘快捷键系统 (逻辑测试)", () => {
       await vi.waitFor(() => {
         expect(api.queryTableCount).toHaveBeenCalled();
       });
-      expect(api.queryTableCount).toHaveBeenCalledWith("conn-1", "mydb", "users", undefined);
+      expect(api.queryTableCount).toHaveBeenCalledWith("conn-1", "mydb", "users", undefined, expect.any(String));
       expect(api.queryTableData).not.toHaveBeenCalled();
     });
 

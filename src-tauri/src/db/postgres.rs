@@ -5,6 +5,7 @@ use crate::db::sql_utils::{
     pg_id, pg_str, postgres_count_query, postgres_sql_editor_allowed_on_read_only_connection,
     validate_where_clause,
 };
+use crate::db::table_query::TableQueryCancellation;
 
 /// 对外暴露 PostgreSQL 字符串字面值转义，供 `postgres_ddl` 等同模块复用。
 /// 避免外部直接依赖 `sql_utils::pg_str` 路径，便于未来加上 PG 专属规则（如 E 字符串）。
@@ -385,20 +386,42 @@ pub async fn get_table_structure(
         .collect())
 }
 
+async fn finish_table_query<T>(
+    client: deadpool_postgres::Client,
+    result: Result<T, String>,
+    handle: &PostgresPoolHandle,
+) -> Result<T, String> {
+    if result.is_err() {
+        let cancel = PostgresCancelHandle::new(client.cancel_token(), handle.cancel_tls.clone());
+        // 在取消完成前继续持有原连接，保证取消请求不会命中下一条查询。
+        let _ = tokio::time::timeout(Duration::from_secs(2), cancel.cancel()).await;
+        drop(deadpool_postgres::Client::take(client));
+    }
+    result
+}
+
 pub async fn query_table_count(
-    pool: &PgPool,
+    handle: &PostgresPoolHandle,
     schema: &str,
     table: &str,
     where_clause: Option<String>,
+    cancellation: &TableQueryCancellation,
 ) -> Result<u64, String> {
     let where_sql = build_where_sql(&where_clause)?;
     let count_sql = postgres_count_query(schema, table, &where_sql);
-    let client = get_client_with_retry(pool).await?;
-    let row = client
-        .query_one(&count_sql, &[])
-        .await
-        .map_err(|e| format!("查询总数失败: {}", e))?;
-    Ok(i64_to_u64(Some(row.get::<_, i64>(0))).unwrap_or(0))
+    let client = cancellation
+        .run(get_client_with_retry(&handle.pool))
+        .await?;
+    let result = cancellation
+        .run(async {
+            let row = client
+                .query_one(&count_sql, &[])
+                .await
+                .map_err(|e| format!("查询总数失败: {}", e))?;
+            Ok(i64_to_u64(Some(row.get::<_, i64>(0))).unwrap_or(0))
+        })
+        .await;
+    finish_table_query(client, result, handle).await
 }
 
 /// 从系统目录读取真实约束，而不是列展示标记；普通继承父表的子表可能重复主键，禁用游标。
@@ -441,7 +464,7 @@ async fn fetch_table_page_metadata(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn query_table_data(
-    pool: &PgPool,
+    handle: &PostgresPoolHandle,
     schema: &str,
     table: &str,
     page: u32,
@@ -452,90 +475,99 @@ pub async fn query_table_data(
     skip_count: Option<bool>,
     context: PageContext,
     navigation: Option<TablePageNavigation>,
+    cancellation: &TableQueryCancellation,
 ) -> Result<TablePageResult, String> {
     let start = Instant::now();
-    let client = get_client_with_retry(pool).await?;
-    let where_sql = build_where_sql(&where_clause)?;
-    let metadata = match cached_metadata_for_navigation(&context, page, navigation.as_ref()) {
-        Some(metadata) => metadata,
-        None => remember_metadata(
-            &context,
-            fetch_table_page_metadata(&client, schema, table).await?,
-        ),
-    };
-    let total = if skip_count == Some(true) {
-        0
-    } else {
-        let count_sql = postgres_count_query(schema, table, &where_sql);
-        let row = client
-            .query_one(&count_sql, &[])
-            .await
-            .map_err(|e| format!("查询总数失败: {}", e))?;
-        i64_to_u64(Some(row.get::<_, i64>(0))).unwrap_or(0)
-    };
-    let selected_columns = metadata.selected_columns(&select_columns);
-    let select_part = selected_columns
-        .as_ref()
-        .map(|cols| cols.iter().map(|c| pg_id(c)).collect::<Vec<_>>().join(", "))
-        .unwrap_or_else(|| "*".into());
-    let plan = PagePlan::new(context, metadata.clone(), page, navigation.as_ref());
-    let quoted_key = plan.key_column.as_deref().map(pg_id).unwrap_or_default();
-    let data_sql = plan.sql(
-        &select_part,
-        &format!("{}.{}", pg_id(schema), pg_id(table)),
-        &quoted_key,
-        &order_sql,
-    );
-    // 保留 simple_query 的任意 PostgreSQL 类型文本展示；边界只能来自严格解析后的 i64，
-    // 再输出标准十进制整数，绝不将客户端游标或未经校验的文本拼入 SQL。
-    let messages = client
-        .simple_query(&data_sql)
-        .await
-        .map_err(|e| format!("查询数据失败: {}", e))?;
-    let raw_rows: Vec<_> = messages
-        .iter()
-        .filter_map(|message| match message {
-            SimpleQueryMessage::Row(row) => Some(row),
-            _ => None,
+    let client = cancellation
+        .run(get_client_with_retry(&handle.pool))
+        .await?;
+    let result = cancellation
+        .run(async {
+            let where_sql = build_where_sql(&where_clause)?;
+            let metadata = match cached_metadata_for_navigation(&context, page, navigation.as_ref())
+            {
+                Some(metadata) => metadata,
+                None => remember_metadata(
+                    &context,
+                    fetch_table_page_metadata(&client, schema, table).await?,
+                ),
+            };
+            let total = if skip_count == Some(true) {
+                0
+            } else {
+                let count_sql = postgres_count_query(schema, table, &where_sql);
+                let row = client
+                    .query_one(&count_sql, &[])
+                    .await
+                    .map_err(|e| format!("查询总数失败: {}", e))?;
+                i64_to_u64(Some(row.get::<_, i64>(0))).unwrap_or(0)
+            };
+            let selected_columns = metadata.selected_columns(&select_columns);
+            let select_part = selected_columns
+                .as_ref()
+                .map(|cols| cols.iter().map(|c| pg_id(c)).collect::<Vec<_>>().join(", "))
+                .unwrap_or_else(|| "*".into());
+            let plan = PagePlan::new(context, metadata.clone(), page, navigation.as_ref());
+            let quoted_key = plan.key_column.as_deref().map(pg_id).unwrap_or_default();
+            let data_sql = plan.sql(
+                &select_part,
+                &format!("{}.{}", pg_id(schema), pg_id(table)),
+                &quoted_key,
+                &order_sql,
+            );
+            // 保留 simple_query 的任意 PostgreSQL 类型文本展示；边界只能来自严格解析后的 i64，
+            // 再输出标准十进制整数，绝不将客户端游标或未经校验的文本拼入 SQL。
+            let messages = client
+                .simple_query(&data_sql)
+                .await
+                .map_err(|e| format!("查询数据失败: {}", e))?;
+            let raw_rows: Vec<_> = messages
+                .iter()
+                .filter_map(|message| match message {
+                    SimpleQueryMessage::Row(row) => Some(row),
+                    _ => None,
+                })
+                .collect();
+            let key_index = plan.key_column.as_ref().and_then(|key| {
+                raw_rows
+                    .first()?
+                    .columns()
+                    .iter()
+                    .position(|column| column.name() == key)
+            });
+            let boundary = |row: &&tokio_postgres::SimpleQueryRow| {
+                key_index
+                    .and_then(|index| row.get(index))
+                    .and_then(IntegerValue::from_postgres)
+            };
+            let (mut first, mut last) = (
+                raw_rows.first().and_then(boundary),
+                raw_rows.last().and_then(boundary),
+            );
+            if plan.reverse {
+                std::mem::swap(&mut first, &mut last);
+            }
+            let pagination = plan.pagination(first, last, raw_rows.len());
+            let (mut columns, mut rows) = simple_messages_to_columns_and_json(&messages)?;
+            if plan.reverse {
+                rows.reverse();
+            }
+            if columns.is_empty() && rows.is_empty() {
+                columns = selected_columns.unwrap_or(metadata.columns);
+            }
+            Ok(TablePageResult {
+                result: QueryResult {
+                    columns,
+                    rows,
+                    total,
+                    execution_time_ms: start.elapsed().as_millis() as u64,
+                },
+                pagination,
+                executed_sql: Some(data_sql),
+            })
         })
-        .collect();
-    let key_index = plan.key_column.as_ref().and_then(|key| {
-        raw_rows
-            .first()?
-            .columns()
-            .iter()
-            .position(|column| column.name() == key)
-    });
-    let boundary = |row: &&tokio_postgres::SimpleQueryRow| {
-        key_index
-            .and_then(|index| row.get(index))
-            .and_then(IntegerValue::from_postgres)
-    };
-    let (mut first, mut last) = (
-        raw_rows.first().and_then(boundary),
-        raw_rows.last().and_then(boundary),
-    );
-    if plan.reverse {
-        std::mem::swap(&mut first, &mut last);
-    }
-    let pagination = plan.pagination(first, last, raw_rows.len());
-    let (mut columns, mut rows) = simple_messages_to_columns_and_json(&messages)?;
-    if plan.reverse {
-        rows.reverse();
-    }
-    if columns.is_empty() && rows.is_empty() {
-        columns = selected_columns.unwrap_or(metadata.columns);
-    }
-    Ok(TablePageResult {
-        result: QueryResult {
-            columns,
-            rows,
-            total,
-            execution_time_ms: start.elapsed().as_millis() as u64,
-        },
-        pagination,
-        executed_sql: Some(data_sql),
-    })
+        .await;
+    finish_table_query(client, result, handle).await
 }
 
 pub async fn set_search_path_if_set(
