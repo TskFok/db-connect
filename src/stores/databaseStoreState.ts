@@ -28,6 +28,22 @@ export interface TableSearchState {
   keyword: string;
 }
 
+/** 单条 SQL 的执行结果，与原语句对应。 */
+export interface SqlStatementResult {
+  sql: string;
+  result: SqlExecuteResult | null;
+  error: string | null;
+}
+
+/** 独立 SQL 标签页最近一次执行的结果及当前选中的结果标签。 */
+export interface SqlTabResultState {
+  result: SqlExecuteResult | null;
+  error: string | null;
+  executedSqlList: string[];
+  statementResults?: SqlStatementResult[];
+  activeResultIndex?: number;
+}
+
 /** 单个连接的数据库状态 */
 export interface ConnectionDatabaseState {
   databases: string[];
@@ -44,15 +60,8 @@ export interface ConnectionDatabaseState {
   activeTabIndex: number;
   /** SQL 标签页内容：id -> sql 文本 */
   sqlTabContents: Record<string, string>;
-  /** SQL 标签页执行结果：id -> { result, error, executedSqlList } */
-  sqlTabResults: Record<
-    string,
-    {
-      result: SqlExecuteResult | null;
-      error: string | null;
-      executedSqlList: string[];
-    }
-  >;
+  /** SQL 标签页执行结果及当前选中的结果标签。 */
+  sqlTabResults: Record<string, SqlTabResultState>;
   /** 侧边栏等对指定 SQL 标签页请求执行时的单调递增令牌（编辑器内监听 nonce 触发执行） */
   sqlTabExecuteNonce: Record<string, number>;
   /**
@@ -140,8 +149,7 @@ export function deriveSelectedFromOpenTabs(
       selectedTableInfo: null,
       activeTabIndex: idx,
       // openTabs 为权威来源；仅有遗留 openTables 时保留之
-      openTables:
-        openTabs.length > 0 ? openTables : (state.openTables ?? []),
+      openTables: openTabs.length > 0 ? openTables : (state.openTables ?? []),
       activeTableTabIndex: state.activeTableTabIndex ?? 0,
     };
   }

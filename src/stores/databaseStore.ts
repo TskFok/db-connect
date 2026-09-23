@@ -15,6 +15,7 @@ import {
   type ConnectionDatabaseState,
   type OpenTabEntry,
   type OpenTableEntry,
+  type SqlStatementResult,
   type TableSearchState,
   type ViewMode,
 } from "./databaseStoreState";
@@ -22,7 +23,13 @@ import { applyOpenTabDerivedState, syncCurrentView } from "./databaseStoreView";
 
 // 状态形状与纯派生逻辑拆分到 ./databaseStoreState，便于维护并复用；此处重新导出以保持既有导入路径不变
 export { emptyConnState };
-export type { ConnectionDatabaseState, OpenTabEntry, OpenTableEntry, ViewMode };
+export type {
+  ConnectionDatabaseState,
+  OpenTabEntry,
+  OpenTableEntry,
+  SqlStatementResult,
+  ViewMode,
+};
 
 interface DatabaseState {
   /** 当前激活的 connId（来自 connectionStore） */
@@ -65,14 +72,7 @@ interface DatabaseState {
   activeTabIndex: number;
   /** SQL 标签页内容 */
   sqlTabContents: Record<string, string>;
-  sqlTabResults: Record<
-    string,
-    {
-      result: SqlExecuteResult | null;
-      error: string | null;
-      executedSqlList: string[];
-    }
-  >;
+  sqlTabResults: ConnectionDatabaseState["sqlTabResults"];
   sqlTabExecuteNonce: Record<string, number>;
   /** SQL 标签页运行中的执行状态：id -> { executionId }（存在即执行中，切换标签不丢失） */
   sqlTabExecutions: Record<string, { executionId: string | null }>;
@@ -121,8 +121,11 @@ interface DatabaseState {
     tabId: string,
     result: SqlExecuteResult | null,
     error: string | null,
-    executedSqlList: string[]
+    executedSqlList: string[],
+    statementResults?: SqlStatementResult[]
   ) => void;
+  /** 切换指定 SQL 标签页当前展示的语句结果。 */
+  setSqlTabActiveResult: (connId: string, tabId: string, index: number) => void;
   /** 请求指定 SQL 标签页在当前连接下一次执行编辑器内容（编辑器内防抖监听） */
   requestSqlTabExecute: (connId: string, tabId: string) => void;
   /**
@@ -564,13 +567,26 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     tabId: string,
     result: SqlExecuteResult | null,
     error: string | null,
-    executedSqlList: string[]
+    executedSqlList: string[],
+    statementResults: SqlStatementResult[] = []
   ) => {
     const { connectionStates, activeConnId } = get();
-    const state = connectionStates[connId] ?? emptyConnState();
+    const state = connectionStates[connId];
+    if (
+      !state ||
+      !state.openTabs.some((tab) => tab.type === "sql" && tab.id === tabId)
+    ) {
+      return;
+    }
     const newSqlTabResults = {
       ...(state.sqlTabResults ?? {}),
-      [tabId]: { result, error, executedSqlList },
+      [tabId]: {
+        result,
+        error,
+        executedSqlList,
+        statementResults,
+        activeResultIndex: 0,
+      },
     };
     const updated: ConnectionDatabaseState = {
       ...state,
@@ -579,10 +595,40 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     const newStates = { ...connectionStates, [connId]: updated };
     const res: Partial<DatabaseState> = {
       connectionStates: newStates,
-      sqlTabResults: newSqlTabResults,
     };
     if (activeConnId === connId) {
-      Object.assign(res, syncCurrentView(updated));
+      res.sqlTabResults = newSqlTabResults;
+    }
+    set(res);
+  },
+
+  setSqlTabActiveResult: (connId, tabId, index) => {
+    const { connectionStates, activeConnId } = get();
+    const state = connectionStates[connId];
+    const current = state?.sqlTabResults[tabId];
+    if (
+      !state ||
+      !current ||
+      !state.openTabs.some((tab) => tab.type === "sql" && tab.id === tabId) ||
+      !Number.isInteger(index) ||
+      index < 0 ||
+      index >= (current.statementResults?.length ?? 0) ||
+      current.activeResultIndex === index
+    ) {
+      return;
+    }
+    const sqlTabResults = {
+      ...state.sqlTabResults,
+      [tabId]: { ...current, activeResultIndex: index },
+    };
+    const res: Partial<DatabaseState> = {
+      connectionStates: {
+        ...connectionStates,
+        [connId]: { ...state, sqlTabResults },
+      },
+    };
+    if (activeConnId === connId) {
+      res.sqlTabResults = sqlTabResults;
     }
     set(res);
   },
@@ -640,10 +686,9 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     const newStates = { ...connectionStates, [connId]: updated };
     const res: Partial<DatabaseState> = {
       connectionStates: newStates,
-      sqlTabExecutions: newSqlTabExecutions,
     };
     if (activeConnId === connId) {
-      Object.assign(res, syncCurrentView(updated));
+      res.sqlTabExecutions = newSqlTabExecutions;
     }
     set(res);
   },

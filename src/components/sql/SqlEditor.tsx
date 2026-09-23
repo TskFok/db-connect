@@ -5,6 +5,7 @@ import {
   Space,
   Typography,
   Table,
+  Tabs,
   Select,
   Alert,
   Spin,
@@ -13,7 +14,6 @@ import {
   Input,
   Drawer,
   Tooltip,
-  Collapse,
   message,
   Descriptions,
 } from "antd";
@@ -27,11 +27,14 @@ import {
   FileSearchOutlined,
   StopOutlined,
   AlignLeftOutlined,
+  LeftOutlined,
+  RightOutlined,
 } from "@ant-design/icons";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useDatabaseStore } from "../../stores/databaseStore";
+import type { SqlStatementResult } from "../../stores/databaseStoreState";
 import { useThemeStore } from "../../stores/themeStore";
 import { useSavedSqlStore } from "../../stores/savedSqlStore";
 import {
@@ -41,12 +44,7 @@ import {
 import { SavedSqlDropdown } from "../database/SavedSqlDropdown";
 import * as api from "../../services/tauriCommands";
 import type { SessionInfo, SqlExecuteResult } from "../../types";
-import {
-  BULK_EXECUTED_SQL_PREVIEW_CAP,
-  BULK_EXECUTED_SQL_UI_THRESHOLD,
-  getExecutedSqlPreview,
-  splitSqlStatements,
-} from "../../utils/sqlUtils";
+import { splitSqlStatements } from "../../utils/sqlUtils";
 import { setupMonacoEditor } from "../../utils/monacoSetup";
 import { registerSqlCompletionProvider } from "../../utils/sqlCompletion";
 
@@ -65,8 +63,9 @@ import { formatSql } from "../../utils/sqlFormat";
 
 const { Text } = Typography;
 
-const EMPTY_EXECUTED_SQL_LIST: string[] = [];
+const EMPTY_STATEMENT_RESULTS: SqlStatementResult[] = [];
 const DEFAULT_RESULT_PAGE_SIZE = 100;
+const RESULT_TABS_PAGE_SIZE = 50;
 
 interface SqlResultTableRow {
   rowKey: number;
@@ -88,6 +87,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     tabExecuting,
     setSqlTabContent,
     setSqlTabResult,
+    setSqlTabActiveResult,
     setSqlTabExecution,
   } = useDatabaseStore(
     useShallow((s) => ({
@@ -98,6 +98,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
       tabExecuting: tabId ? !!s.sqlTabExecutions[tabId] : false,
       setSqlTabContent: s.setSqlTabContent,
       setSqlTabResult: s.setSqlTabResult,
+      setSqlTabActiveResult: s.setSqlTabActiveResult,
       setSqlTabExecution: s.setSqlTabExecution,
     }))
   );
@@ -109,10 +110,6 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
   const [localExecuting, setLocalExecuting] = useState(false);
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [saveModalName, setSaveModalName] = useState("");
-  /** 批量已执行 SQL 折叠面板展开的 key（antd Collapse） */
-  const [bulkExecutedPanelKeys, setBulkExecutedPanelKeys] = useState<string[]>(
-    []
-  );
   const [sessionDrawerOpen, setSessionDrawerOpen] = useState(false);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [sessionInfo, setSessionInfo] = useState<SessionInfo | null>(null);
@@ -138,21 +135,53 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
   // 独立 SQL 标签页：从 store 读取执行结果（切换 tab 时保留）；表内嵌 SQL：使用本地 state
   const [localResult, setLocalResult] = useState<SqlExecuteResult | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
-  const [localExecutedSqlList, setLocalExecutedSqlList] = useState<string[]>(
-    []
-  );
+  const [localStatementResults, setLocalStatementResults] = useState<
+    SqlStatementResult[]
+  >([]);
+  const [localActiveResultIndex, setLocalActiveResultIndex] = useState(0);
   const [resultPage, setResultPage] = useState(1);
   const [resultPageSize, setResultPageSize] = useState(
     DEFAULT_RESULT_PAGE_SIZE
   );
 
-  const result = tabId ? (tabResult?.result ?? null) : localResult;
-  const error = tabId ? (tabResult?.error ?? null) : localError;
-  const executedSqlList = tabId
-    ? (tabResult?.executedSqlList ?? EMPTY_EXECUTED_SQL_LIST)
-    : localExecutedSqlList;
+  const statementResults = tabId
+    ? (tabResult?.statementResults ?? EMPTY_STATEMENT_RESULTS)
+    : localStatementResults;
+  const activeResultIndex = tabId
+    ? (tabResult?.activeResultIndex ?? 0)
+    : localActiveResultIndex;
+  const activeStatement = statementResults[activeResultIndex];
+  const resultTabStart =
+    Math.floor(activeResultIndex / RESULT_TABS_PAGE_SIZE) *
+    RESULT_TABS_PAGE_SIZE;
+  const resultTabEnd = Math.min(
+    resultTabStart + RESULT_TABS_PAGE_SIZE,
+    statementResults.length
+  );
+  const result = activeStatement
+    ? activeStatement.result
+    : tabId
+      ? (tabResult?.result ?? null)
+      : localResult;
+  const error = activeStatement
+    ? activeStatement.error
+    : tabId
+      ? (tabResult?.error ?? null)
+      : localError;
   // 独立 SQL 标签页：执行中状态存于 store，切换标签（组件卸载重挂载）后仍能显示执行中并可停止
   const executing = tabId ? tabExecuting : localExecuting;
+
+  const handleResultTabChange = useCallback(
+    (key: string) => {
+      const index = Number(key);
+      if (tabId && connId) {
+        setSqlTabActiveResult(connId, tabId, index);
+      } else {
+        setLocalActiveResultIndex(index);
+      }
+    },
+    [tabId, connId, setSqlTabActiveResult]
+  );
 
   /** 标记执行状态：tab 模式写入 store（跨卸载保留），表内嵌模式用本地 state；同时维护取消令牌 */
   const markExecution = useCallback(
@@ -166,20 +195,6 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     },
     [tabId, setSqlTabExecution]
   );
-
-  const executedPreview = useMemo(
-    () =>
-      getExecutedSqlPreview(
-        executedSqlList,
-        BULK_EXECUTED_SQL_UI_THRESHOLD,
-        BULK_EXECUTED_SQL_PREVIEW_CAP
-      ),
-    [executedSqlList]
-  );
-
-  useEffect(() => {
-    setBulkExecutedPanelKeys([]);
-  }, [executedSqlList]);
 
   useEffect(() => {
     if (!connId) {
@@ -298,9 +313,8 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
   useEffect(() => {
     const container = resultContainerRef.current;
     if (!container) return;
-    const bulkCollapsed =
-      executedPreview.isBulk && bulkExecutedPanelKeys.length === 0;
-    const reserved = bulkCollapsed ? 220 : 335;
+    // 为当前 SQL 预览、结果标签、状态栏和表格分页预留空间。
+    const reserved = activeStatement ? 280 : 100;
     const applyHeight = (contentHeight: number) => {
       const height = Math.max(contentHeight - reserved, 150);
       requestAnimationFrame(() => setResultHeight(height));
@@ -313,7 +327,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     observer.observe(container);
     applyHeight(container.getBoundingClientRect().height);
     return () => observer.disconnect();
-  }, [executedPreview.isBulk, bulkExecutedPanelKeys.length]);
+  }, [activeStatement]);
 
   const savedList = getSavedSqlList();
   const currentSavedSqlKey = useMemo(
@@ -428,6 +442,8 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
       } else {
         setLocalError(null);
         setLocalResult(null);
+        setLocalStatementResults([]);
+        setLocalActiveResultIndex(0);
       }
       try {
         const res = await api.explainSql(cid, db, sql, analyze);
@@ -512,14 +528,16 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     }
 
     markExecution(cid, { executionId: null });
-    if (tabId && connId) {
-      setSqlTabResult(connId, tabId, null, null, []);
+    if (tabId && cid) {
+      setSqlTabResult(cid, tabId, null, null, []);
     } else {
       setLocalError(null);
       setLocalResult(null);
-      setLocalExecutedSqlList([]);
+      setLocalStatementResults([]);
+      setLocalActiveResultIndex(0);
     }
     const successfulSql: string[] = [];
+    const executionResults: SqlStatementResult[] = [];
     let lastResult: SqlExecuteResult | null = null;
     let execError: string | null = null;
 
@@ -531,26 +549,40 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
         const res = await api.executeSql(cid, db, stmt, execId);
         successfulSql.push(stmt);
         lastResult = res;
+        executionResults.push({ sql: stmt, result: res, error: null });
       }
     } catch (e) {
       execError = String(e);
-      if (successfulSql.length > 0 && lastResult) {
-        // 部分成功，保留已执行的结果
-      }
+      executionResults.push({
+        sql: statements[successfulSql.length],
+        result: null,
+        error: execError,
+      });
     } finally {
       markExecution(cid, null);
       if (tabId && cid) {
-        setSqlTabResult(cid, tabId, lastResult, execError, successfulSql);
+        setSqlTabResult(
+          cid,
+          tabId,
+          lastResult,
+          execError,
+          successfulSql,
+          executionResults
+        );
+        if (execError) {
+          setSqlTabActiveResult(cid, tabId, executionResults.length - 1);
+        }
       } else {
         setLocalError(execError);
         setLocalResult(lastResult);
-        setLocalExecutedSqlList(successfulSql);
+        setLocalStatementResults(executionResults);
+        setLocalActiveResultIndex(execError ? executionResults.length - 1 : 0);
       }
     }
   }, [
     tabId,
-    connId,
     setSqlTabResult,
+    setSqlTabActiveResult,
     markExecution,
     activeConnection?.config.skip_dangerous_sql_confirm,
   ]);
@@ -647,7 +679,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
 
   useEffect(() => {
     setResultPage(1);
-  }, [result]);
+  }, [result, activeResultIndex]);
 
   useEffect(() => {
     setResultPage((page) => Math.min(page, resultMaxPage));
@@ -763,6 +795,127 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
       message.error(String(e));
     }
   }, [result]);
+
+  // 只挂载当前标签的表格，分页与导出始终使用当前语句的结果。
+  const resultContent = (
+    <>
+      {activeStatement && (
+        <pre
+          aria-label="已执行 SQL"
+          style={{
+            margin: "0 0 8px",
+            padding: "8px 12px",
+            maxHeight: 120,
+            overflow: "auto",
+            fontSize: 12,
+            fontFamily: "monospace",
+            backgroundColor: "var(--bg-elevated)",
+            borderRadius: 6,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}
+        >
+          <code>{activeStatement.sql}</code>
+        </pre>
+      )}
+      {error && (
+        <Alert
+          type="error"
+          message="执行失败"
+          description={error}
+          showIcon
+          closable
+          style={{ marginBottom: 8 }}
+        />
+      )}
+
+      {result && (
+        <>
+          {/* 结果头 */}
+          <div
+            style={{
+              padding: "4px 0",
+              marginBottom: 4,
+              fontSize: 12,
+              display: "flex",
+              gap: 16,
+              alignItems: "center",
+              color: "var(--text-secondary)",
+              flexShrink: 0,
+            }}
+          >
+            <span>
+              <CheckCircleOutlined
+                style={{ color: "#52c41a", marginRight: 4 }}
+              />
+              {result.message}
+            </span>
+            <span>
+              <ClockCircleOutlined style={{ marginRight: 4 }} />
+              {result.execution_time_ms}ms
+            </span>
+            {hasSelectResult && (
+              <Button
+                size="small"
+                type="link"
+                icon={<FileExcelOutlined />}
+                style={{ marginLeft: "auto", paddingInline: 4 }}
+                onClick={() => void handleExportSqlExcel()}
+              >
+                导出 Excel
+              </Button>
+            )}
+          </div>
+
+          {/* SELECT / EXPLAIN 结果表格 */}
+          {hasSelectResult && (
+            <Table
+              columns={resultColumns}
+              dataSource={resultData}
+              rowKey="rowKey"
+              size="small"
+              virtual
+              pagination={{
+                current: safeResultPage,
+                pageSize: resultPageSize,
+                total: resultRowCount,
+                onChange: handleResultPageChange,
+                showSizeChanger: true,
+                pageSizeOptions: ["50", "100", "200", "500"],
+                showTotal: (t) => `共 ${t} 行`,
+                size: "small",
+              }}
+              scroll={{ x: "max-content", y: resultHeight }}
+              style={{ fontSize: 12 }}
+            />
+          )}
+
+          {/* SELECT 返回 0 行 */}
+          {result.result_type === "select" &&
+            (!result.columns || result.columns.length === 0) && (
+              <Empty
+                description="查询成功，返回 0 行数据"
+                style={{ padding: 32 }}
+              />
+            )}
+
+          {/* DML 结果 */}
+          {result.result_type === "modify" && (
+            <div
+              style={{
+                padding: 16,
+                textAlign: "center",
+                color: "#52c41a",
+                fontSize: 14,
+              }}
+            >
+              影响 {result.affected_rows ?? 0} 行
+            </div>
+          )}
+        </>
+      )}
+    </>
+  );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -970,236 +1123,70 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
           </div>
         )}
 
-        {error && (
-          <Alert
-            type="error"
-            message="执行失败"
-            description={error}
-            showIcon
-            closable
-            style={{ marginBottom: 8 }}
-          />
-        )}
-
-        {result && (
-          <>
-            {/* 结果头 */}
-            <div
-              style={{
-                padding: "4px 0",
-                marginBottom: 4,
-                fontSize: 12,
-                display: "flex",
-                gap: 16,
-                alignItems: "center",
-                color: "var(--text-secondary)",
-                flexShrink: 0,
-              }}
-            >
-              <span>
-                <CheckCircleOutlined
-                  style={{ color: "#52c41a", marginRight: 4 }}
-                />
-                {result.message}
-              </span>
-              <span>
-                <ClockCircleOutlined style={{ marginRight: 4 }} />
-                {result.execution_time_ms}ms
-              </span>
-              {hasSelectResult && (
-                <Button
-                  size="small"
-                  type="link"
-                  icon={<FileExcelOutlined />}
-                  style={{ marginLeft: "auto", paddingInline: 4 }}
-                  onClick={() => void handleExportSqlExcel()}
-                >
-                  导出 Excel
-                </Button>
-              )}
-            </div>
-
-            {/* SELECT / EXPLAIN 结果表格 */}
-            {hasSelectResult && (
-              <Table
-                columns={resultColumns}
-                dataSource={resultData}
-                rowKey="rowKey"
-                size="small"
-                virtual
-                pagination={{
-                  current: safeResultPage,
-                  pageSize: resultPageSize,
-                  total: resultRowCount,
-                  onChange: handleResultPageChange,
-                  showSizeChanger: true,
-                  pageSizeOptions: ["50", "100", "200", "500"],
-                  showTotal: (t) => `共 ${t} 行`,
-                  size: "small",
-                }}
-                scroll={{ x: "max-content", y: resultHeight }}
-                style={{ fontSize: 12 }}
-              />
-            )}
-
-            {/* SELECT 返回 0 行 */}
-            {result.result_type === "select" &&
-              (!result.columns || result.columns.length === 0) && (
-                <Empty
-                  description="查询成功，返回 0 行数据"
-                  style={{ padding: 32 }}
-                />
-              )}
-
-            {/* DML 结果 */}
-            {result.result_type === "modify" && (
-              <div
-                style={{
-                  padding: 16,
-                  textAlign: "center",
-                  color: "#52c41a",
-                  fontSize: 14,
-                }}
-              >
-                影响 {result.affected_rows ?? 0} 行
-              </div>
-            )}
-          </>
-        )}
-
-        {/* 已成功执行的 SQL 列表 */}
-        {executedSqlList.length > 0 && !executedPreview.isBulk && (
-          <div
-            style={{
-              marginTop: 16,
-              paddingTop: 12,
-              borderTop: "1px solid var(--border-color)",
-              flexShrink: 0,
-            }}
-          >
-            <Text
-              type="secondary"
-              style={{ fontSize: 12, marginBottom: 8, display: "block" }}
-            >
-              已成功执行 {executedSqlList.length} 条 SQL:
-            </Text>
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 8,
-                maxHeight: 200,
-                overflowY: "auto",
-              }}
-            >
-              {executedSqlList.map((stmt, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    padding: "8px 12px",
-                    fontSize: 12,
-                    fontFamily: "monospace",
-                    backgroundColor: "var(--bg-elevated)",
-                    borderRadius: 6,
-                    overflowX: "auto",
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-all",
-                  }}
-                  title={stmt}
-                >
+        {statementResults.length > 0 ? (
+          <Tabs
+            size="small"
+            type="card"
+            style={{ flexShrink: 0 }}
+            activeKey={String(activeResultIndex)}
+            onChange={handleResultTabChange}
+            destroyOnHidden
+            tabBarExtraContent={
+              statementResults.length > RESULT_TABS_PAGE_SIZE ? (
+                <Space size={4}>
+                  <Button
+                    size="small"
+                    aria-label="上一组结果"
+                    icon={<LeftOutlined />}
+                    disabled={resultTabStart === 0}
+                    onClick={() =>
+                      handleResultTabChange(
+                        String(resultTabStart - RESULT_TABS_PAGE_SIZE)
+                      )
+                    }
+                  />
                   <Text
                     type="secondary"
-                    style={{ fontSize: 11, marginRight: 8 }}
+                    style={{ fontSize: 12, whiteSpace: "nowrap" }}
                   >
-                    [{idx + 1}]
+                    {resultTabStart + 1}–{resultTabEnd} /{" "}
+                    {statementResults.length}
                   </Text>
-                  <code style={{ fontSize: 12 }}>{stmt}</code>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {executedSqlList.length > 0 && executedPreview.isBulk && (
-          <div
-            style={{
-              marginTop: 16,
-              paddingTop: 12,
-              borderTop: "1px solid var(--border-color)",
-              flexShrink: 0,
-            }}
-          >
-            <Text
-              type="secondary"
-              style={{ fontSize: 12, display: "block", marginBottom: 8 }}
-            >
-              已成功执行 {executedPreview.total} 条
-              SQL。语句较多时已默认折叠列表，展开后仅展示前{" "}
-              {executedPreview.visibleSlice.length} 条以避免界面卡顿。
-            </Text>
-            <Collapse
-              activeKey={bulkExecutedPanelKeys}
-              onChange={(keys) =>
-                setBulkExecutedPanelKeys(Array.isArray(keys) ? keys : [keys])
-              }
-              items={[
-                {
-                  key: "executed-bulk",
-                  label: `查看已执行语句（预览 ${executedPreview.visibleSlice.length} / 共 ${executedPreview.total} 条）`,
-                  children: (
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 6,
-                        maxHeight: 280,
-                        overflowY: "auto",
-                      }}
-                    >
-                      {executedPreview.visibleSlice.map((stmt, idx) => (
-                        <div
-                          key={idx}
-                          style={{
-                            display: "flex",
-                            alignItems: "flex-start",
-                            gap: 8,
-                            padding: "6px 10px",
-                            backgroundColor: "var(--bg-elevated)",
-                            borderRadius: 6,
-                            minWidth: 0,
-                          }}
-                        >
-                          <Text
-                            type="secondary"
-                            style={{ fontSize: 11, flexShrink: 0 }}
-                          >
-                            [{idx + 1}]
-                          </Text>
-                          <Text
-                            ellipsis={{ tooltip: stmt }}
-                            style={{
-                              flex: 1,
-                              minWidth: 0,
-                              fontSize: 12,
-                              fontFamily: "monospace",
-                            }}
-                          >
-                            {stmt}
-                          </Text>
-                        </div>
-                      ))}
-                      {executedPreview.hiddenCount > 0 && (
-                        <Text type="secondary" style={{ fontSize: 12 }}>
-                          … 另有 {executedPreview.hiddenCount}{" "}
-                          条未在此列出，请在上方面板查看或搜索原始脚本。
-                        </Text>
-                      )}
-                    </div>
-                  ),
-                },
-              ]}
-            />
-          </div>
+                  <Button
+                    size="small"
+                    aria-label="下一组结果"
+                    icon={<RightOutlined />}
+                    disabled={resultTabEnd === statementResults.length}
+                    onClick={() => handleResultTabChange(String(resultTabEnd))}
+                  />
+                </Space>
+              ) : undefined
+            }
+            items={statementResults
+              .slice(resultTabStart, resultTabEnd)
+              .map((entry, offset) => ({
+                key: String(resultTabStart + offset),
+                label: (
+                  <span
+                    title={entry.sql}
+                    style={
+                      entry.error
+                        ? { color: "var(--ant-color-error, #ff4d4f)" }
+                        : undefined
+                    }
+                  >
+                    SQL {resultTabStart + offset + 1}
+                    {entry.error ? "（失败）" : ""}
+                  </span>
+                ),
+                children:
+                  resultTabStart + offset === activeResultIndex
+                    ? resultContent
+                    : null,
+              }))}
+          />
+        ) : (
+          resultContent
         )}
 
         {/* 空状态 */}
