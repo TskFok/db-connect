@@ -46,6 +46,7 @@ export interface RelationSymbol {
   namespaceQuoted?: boolean;
   aliasQuoted?: boolean;
   outputColumns?: ColumnSymbol[];
+  outputComplete?: boolean;
 }
 export interface QueryScope {
   id: string;
@@ -53,6 +54,10 @@ export interface QueryScope {
   relations: RelationSymbol[];
   projections: ColumnSymbol[];
   canCorrelate: boolean;
+  range?: { start: number; end: number };
+  ctes?: RelationSymbol[];
+  projectionComplete?: boolean;
+  visibleParentRelationIds?: string[];
 }
 export interface SqlCompletionContext {
   dialect: SqlDialect;
