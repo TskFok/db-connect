@@ -1,6 +1,7 @@
 pub use crate::db::batch_update::RowUpdate;
 use crate::db::batch_update::{build_batch_update_statements, BatchDialect};
 use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
+use crate::db::mysql_deferred_fields::{self, MysqlColumn, Projection};
 use crate::db::result_budget::ResultBudget;
 use crate::db::sql_utils::{
     esc_id, esc_str, mysql_count_query, mysql_sql_editor_allowed_on_read_only_connection,
@@ -478,7 +479,7 @@ async fn fetch_table_page_metadata(
 ) -> Result<TableMetadata, String> {
     let rows: Vec<mysql_async::Row> = conn.exec(
         "SELECT c.COLUMN_NAME AS column_name, c.DATA_TYPE AS data_type, c.COLUMN_TYPE AS column_type, \
-         k.ORDINAL_POSITION AS primary_position, t.TABLE_TYPE AS table_type \
+         k.ORDINAL_POSITION AS primary_position, t.TABLE_TYPE AS table_type, c.EXTRA AS extra \
          FROM INFORMATION_SCHEMA.COLUMNS c \
          JOIN INFORMATION_SCHEMA.TABLES t ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME \
          LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE k ON k.TABLE_SCHEMA = c.TABLE_SCHEMA \
@@ -514,7 +515,27 @@ async fn fetch_table_page_metadata(
             }
         })
         .collect();
-    let metadata = TableMetadata::new(columns, trusted);
+    let mut metadata = TableMetadata::new(columns, trusted);
+    metadata.mysql_columns = rows
+        .iter()
+        .map(|row| MysqlColumn {
+            name: row.get("column_name").unwrap_or_default(),
+            data_type: row
+                .get::<String, _>("data_type")
+                .unwrap_or_default()
+                .to_ascii_lowercase(),
+            unsigned: row
+                .get::<String, _>("column_type")
+                .unwrap_or_default()
+                .to_ascii_lowercase()
+                .contains("unsigned"),
+            invisible: row
+                .get::<String, _>("extra")
+                .unwrap_or_default()
+                .split_whitespace()
+                .any(|word| word.eq_ignore_ascii_case("INVISIBLE")),
+        })
+        .collect();
     if !trusted {
         return Ok(metadata);
     }
@@ -597,30 +618,14 @@ pub struct TableSortField {
     pub order: String,
 }
 
-fn build_order_by_sql(sort_fields: &Option<Vec<TableSortField>>) -> String {
-    let Some(fields) = sort_fields else {
-        return String::new();
-    };
-    if fields.is_empty() {
-        return String::new();
-    }
-    let mut parts: Vec<String> = Vec::new();
-    for f in fields {
-        let col = f.column.trim();
-        if col.is_empty() {
-            continue;
-        }
-        let safe_order = if f.order.to_uppercase() == "DESC" {
-            "DESC"
-        } else {
-            "ASC"
-        };
-        parts.push(format!("{} {}", esc_id(col), safe_order));
-    }
-    if parts.is_empty() {
-        return String::new();
-    }
-    format!(" ORDER BY {}", parts.join(", "))
+fn build_order_by_sql(sort_fields: &Option<Vec<TableSortField>>, table: &str) -> String {
+    let fields = sort_fields
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .map(|field| (field.column.clone(), field.order.clone()))
+        .collect::<Vec<_>>();
+    mysql_deferred_fields::order_by(&fields, table)
 }
 
 fn build_postgres_order_by_sql(sort_fields: &Option<Vec<TableSortField>>) -> String {
@@ -818,20 +823,19 @@ pub async fn query_table_data(
 
     // 保留自动补主键的既有行为：前端隐藏列仍可用于编辑和行选择。
     let selected_columns = metadata.selected_columns(&select_columns);
-    let select_part = selected_columns
-        .as_ref()
-        .map(|cols| {
-            cols.iter()
-                .map(|c| esc_id(c))
-                .collect::<Vec<_>>()
-                .join(", ")
-        })
-        .unwrap_or_else(|| "*".into());
-    let fallback_order = build_order_by_sql(&sort_fields);
+    let projection = Projection::new(
+        &metadata.mysql_columns,
+        &metadata.primary_keys,
+        metadata.reliable_primary_keys,
+        selected_columns.as_deref(),
+    );
+    let select_part = &projection.sql;
+    // 必须限定原表列，避免同名 SELECT 预览别名改变排序。
+    let fallback_order = build_order_by_sql(&sort_fields, &table);
     let plan = PagePlan::new(context, metadata.clone(), page, navigation.as_ref());
     let qualified_table = format!("{}.{}", esc_id(&database), esc_id(&table));
     let quoted_key = plan.key_column.as_deref().map(esc_id).unwrap_or_default();
-    let data_sql = plan.sql(&select_part, &qualified_table, &quoted_key, &fallback_order);
+    let data_sql = plan.sql(select_part, &qualified_table, &quoted_key, &fallback_order);
     // 保留文本协议，避免切换 prepared/binary 后日期微秒、午夜时间等展示发生变化。
     // 边界来自真实整数主键的 i64/u64 解析后规范十进制，客户端文本不会进入 SQL。
     let mut rows: Vec<mysql_async::Row> = conn
@@ -842,7 +846,7 @@ pub async fn query_table_data(
         rows.reverse();
     }
 
-    let columns: Vec<String> = rows
+    let mut columns: Vec<String> = rows
         .first()
         .map(|row| {
             row.columns_ref()
@@ -850,7 +854,7 @@ pub async fn query_table_data(
                 .map(|c| c.name_str().to_string())
                 .collect()
         })
-        .unwrap_or_else(|| selected_columns.unwrap_or(metadata.columns));
+        .unwrap_or_else(|| projection.columns.clone());
     let key_index = plan
         .key_column
         .as_ref()
@@ -866,7 +870,8 @@ pub async fn query_table_data(
         rows.last().and_then(boundary),
         rows.len(),
     );
-    let json_rows = rows_to_json_with_columns(&rows, columns.len());
+    let mut json_rows = rows_to_json_with_columns(&rows, columns.len());
+    projection.finish(&mut columns, &mut json_rows);
     Ok(TablePageResult {
         result: QueryResult {
             columns,
@@ -1266,7 +1271,8 @@ pub async fn delete_rows(
     Ok(conn.affected_rows())
 }
 
-/// 按主键查询完整行数据 (SELECT *)，用于"复制为 INSERT"等需要全量列的场景
+/// 按完整主键批量读取完整值；指定列时自动补齐主键，不经过分页预览。
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn query_full_rows(
     state: State<'_, AppState>,
@@ -1276,6 +1282,7 @@ pub async fn query_full_rows(
     primary_key_column: String,
     primary_key_values: Vec<JsonValue>,
     primary_keys: Option<Vec<HashMap<String, JsonValue>>>,
+    select_columns: Option<Vec<String>>,
 ) -> Result<QueryResult, String> {
     let pool_handle = {
         let mut manager = state.connection_manager.lock().await;
@@ -1345,24 +1352,25 @@ pub async fn query_full_rows(
         }
     };
 
-    if primary_key_values.is_empty() {
-        return Err("没有提供主键值".to_string());
-    }
-
     let start = Instant::now();
-
-    let placeholders: Vec<&str> = vec!["?"; primary_key_values.len()];
-    let params: Vec<MyValue> = primary_key_values.iter().map(json_to_mysql_value).collect();
-
-    let sql = format!(
-        "SELECT * FROM {}.{} WHERE {} IN ({})",
-        esc_id(&database),
-        esc_id(&table),
-        esc_id(&primary_key_column),
-        placeholders.join(", ")
-    );
-
     let mut conn = get_conn_with_retry(&pool).await?;
+    let metadata = fetch_table_page_metadata(&mut conn, &database, &table).await?;
+    let locators = primary_keys.unwrap_or_else(|| {
+        primary_key_values
+            .into_iter()
+            .map(|value| HashMap::from([(primary_key_column.clone(), value)]))
+            .collect()
+    });
+    let (sql, values) = mysql_deferred_fields::full_rows_query(
+        &database,
+        &table,
+        &metadata.mysql_columns,
+        &metadata.primary_keys,
+        metadata.reliable_primary_keys,
+        &locators,
+        select_columns.as_deref(),
+    )?;
+    let params: Vec<MyValue> = values.iter().map(json_to_mysql_value).collect();
 
     let rows: Vec<mysql_async::Row> = conn
         .exec(&sql, mysql_async::Params::Positional(params))
@@ -2096,46 +2104,55 @@ mod tests {
 
     #[test]
     fn test_build_order_by_sql_none_empty() {
-        assert_eq!(super::build_order_by_sql(&None), "");
-        assert_eq!(super::build_order_by_sql(&Some(vec![])), "");
+        assert_eq!(super::build_order_by_sql(&None, "items"), "");
+        assert_eq!(super::build_order_by_sql(&Some(vec![]), "items"), "");
     }
 
     #[test]
     fn test_build_order_by_sql_single_column() {
         assert_eq!(
-            super::build_order_by_sql(&Some(vec![super::TableSortField {
-                column: "name".into(),
-                order: "DESC".into(),
-            }])),
-            " ORDER BY `name` DESC"
+            super::build_order_by_sql(
+                &Some(vec![super::TableSortField {
+                    column: "name".into(),
+                    order: "DESC".into(),
+                }]),
+                "items"
+            ),
+            " ORDER BY `items`.`name` DESC"
         );
     }
 
     #[test]
     fn test_build_order_by_sql_multiple_columns_order_normalization() {
         assert_eq!(
-            super::build_order_by_sql(&Some(vec![
-                super::TableSortField {
-                    column: "created_at".into(),
-                    order: "desc".into(),
-                },
-                super::TableSortField {
-                    column: "id".into(),
-                    order: "ASC".into(),
-                },
-            ])),
-            " ORDER BY `created_at` DESC, `id` ASC"
+            super::build_order_by_sql(
+                &Some(vec![
+                    super::TableSortField {
+                        column: "created_at".into(),
+                        order: "desc".into(),
+                    },
+                    super::TableSortField {
+                        column: "id".into(),
+                        order: "ASC".into(),
+                    },
+                ]),
+                "items"
+            ),
+            " ORDER BY `items`.`created_at` DESC, `items`.`id` ASC"
         );
     }
 
     #[test]
     fn test_build_order_by_sql_non_desc_defaults_to_asc() {
         assert_eq!(
-            super::build_order_by_sql(&Some(vec![super::TableSortField {
-                column: "x".into(),
-                order: "ANY".into(),
-            }])),
-            " ORDER BY `x` ASC"
+            super::build_order_by_sql(
+                &Some(vec![super::TableSortField {
+                    column: "x".into(),
+                    order: "ANY".into(),
+                }]),
+                "items"
+            ),
+            " ORDER BY `items`.`x` ASC"
         );
     }
 
@@ -2281,17 +2298,20 @@ mod tests {
     #[test]
     fn test_build_order_by_sql_skips_blank_column_parts() {
         assert_eq!(
-            super::build_order_by_sql(&Some(vec![
-                super::TableSortField {
-                    column: "   ".into(),
-                    order: "DESC".into(),
-                },
-                super::TableSortField {
-                    column: "ok".into(),
-                    order: "ASC".into(),
-                },
-            ])),
-            " ORDER BY `ok` ASC"
+            super::build_order_by_sql(
+                &Some(vec![
+                    super::TableSortField {
+                        column: "   ".into(),
+                        order: "DESC".into(),
+                    },
+                    super::TableSortField {
+                        column: "ok".into(),
+                        order: "ASC".into(),
+                    },
+                ]),
+                "items"
+            ),
+            " ORDER BY `items`.`ok` ASC"
         );
     }
 }

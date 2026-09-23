@@ -68,7 +68,11 @@ import {
   generateUpdateStatements,
   rowsToJsonArrayString,
 } from "../../utils/sqlUtils";
-import { queryFullRows } from "../../services/tauriCommands";
+import {
+  fetchCompleteRows,
+  hydrateDeferredRows,
+  isDeferredField,
+} from "./deferredFields";
 import { copyTextWithBreadcrumb } from "../../utils/crashBreadcrumbs";
 import { WhereFilterBuilder } from "./WhereFilterBuilder";
 import {
@@ -1071,6 +1075,78 @@ export function TableData() {
     [messageApi]
   );
 
+  const fullValueMountedRef = useRef(true);
+  useEffect(() => {
+    fullValueMountedRef.current = true;
+    return () => {
+      fullValueMountedRef.current = false;
+    };
+  }, []);
+
+  // 请求期间监视页面变化，迟到的完整值不能用于新页面的编辑或导出。
+  const loadCompleteRowsForPage = useCallback(
+    async (
+      records: Record<string, unknown>[],
+      selectedColumns: string[],
+      allColumns = false
+    ) => {
+      const initial = useTableDataStore.getState();
+      const isCurrent = (state: typeof initial) =>
+        state.activeTableKey === rowSelectionScopeKey &&
+        state.rows === rows &&
+        state.page === page &&
+        state.pageSize === pageSize &&
+        state.sortFields === sortFields &&
+        state.whereClause === whereClause &&
+        state._filterTrigger === _filterTrigger &&
+        !state.dataLoading &&
+        !state.dataError;
+      if (!isCurrent(initial))
+        throw new Error("页面已变化，请在加载完成后重试");
+      let stale = false;
+      const unsubscribe = useTableDataStore.subscribe((state) => {
+        if (!isCurrent(state)) stale = true;
+      });
+      try {
+        const context = {
+          connId,
+          database,
+          table,
+          primaryKeyColumns,
+          databaseType: currentDatabaseType,
+        };
+        const complete = allColumns
+          ? await fetchCompleteRows(context, records)
+          : {
+              columns: selectedColumns,
+              rows:
+                currentDatabaseType === "mysql"
+                  ? await hydrateDeferredRows(context, records, selectedColumns)
+                  : records,
+            };
+        if (stale || !fullValueMountedRef.current)
+          throw new Error("页面已变化，已取消完整值读取");
+        return complete;
+      } finally {
+        unsubscribe();
+      }
+    },
+    [
+      connId,
+      database,
+      table,
+      primaryKeyColumns,
+      currentDatabaseType,
+      rowSelectionScopeKey,
+      rows,
+      page,
+      pageSize,
+      sortFields,
+      whereClause,
+      _filterTrigger,
+    ]
+  );
+
   // 构建表头列定义（memoized，不依赖 pendingChanges —— 通过 ref 访问最新值）
   const DEFAULT_COL_WIDTH = 160;
   const allTableColumns = useMemo<ColumnsType<Record<string, unknown>>>(
@@ -1187,9 +1263,13 @@ export function TableData() {
               ? pendingChangesRef.current.get(pendingKey)
               : undefined;
             const displayValue = pending ? pending.newValue : cellValue;
+            const displayPreview =
+              currentDatabaseType === "mysql" && isDeferredField(displayValue)
+                ? displayValue.preview
+                : displayValue;
             const renderedText =
-              showInvisibleChars && typeof displayValue === "string"
-                ? visualizeInvisibleChars(displayValue)
+              showInvisibleChars && typeof displayPreview === "string"
+                ? visualizeInvisibleChars(displayPreview)
                 : undefined;
 
             return (
@@ -1210,13 +1290,39 @@ export function TableData() {
                 )}
                 onTabNavigate={handleTabNavigate}
                 displayText={renderedText}
-                onEdit={(newValue) => {
+                loadFullValue={
+                  currentDatabaseType === "mysql" && isDeferredField(cellValue)
+                    ? async () => {
+                        const result = await loadCompleteRowsForPage(
+                          [record],
+                          [colName]
+                        );
+                        return result.rows[0][colName];
+                      }
+                    : undefined
+                }
+                onEdit={(newValue, fullOriginalValue) => {
                   if (Object.keys(pks).length === 0) {
                     messageApiRef.current.warning(noPrimaryKeyDisabledReason);
                     return;
                   }
 
-                  handleCellEdit(rowKey, colName, cellValue, newValue, pks);
+                  const originalValue = pending
+                    ? pending.oldValue
+                    : currentDatabaseType === "mysql" &&
+                        isDeferredField(cellValue)
+                      ? fullOriginalValue
+                      : cellValue;
+                  if (
+                    currentDatabaseType === "mysql" &&
+                    (isDeferredField(originalValue) ||
+                      (isDeferredField(cellValue) &&
+                        originalValue === undefined))
+                  ) {
+                    messageApiRef.current.error("完整值尚未加载，无法保存修改");
+                    return;
+                  }
+                  handleCellEdit(rowKey, colName, originalValue, newValue, pks);
                 }}
               />
             );
@@ -1235,6 +1341,7 @@ export function TableData() {
       handleTabNavigate,
       handleCopyColumnName,
       handleCellEdit,
+      loadCompleteRowsForPage,
       rowOperationsAllowed,
       noPrimaryKeyDisabledReason,
       showInvisibleChars,
@@ -1475,65 +1582,25 @@ export function TableData() {
       let insertColumns: string[];
       let insertRows: Record<string, unknown>[];
 
-      if (hiddenColumns.size > 0 && primaryKeyColumns.length > 0) {
-        // 有隐藏列：按主键获取 SELECT * 完整数据
-        try {
-          const fullResult = await (async () => {
-            if (primaryKeyColumns.length === 1) {
-              const pkValues = selectedRows
-                .map((r) => r[primaryKeyColumn])
-                .filter((v) => v !== undefined);
-              if (pkValues.length === 0) {
-                messageApi.warning("无法获取选中行的主键值");
-                return null;
-              }
-              return queryFullRows(
-                connId,
-                database,
-                table,
-                primaryKeyColumn,
-                pkValues
-              );
-            }
-
-            const primaryKeyRows = selectedRows
-              .map((row) => getRecordPrimaryKeys(row, primaryKeyColumns))
-              .filter((primaryKeys) =>
-                primaryKeyColumns.every(
-                  (pk) =>
-                    Object.prototype.hasOwnProperty.call(primaryKeys, pk) &&
-                    primaryKeys[pk] !== undefined
-                )
-              );
-            if (primaryKeyRows.length === 0) {
-              messageApi.warning("无法获取选中行的主键值");
-              return null;
-            }
-            return queryFullRows(
-              connId,
-              database,
-              table,
-              primaryKeyColumn,
-              [],
-              primaryKeyRows
-            );
-          })();
-          if (!fullResult) return;
-          insertColumns = fullResult.columns;
-          insertRows = fullResult.rows.map((row) => {
-            const obj: Record<string, unknown> = {};
-            fullResult.columns.forEach((col, i) => {
-              obj[col] = row[i];
-            });
-            return obj;
-          });
-        } catch (e) {
-          messageApi.error(`获取完整行数据失败: ${e}`);
-          return;
-        }
-      } else {
-        insertColumns = columns;
-        insertRows = selectedRows;
+      try {
+        const complete = await loadCompleteRowsForPage(
+          selectedRows,
+          columns,
+          hiddenColumns.size > 0 && primaryKeyColumns.length > 0
+        );
+        insertColumns = complete.columns;
+        insertRows = complete.rows.map((row) => {
+          const merged = { ...row };
+          const pks = getRecordPrimaryKeys(row, primaryKeyColumns);
+          for (const col of insertColumns) {
+            const pending = pendingChanges.get(buildPendingChangeKey(pks, col));
+            if (pending) merged[col] = pending.newValue;
+          }
+          return merged;
+        });
+      } catch (e) {
+        messageApi.error(`获取完整行数据失败: ${e}`);
+        return;
       }
 
       const excludeCols = excludePrimaryKeys ? primaryKeyColumns : [];
@@ -1566,12 +1633,12 @@ export function TableData() {
     },
     [
       getSelectedRows,
+      loadCompleteRowsForPage,
+      pendingChanges,
       table,
       columns,
       primaryKeyColumns,
-      primaryKeyColumn,
       hiddenColumns,
-      connId,
       database,
       currentDatabaseType,
       messageApi,
@@ -1589,20 +1656,24 @@ export function TableData() {
       messageApi.warning("没有可导出的列，请在列设置中至少显示一列");
       return;
     }
-    const rowsWithPending = selectedRows.map((row) => {
-      const merged: Record<string, unknown> = { ...row };
-      const primaryKeys = getRecordPrimaryKeys(row, primaryKeyColumns);
-      const hasPrimaryKeys = Object.keys(primaryKeys).length > 0;
-      for (const col of visibleColNames) {
-        const pending = hasPrimaryKeys
-          ? pendingChanges.get(buildPendingChangeKey(primaryKeys, col))
-          : undefined;
-        if (pending) merged[col] = pending.newValue;
-      }
-      return merged;
-    });
-    const json = rowsToJsonArrayString(rowsWithPending, visibleColNames);
     try {
+      const complete = await loadCompleteRowsForPage(
+        selectedRows,
+        visibleColNames
+      );
+      const rowsWithPending = complete.rows.map((row) => {
+        const merged: Record<string, unknown> = { ...row };
+        const primaryKeys = getRecordPrimaryKeys(row, primaryKeyColumns);
+        const hasPrimaryKeys = Object.keys(primaryKeys).length > 0;
+        for (const col of visibleColNames) {
+          const pending = hasPrimaryKeys
+            ? pendingChanges.get(buildPendingChangeKey(primaryKeys, col))
+            : undefined;
+          if (pending) merged[col] = pending.newValue;
+        }
+        return merged;
+      });
+      const json = rowsToJsonArrayString(rowsWithPending, visibleColNames);
       await copyTextWithBreadcrumb(json, "table-data-copy-json", {
         database,
         table,
@@ -1610,12 +1681,13 @@ export function TableData() {
         column_count: visibleColNames.length,
       });
       messageApi.success("已复制 JSON 数组");
-    } catch {
-      messageApi.error("复制到剪贴板失败");
+    } catch (e) {
+      messageApi.error(`复制 JSON 失败: ${e}`);
     }
   }, [
     database,
     getSelectedRows,
+    loadCompleteRowsForPage,
     messageApi,
     pendingChanges,
     primaryKeyColumns,
@@ -1635,7 +1707,11 @@ export function TableData() {
     }
     try {
       assertCsvRowWithinLimit(dataSource.length);
-      const rows: unknown[][] = dataSource.map((row) => {
+      const complete = await loadCompleteRowsForPage(
+        dataSource,
+        visibleColNames
+      );
+      const rows: unknown[][] = complete.rows.map((row) => {
         const primaryKeys = getRecordPrimaryKeys(row, primaryKeyColumns);
         const hasPrimaryKeys = Object.keys(primaryKeys).length > 0;
         return visibleColNames.map((col) => {
@@ -1662,6 +1738,7 @@ export function TableData() {
     table,
     visibleColNames,
     dataSource,
+    loadCompleteRowsForPage,
     pendingChanges,
     primaryKeyColumns,
     page,

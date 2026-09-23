@@ -882,7 +882,8 @@ export async function queryTableData(
 }
 
 /**
- * 按主键查询完整行数据 (SELECT *)，用于"复制为 INSERT"等需要全量列的场景
+ * 按主键批量查询完整值，用于编辑、复制和导出。
+ * MySQL 可用 selectColumns 只读取所需列（自动补齐主键）；省略时读取完整行。
  */
 export async function queryFullRows(
   connId: string,
@@ -890,7 +891,8 @@ export async function queryFullRows(
   table: string,
   primaryKeyColumn: string,
   primaryKeyValues: unknown[],
-  primaryKeys?: Record<string, unknown>[]
+  primaryKeys?: Record<string, unknown>[],
+  selectColumns?: string[]
 ): Promise<QueryResult> {
   const args: {
     connId: string;
@@ -899,6 +901,7 @@ export async function queryFullRows(
     primaryKeyColumn: string;
     primaryKeyValues: unknown[];
     primaryKeys?: Record<string, unknown>[];
+    selectColumns?: string[];
   } = {
     connId,
     database,
@@ -908,6 +911,9 @@ export async function queryFullRows(
   };
   if (primaryKeys !== undefined) {
     args.primaryKeys = primaryKeys;
+  }
+  if (selectColumns !== undefined) {
+    args.selectColumns = selectColumns;
   }
   return invoke<QueryResult>("query_full_rows", args);
 }

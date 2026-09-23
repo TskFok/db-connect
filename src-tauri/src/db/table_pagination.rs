@@ -87,12 +87,22 @@ pub struct ColumnMetadata {
 pub struct TableMetadata {
     pub columns: Vec<String>,
     pub primary_keys: Vec<String>,
+    pub reliable_primary_keys: bool,
+    pub mysql_columns: Vec<crate::db::mysql_deferred_fields::MysqlColumn>,
+    trusted_primary_key: bool,
     key: Option<(String, IntegerKind)>,
     revision: String,
 }
 
 impl TableMetadata {
     pub fn with_primary_key_evidence(mut self, complete_primary_keys: &[String]) -> Self {
+        self.reliable_primary_keys = self.trusted_primary_key
+            && !self.primary_keys.is_empty()
+            && self.primary_keys.len() == complete_primary_keys.len()
+            && self
+                .primary_keys
+                .iter()
+                .all(|key| complete_primary_keys.contains(key));
         // COLUMNS/KCU 可能因列权限只展示复合主键的一部分；必须有完整主键索引证据。
         if !matches!((self.key.as_ref(), complete_primary_keys), (Some((column, _)), [primary]) if column == primary)
         {
@@ -117,6 +127,9 @@ impl TableMetadata {
         Self {
             columns: columns.iter().map(|c| c.name.clone()).collect(),
             primary_keys: primary.iter().map(|c| c.name.clone()).collect(),
+            trusted_primary_key,
+            reliable_primary_keys: false,
+            mysql_columns: vec![],
             key,
             revision: uuid::Uuid::new_v4().to_string(),
         }
@@ -877,6 +890,50 @@ mod tests {
                 .key_column
                 .as_deref(),
             Some("id")
+        );
+    }
+    #[test]
+    fn complete_composite_primary_evidence_is_required_for_deferred_reload() {
+        let make = || {
+            TableMetadata::new(
+                vec![
+                    ColumnMetadata {
+                        name: "tenant".into(),
+                        primary_position: Some(1),
+                        integer_kind: None,
+                    },
+                    ColumnMetadata {
+                        name: "id".into(),
+                        primary_position: Some(2),
+                        integer_kind: Some(IntegerKind::Unsigned),
+                    },
+                ],
+                true,
+            )
+        };
+        assert!(
+            make()
+                .with_primary_key_evidence(&["id".into(), "tenant".into()])
+                .reliable_primary_keys
+        );
+        assert!(
+            !make()
+                .with_primary_key_evidence(&["id".into()])
+                .reliable_primary_keys
+        );
+        assert!(!make().with_primary_key_evidence(&[]).reliable_primary_keys);
+        let view = TableMetadata::new(
+            vec![ColumnMetadata {
+                name: "id".into(),
+                primary_position: Some(1),
+                integer_kind: Some(IntegerKind::Signed),
+            }],
+            false,
+        );
+        assert!(
+            !view
+                .with_primary_key_evidence(&["id".into()])
+                .reliable_primary_keys
         );
     }
 }

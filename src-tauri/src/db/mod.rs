@@ -3,6 +3,7 @@ pub mod batch_update;
 pub mod clickhouse;
 pub mod connection;
 pub mod dialect;
+pub mod mysql_deferred_fields;
 pub mod postgres;
 pub mod postgres_ddl;
 pub mod postgres_error;

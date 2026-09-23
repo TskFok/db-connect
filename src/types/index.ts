@@ -585,7 +585,7 @@ export interface TablePageInfo {
   previous_cursor: string | null;
 }
 
-/** 完整行加载继续使用 QueryResult，只有表浏览携带分页上下文。 */
+/** 完整行加载继续使用 QueryResult；MySQL 表浏览的大字段单元格可能为 DeferredFieldValue 预览标记。 */
 export interface TablePageResult extends QueryResult {
   pagination?: TablePageInfo | null;
   executed_sql?: string | null;
