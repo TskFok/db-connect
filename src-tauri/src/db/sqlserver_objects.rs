@@ -348,9 +348,18 @@ pub async fn drop_index(
     table: &str,
     index_name: &str,
 ) -> Result<(), String> {
-    let constraint_backed = index_is_constraint_backed(pool, schema, table, index_name).await?;
-    let sql = build_drop_index_sql(schema, table, index_name, constraint_backed)?;
+    let sql = preview_drop_index(pool, schema, table, index_name).await?;
     run_sql(pool, "删除索引失败", &sql).await
+}
+
+pub async fn preview_drop_index(
+    pool: &SqlServerPool,
+    schema: &str,
+    table: &str,
+    index_name: &str,
+) -> Result<String, String> {
+    let constraint_backed = index_is_constraint_backed(pool, schema, table, index_name).await?;
+    build_drop_index_sql(schema, table, index_name, constraint_backed)
 }
 
 fn normalize_referential_action(rule: &str) -> Result<String, String> {
@@ -1018,16 +1027,20 @@ pub async fn drop_trigger(
     schema: &str,
     trigger_name: &str,
 ) -> Result<(), String> {
+    let sql = build_drop_trigger_sql(schema, trigger_name)?;
+    run_sql(pool, "删除触发器失败", &sql).await
+}
+
+pub fn build_drop_trigger_sql(schema: &str, trigger_name: &str) -> Result<String, String> {
     let name = trigger_name.trim();
     if name.is_empty() {
         return Err("触发器名称不能为空".to_string());
     }
-    let sql = format!(
+    Ok(format!(
         "DROP TRIGGER {}.{}",
         sqlserver_id(schema),
         sqlserver_id(name)
-    );
-    run_sql(pool, "删除触发器失败", &sql).await
+    ))
 }
 
 pub fn routine_type_from_sqlserver_type(object_type: &str) -> Result<&'static str, String> {

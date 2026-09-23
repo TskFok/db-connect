@@ -250,6 +250,21 @@ pub async fn drop_index(
     table: &str,
     index_name: &str,
 ) -> Result<(), String> {
+    let sql = preview_drop_index(pool, schema, table, index_name).await?;
+    let client = get_client_with_retry(pool).await?;
+    client
+        .simple_query(&sql)
+        .await
+        .map_err(|e| format_pg_error("删除索引", e))?;
+    Ok(())
+}
+
+pub async fn preview_drop_index(
+    pool: &PgPool,
+    schema: &str,
+    table: &str,
+    index_name: &str,
+) -> Result<String, String> {
     let name = index_name.trim();
     if name.is_empty() {
         return Err("索引名称不能为空".to_string());
@@ -271,22 +286,29 @@ pub async fn drop_index(
         .await
         .map_err(|e| format_pg_error("查询约束信息", e))?;
 
-    let sql = if constraint.is_some() {
-        format!(
+    build_drop_index_sql(schema, table, name, constraint.is_some())
+}
+
+pub fn build_drop_index_sql(
+    schema: &str,
+    table: &str,
+    index_name: &str,
+    is_constraint_backed: bool,
+) -> Result<String, String> {
+    let name = index_name.trim();
+    if name.is_empty() {
+        return Err("索引名称不能为空".to_string());
+    }
+    if is_constraint_backed {
+        Ok(format!(
             "ALTER TABLE {}.{} DROP CONSTRAINT {}",
             pg_id(schema),
             pg_id(table),
             pg_id(name)
-        )
+        ))
     } else {
-        format!("DROP INDEX {}.{}", pg_id(schema), pg_id(name))
-    };
-
-    client
-        .simple_query(&sql)
-        .await
-        .map_err(|e| format_pg_error("删除索引", e))?;
-    Ok(())
+        Ok(format!("DROP INDEX {}.{}", pg_id(schema), pg_id(name)))
+    }
 }
 
 // ============================
@@ -837,17 +859,28 @@ pub async fn drop_trigger(
         }
     };
 
-    let sql = format!(
-        "DROP TRIGGER IF EXISTS {} ON {}.{}",
-        pg_id(trigger_name.trim()),
-        pg_id(schema),
-        pg_id(&table_name)
-    );
+    let sql = build_drop_trigger_sql(schema, &table_name, trigger_name)?;
     client
         .simple_query(&sql)
         .await
         .map_err(|e| format_pg_error("删除触发器", e))?;
     Ok(())
+}
+
+pub fn build_drop_trigger_sql(
+    schema: &str,
+    table: &str,
+    trigger_name: &str,
+) -> Result<String, String> {
+    if trigger_name.trim().is_empty() {
+        return Err("触发器名称不能为空".to_string());
+    }
+    Ok(format!(
+        "DROP TRIGGER IF EXISTS {} ON {}.{}",
+        pg_id(trigger_name.trim()),
+        pg_id(schema),
+        pg_id(table)
+    ))
 }
 
 // ============================
@@ -1116,6 +1149,19 @@ mod tests {
             ),
         ];
         assert!(aggregate_pg_completion_foreign_key_rows(rows).is_empty());
+    }
+
+    #[test]
+    fn preview_drop_index_distinguishes_constraints_and_escapes_names() {
+        assert_eq!(
+            build_drop_index_sql("app", "users", "idx\"old", false).unwrap(),
+            "DROP INDEX \"app\".\"idx\"\"old\""
+        );
+        assert_eq!(
+            build_drop_index_sql("app", "users", "users_key", true).unwrap(),
+            "ALTER TABLE \"app\".\"users\" DROP CONSTRAINT \"users_key\""
+        );
+        assert!(build_drop_index_sql("app", "users", " ", false).is_err());
     }
 
     #[test]

@@ -1,6 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Modal, Form, Select, Button, Space, Typography, Alert } from "antd";
+import { EyeOutlined } from "@ant-design/icons";
 import { SafeInput } from "../common/SafeInput";
+import { SqlPreviewModal } from "../common/SqlPreviewModal";
 import Editor from "@monaco-editor/react";
 import type { CreateTriggerRequest, TriggerInfo } from "../../types";
 import * as api from "../../services/tauriCommands";
@@ -58,6 +60,16 @@ export function TriggerEditor({
   const [form] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewSql, setPreviewSql] = useState<string[]>([]);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const previewRequestId = useRef(0);
+  const closePreview = useCallback(() => {
+    previewRequestId.current += 1;
+    setPreviewOpen(false);
+    setPreviewLoading(false);
+  }, []);
   const themeMode = useThemeStore((s) => s.mode);
   const dbType = useConnectionStore(
     (s) => s.activeConnection?.config.database_type
@@ -78,6 +90,13 @@ export function TriggerEditor({
 
   const isEdit = !!editingTrigger;
 
+  useEffect(() => {
+    closePreview();
+    return () => {
+      previewRequestId.current += 1;
+    };
+  }, [open, connId, database, table, editingTrigger, closePreview]);
+
   // 编辑模式时预填充表单
   useEffect(() => {
     if (open && editingTrigger) {
@@ -97,47 +116,65 @@ export function TriggerEditor({
     }
   }, [open, editingTrigger, form, defaultBody, defaultTiming]);
 
-  // 构建预览 SQL（按方言切换标识符引用与语法）
-  const buildPreviewSql = (): string => {
-    const timing = form.getFieldValue("timing") || "BEFORE";
-    const event = form.getFieldValue("event") || "INSERT";
-    const name = form.getFieldValue("name") || "<trigger_name>";
-    if (isPostgres) {
-      return `CREATE TRIGGER "${name}" ${timing} ${event} ON "${database}"."${table}"\nFOR EACH ROW\n${triggerBody}`;
+  const buildValidatedRequest = async (): Promise<CreateTriggerRequest> => {
+    const values = await form.validateFields();
+    if (!triggerBody.trim()) {
+      throw new Error(
+        isPostgres
+          ? "触发器执行动作不能为空（PostgreSQL 需指定 EXECUTE FUNCTION ...）"
+          : isSqlServer
+            ? "触发器语句体不能为空（SQL Server 使用 inserted / deleted 伪表）"
+            : "触发器语句体不能为空"
+      );
     }
-    if (isSqlite) {
-      return `CREATE TRIGGER "${name}"\n${timing} ${event} ON "${database}"."${table}"\n${triggerBody}`;
+    return {
+      name: values.name,
+      timing: values.timing,
+      event: values.event,
+      body: triggerBody,
+    };
+  };
+
+  const handlePreview = async () => {
+    const requestId = ++previewRequestId.current;
+    let request: CreateTriggerRequest;
+    try {
+      request = await buildValidatedRequest();
+    } catch (e) {
+      if (requestId === previewRequestId.current && e instanceof Error) {
+        setError(e.message);
+      }
+      return;
     }
-    if (isSqlServer) {
-      return `CREATE TRIGGER [${database}].[${name}] ON [${database}].[${table}]\nAFTER ${event}\nAS\nBEGIN\n  SET NOCOUNT ON;\n  ${triggerBody}\nEND`;
+    if (requestId !== previewRequestId.current) return;
+    setError(null);
+    setPreviewSql([]);
+    setPreviewError(null);
+    setPreviewLoading(true);
+    setPreviewOpen(true);
+    try {
+      const sql = await api.previewTrigger(
+        connId,
+        database,
+        table,
+        request,
+        editingTrigger?.name ?? null
+      );
+      if (requestId === previewRequestId.current) setPreviewSql(sql);
+    } catch (e) {
+      if (requestId === previewRequestId.current) {
+        setPreviewError(e instanceof Error ? e.message : String(e));
+      }
+    } finally {
+      if (requestId === previewRequestId.current) setPreviewLoading(false);
     }
-    return `CREATE TRIGGER \`${database}\`.\`${name}\`\n${timing} ${event} ON \`${database}\`.\`${table}\`\nFOR EACH ROW\n${triggerBody}`;
   };
 
   const handleSubmit = async () => {
     try {
-      const values = await form.validateFields();
+      const request = await buildValidatedRequest();
       setSubmitting(true);
       setError(null);
-
-      const request: CreateTriggerRequest = {
-        name: values.name,
-        timing: values.timing,
-        event: values.event,
-        body: triggerBody,
-      };
-
-      if (!triggerBody.trim()) {
-        setError(
-          isPostgres
-            ? "触发器执行动作不能为空（PostgreSQL 需指定 EXECUTE FUNCTION ...）"
-            : isSqlServer
-              ? "触发器语句体不能为空（SQL Server 使用 inserted / deleted 伪表）"
-              : "触发器语句体不能为空"
-        );
-        setSubmitting(false);
-        return;
-      }
 
       // 编辑模式: 先删除旧触发器再创建新触发器
       if (isEdit && editingTrigger) {
@@ -145,6 +182,7 @@ export function TriggerEditor({
       }
 
       await api.createTrigger(connId, database, table, request);
+      closePreview();
       form.resetFields();
       setTriggerBody(defaultBody);
       setError(null);
@@ -162,6 +200,7 @@ export function TriggerEditor({
   };
 
   const handleCancel = () => {
+    closePreview();
     form.resetFields();
     setTriggerBody(defaultBody);
     setError(null);
@@ -178,6 +217,15 @@ export function TriggerEditor({
       footer={[
         <Button key="cancel" onClick={handleCancel}>
           取消
+        </Button>,
+        <Button
+          key="preview"
+          icon={<EyeOutlined />}
+          loading={previewLoading}
+          disabled={submitting}
+          onClick={handlePreview}
+        >
+          SQL 预览
         </Button>,
         <Button
           key="submit"
@@ -314,28 +362,14 @@ export function TriggerEditor({
             />
           </div>
         </Form.Item>
-
-        {/* SQL 预览 */}
-        <Form.Item label="SQL 预览">
-          <pre
-            style={{
-              background: "var(--bg-elevated)",
-              color: "var(--color-primary)",
-              padding: 12,
-              borderRadius: 4,
-              fontSize: 12,
-              lineHeight: 1.5,
-              overflow: "auto",
-              maxHeight: 140,
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-all",
-              margin: 0,
-            }}
-          >
-            {buildPreviewSql()}
-          </pre>
-        </Form.Item>
       </Form>
+      <SqlPreviewModal
+        open={open && previewOpen}
+        loading={previewLoading}
+        sql={previewSql}
+        error={previewError}
+        onClose={closePreview}
+      />
     </Modal>
   );
 }

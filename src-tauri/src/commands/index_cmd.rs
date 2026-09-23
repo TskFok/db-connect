@@ -147,40 +147,7 @@ pub async fn create_index(
 
     let mut conn = get_conn_with_retry(&pool).await?;
 
-    // 构建列定义部分（与单测共用同一实现，避免逻辑漂移）
-    let columns_sql = build_columns_sql(&request.columns);
-
-    // 构建 CREATE INDEX SQL
-    let index_kind = match request.index_type.to_uppercase().as_str() {
-        "UNIQUE" => "UNIQUE INDEX",
-        "FULLTEXT" => "FULLTEXT INDEX",
-        "SPATIAL" => "SPATIAL INDEX",
-        _ => "INDEX",
-    };
-
-    let mut sql = format!(
-        "CREATE {} {} ON {}.{} ({})",
-        index_kind,
-        esc_id(&request.index_name),
-        esc_id(&database),
-        esc_id(&table),
-        columns_sql.join(", ")
-    );
-
-    // 添加索引方法 (USING BTREE/HASH)
-    if let Some(ref method) = request.index_method {
-        let method_upper = method.to_uppercase();
-        if method_upper == "BTREE" || method_upper == "HASH" {
-            sql.push_str(&format!(" USING {}", method_upper));
-        }
-    }
-
-    // 添加注释
-    if let Some(ref comment) = request.comment {
-        if !comment.is_empty() {
-            sql.push_str(&format!(" COMMENT {}", esc_str(comment)));
-        }
-    }
+    let sql = build_mysql_create_index_sql(&database, &table, &request)?;
 
     conn.query_drop(&sql)
         .await
@@ -225,28 +192,168 @@ pub async fn delete_index(
 
     let mut conn = get_conn_with_retry(&pool).await?;
 
-    // 主键使用 ALTER TABLE ... DROP PRIMARY KEY
-    // 普通索引使用 ALTER TABLE ... DROP INDEX
-    let sql = if index_name == "PRIMARY" {
-        format!(
-            "ALTER TABLE {}.{} DROP PRIMARY KEY",
-            esc_id(&database),
-            esc_id(&table)
-        )
-    } else {
-        format!(
-            "ALTER TABLE {}.{} DROP INDEX {}",
-            esc_id(&database),
-            esc_id(&table),
-            esc_id(&index_name)
-        )
-    };
+    let sql = build_mysql_drop_index_sql(&database, &table, &index_name)?;
 
     conn.query_drop(&sql)
         .await
         .map_err(|e| format!("删除索引失败: {}", e))?;
 
     Ok(())
+}
+
+/// MySQL 创建索引 SQL，供预览和执行共用。
+pub fn build_mysql_create_index_sql(
+    database: &str,
+    table: &str,
+    request: &CreateIndexRequest,
+) -> Result<String, String> {
+    if request.index_name.is_empty() {
+        return Err("索引名称不能为空".to_string());
+    }
+    if request.columns.is_empty() {
+        return Err("至少需要选择一列".to_string());
+    }
+    // 构建列定义部分（与单测共用同一实现，避免逻辑漂移）
+    let columns_sql = build_columns_sql(&request.columns);
+
+    // 构建 CREATE INDEX SQL
+    let index_kind = match request.index_type.to_uppercase().as_str() {
+        "UNIQUE" => "UNIQUE INDEX",
+        "FULLTEXT" => "FULLTEXT INDEX",
+        "SPATIAL" => "SPATIAL INDEX",
+        _ => "INDEX",
+    };
+
+    let mut sql = format!(
+        "CREATE {} {} ON {}.{} ({})",
+        index_kind,
+        esc_id(&request.index_name),
+        esc_id(database),
+        esc_id(table),
+        columns_sql.join(", ")
+    );
+
+    // 添加索引方法 (USING BTREE/HASH)
+    if let Some(ref method) = request.index_method {
+        let method_upper = method.to_uppercase();
+        if method_upper == "BTREE" || method_upper == "HASH" {
+            sql.push_str(&format!(" USING {}", method_upper));
+        }
+    }
+
+    // 添加注释
+    if let Some(ref comment) = request.comment {
+        if !comment.is_empty() {
+            sql.push_str(&format!(" COMMENT {}", esc_str(comment)));
+        }
+    }
+
+    Ok(sql)
+}
+
+pub fn build_mysql_drop_index_sql(
+    database: &str,
+    table: &str,
+    index_name: &str,
+) -> Result<String, String> {
+    if index_name.is_empty() {
+        return Err("索引名称不能为空".to_string());
+    }
+    // 主键使用 ALTER TABLE ... DROP PRIMARY KEY
+    // 普通索引使用 ALTER TABLE ... DROP INDEX
+    let sql = if index_name == "PRIMARY" {
+        format!(
+            "ALTER TABLE {}.{} DROP PRIMARY KEY",
+            esc_id(database),
+            esc_id(table)
+        )
+    } else {
+        format!(
+            "ALTER TABLE {}.{} DROP INDEX {}",
+            esc_id(database),
+            esc_id(table),
+            esc_id(index_name)
+        )
+    };
+
+    Ok(sql)
+}
+
+/// 只读预览索引新增或重建；仅约束索引的删除方式需要读取元数据。
+#[tauri::command]
+pub async fn preview_index(
+    state: State<'_, AppState>,
+    conn_id: String,
+    database: String,
+    table: String,
+    request: CreateIndexRequest,
+    original_name: Option<String>,
+) -> Result<Vec<String>, String> {
+    let pool = state
+        .connection_manager
+        .lock()
+        .await
+        .get_database_pool_and_touch(&conn_id)?;
+    preview_index_with_pool(pool, &database, &table, &request, original_name.as_deref()).await
+}
+
+async fn preview_index_with_pool(
+    pool: DatabasePoolHandle,
+    database: &str,
+    table: &str,
+    request: &CreateIndexRequest,
+    original_name: Option<&str>,
+) -> Result<Vec<String>, String> {
+    // 先完成 CREATE 校验，再读取删除旧索引所需的元数据。
+    let (mut sqls, drop_sql) = match pool {
+        DatabasePoolHandle::MySql(_) => {
+            let sqls = vec![build_mysql_create_index_sql(database, table, request)?];
+            let drop_sql = original_name
+                .map(|name| build_mysql_drop_index_sql(database, table, name))
+                .transpose()?;
+            (sqls, drop_sql)
+        }
+        DatabasePoolHandle::Postgres(handle) => {
+            let sqls = postgres_objects::build_create_index_sqls(database, table, request)?;
+            let drop_sql = match original_name {
+                Some(name) => Some(
+                    postgres_objects::preview_drop_index(&handle.pool, database, table, name)
+                        .await?,
+                ),
+                None => None,
+            };
+            (sqls, drop_sql)
+        }
+        DatabasePoolHandle::Sqlite(_) => {
+            let sqls = vec![sqlite::build_sqlite_create_index_sql(
+                database, table, request,
+            )?];
+            let drop_sql = original_name
+                .map(|name| sqlite::build_drop_index_sql(database, name))
+                .transpose()?;
+            (sqls, drop_sql)
+        }
+        DatabasePoolHandle::SqlServer(handle) => {
+            let sqls = vec![sqlserver_objects::build_create_index_sql(
+                database, table, request,
+            )?];
+            let drop_sql = match original_name {
+                Some(name) => Some(
+                    sqlserver_objects::preview_drop_index(&handle.pool, database, table, name)
+                        .await?,
+                ),
+                None => None,
+            };
+            (sqls, drop_sql)
+        }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Err(DatabasePoolHandle::clickhouse_write_unsupported_error())
+        }
+    };
+    if let Some(drop_sql) = drop_sql {
+        sqls.insert(0, drop_sql);
+    }
+    Ok(sqls)
 }
 
 /// 辅助函数: 构建索引列定义片段（`column`(`len`) ASC/DESC），由 `create_index` 与单测共用。
@@ -273,6 +380,90 @@ pub fn build_columns_sql(columns: &[crate::models::types::CreateIndexColumn]) ->
 mod tests {
     use super::*;
     use crate::models::types::{CreateIndexColumn, CreateIndexRequest, IndexColumnInfo, IndexInfo};
+
+    #[test]
+    fn mysql_index_preview_preserves_prefix_order_method_comment_and_escaping() {
+        let request = CreateIndexRequest {
+            index_name: "idx`new".into(),
+            index_type: "UNIQUE".into(),
+            index_method: Some("HASH".into()),
+            columns: vec![CreateIndexColumn {
+                column_name: "user`name".into(),
+                length: Some(12),
+                order: Some("DESC".into()),
+            }],
+            comment: Some("owner's index".into()),
+        };
+        assert_eq!(build_mysql_create_index_sql("app", "users", &request).unwrap(),
+            "CREATE UNIQUE INDEX `idx``new` ON `app`.`users` (`user``name`(12) DESC) USING HASH COMMENT 'owner''s index'");
+        assert_eq!(
+            build_mysql_drop_index_sql("app", "users", "idx`old").unwrap(),
+            "ALTER TABLE `app`.`users` DROP INDEX `idx``old`"
+        );
+        assert_eq!(
+            build_mysql_drop_index_sql("app", "users", "PRIMARY").unwrap(),
+            "ALTER TABLE `app`.`users` DROP PRIMARY KEY"
+        );
+    }
+
+    #[tokio::test]
+    async fn sqlite_index_preview_includes_drop_before_create_without_changing_schema() {
+        let pool = deadpool_sqlite::Config::new(":memory:")
+            .create_pool(deadpool_sqlite::Runtime::Tokio1)
+            .unwrap();
+        let conn = pool.get().await.unwrap();
+        conn.interact(|conn| {
+            conn.execute_batch(
+                "CREATE TABLE users (name TEXT); CREATE INDEX old_index ON users (name);",
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        let handle = DatabasePoolHandle::Sqlite(sqlite::SqlitePoolHandle { pool: pool.clone() });
+        let request = CreateIndexRequest {
+            index_name: "new_index".into(),
+            index_type: "UNIQUE".into(),
+            index_method: None,
+            columns: vec![CreateIndexColumn {
+                column_name: "name".into(),
+                length: None,
+                order: Some("DESC".into()),
+            }],
+            comment: None,
+        };
+        let sqls = preview_index_with_pool(handle, "main", "users", &request, Some("old_index"))
+            .await
+            .unwrap();
+        assert_eq!(
+            sqls,
+            vec![
+                "DROP INDEX \"main\".\"old_index\"",
+                "CREATE UNIQUE INDEX \"main\".\"new_index\" ON \"users\" (\"name\" DESC)"
+            ]
+        );
+        let names = conn
+            .interact(|conn| {
+                let mut stmt = conn
+                    .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
+                    .unwrap();
+                stmt.query_map([], |row| row.get::<_, String>(0))
+                    .unwrap()
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap()
+            })
+            .await
+            .unwrap();
+        assert_eq!(names, vec!["old_index"]);
+        let handle = DatabasePoolHandle::Sqlite(sqlite::SqlitePoolHandle { pool });
+        let sqls = preview_index_with_pool(handle, "main", "users", &request, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            sqls,
+            vec!["CREATE UNIQUE INDEX \"main\".\"new_index\" ON \"users\" (\"name\" DESC)"]
+        );
+    }
 
     #[test]
     fn test_build_columns_sql_simple() {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Modal,
   Form,
@@ -10,7 +10,12 @@ import {
   Alert,
 } from "antd";
 import { SafeInput, SafeTextArea } from "../common/SafeInput";
-import { PlusOutlined, MinusCircleOutlined } from "@ant-design/icons";
+import {
+  PlusOutlined,
+  MinusCircleOutlined,
+  EyeOutlined,
+} from "@ant-design/icons";
+import { SqlPreviewModal } from "../common/SqlPreviewModal";
 import type { ColumnInfo, CreateIndexRequest, IndexInfo } from "../../types";
 import * as api from "../../services/tauriCommands";
 import {
@@ -48,6 +53,16 @@ export function IndexEditor({
   const [form] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewSql, setPreviewSql] = useState<string[]>([]);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const previewRequestId = useRef(0);
+  const closePreview = useCallback(() => {
+    previewRequestId.current += 1;
+    setPreviewOpen(false);
+    setPreviewLoading(false);
+  }, []);
   const dbType = useConnectionStore(
     (s) => s.activeConnection?.config.database_type
   );
@@ -87,6 +102,13 @@ export function IndexEditor({
 
   const isEdit = !!editingIndex;
 
+  useEffect(() => {
+    closePreview();
+    return () => {
+      previewRequestId.current += 1;
+    };
+  }, [open, connId, database, table, editingIndex, closePreview]);
+
   // 编辑模式时预填充表单
   useEffect(() => {
     if (open && editingIndex) {
@@ -102,25 +124,60 @@ export function IndexEditor({
     }
   }, [open, editingIndex, form, normalizedDbType]);
 
+  const buildValidatedRequest = async (): Promise<CreateIndexRequest> => {
+    const values = await form.validateFields();
+    return {
+      index_name: values.index_name,
+      index_type: values.index_type,
+      index_method: values.index_method || undefined,
+      columns: values.columns.map(
+        (col: { column_name: string; length?: number; order?: string }) => ({
+          column_name: col.column_name,
+          length: col.length || undefined,
+          order: col.order || undefined,
+        })
+      ),
+      comment: values.comment || undefined,
+    };
+  };
+
+  const handlePreview = async () => {
+    const requestId = ++previewRequestId.current;
+    let request: CreateIndexRequest;
+    try {
+      request = await buildValidatedRequest();
+    } catch {
+      return;
+    }
+    if (requestId !== previewRequestId.current) return;
+    setError(null);
+    setPreviewSql([]);
+    setPreviewError(null);
+    setPreviewLoading(true);
+    setPreviewOpen(true);
+    try {
+      const sql = await api.previewIndex(
+        connId,
+        database,
+        table,
+        request,
+        editingIndex?.name ?? null
+      );
+      if (requestId === previewRequestId.current) setPreviewSql(sql);
+    } catch (e) {
+      if (requestId === previewRequestId.current) {
+        setPreviewError(e instanceof Error ? e.message : String(e));
+      }
+    } finally {
+      if (requestId === previewRequestId.current) setPreviewLoading(false);
+    }
+  };
+
   const handleSubmit = async () => {
     try {
-      const values = await form.validateFields();
+      const request = await buildValidatedRequest();
       setSubmitting(true);
       setError(null);
-
-      const request: CreateIndexRequest = {
-        index_name: values.index_name,
-        index_type: values.index_type,
-        index_method: values.index_method || undefined,
-        columns: values.columns.map(
-          (col: { column_name: string; length?: number; order?: string }) => ({
-            column_name: col.column_name,
-            length: col.length || undefined,
-            order: col.order || undefined,
-          })
-        ),
-        comment: values.comment || undefined,
-      };
 
       // 编辑模式: 先删除旧索引再创建新索引
       if (isEdit && editingIndex) {
@@ -128,6 +185,7 @@ export function IndexEditor({
       }
 
       await api.createIndex(connId, database, table, request);
+      closePreview();
       form.resetFields();
       onSuccess();
     } catch (e) {
@@ -142,6 +200,7 @@ export function IndexEditor({
   };
 
   const handleCancel = () => {
+    closePreview();
     form.resetFields();
     setError(null);
     onCancel();
@@ -170,6 +229,15 @@ export function IndexEditor({
       footer={[
         <Button key="cancel" onClick={handleCancel}>
           取消
+        </Button>,
+        <Button
+          key="preview"
+          icon={<EyeOutlined />}
+          loading={previewLoading}
+          disabled={submitting}
+          onClick={handlePreview}
+        >
+          SQL 预览
         </Button>,
         <Button
           key="submit"
@@ -362,6 +430,13 @@ export function IndexEditor({
           />
         </Form.Item>
       </Form>
+      <SqlPreviewModal
+        open={open && previewOpen}
+        loading={previewLoading}
+        sql={previewSql}
+        error={previewError}
+        onClose={closePreview}
+      />
     </Modal>
   );
 }

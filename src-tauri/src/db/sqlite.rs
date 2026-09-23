@@ -582,10 +582,17 @@ pub async fn create_index(
 }
 
 pub async fn delete_index(pool: &Pool, database: &str, index_name: &str) -> Result<(), String> {
+    let sql = build_drop_index_sql(database, index_name)?;
+    execute_ddl(pool, "删除索引", sql).await
+}
+
+pub fn build_drop_index_sql(database: &str, index_name: &str) -> Result<String, String> {
     validate_sqlite_object_name("数据库名", database)?;
     validate_sqlite_object_name("索引名称", index_name)?;
-    let sql = format!("DROP INDEX {}", sqlite_qualified_id(database, index_name));
-    execute_ddl(pool, "删除索引", sql).await
+    Ok(format!(
+        "DROP INDEX {}",
+        sqlite_qualified_id(database, index_name)
+    ))
 }
 
 #[derive(Debug, Clone)]
@@ -977,13 +984,17 @@ pub async fn create_trigger(
 }
 
 pub async fn drop_trigger(pool: &Pool, database: &str, trigger_name: &str) -> Result<(), String> {
+    let sql = build_drop_trigger_sql(database, trigger_name)?;
+    execute_ddl(pool, "删除触发器", sql).await
+}
+
+pub fn build_drop_trigger_sql(database: &str, trigger_name: &str) -> Result<String, String> {
     validate_sqlite_object_name("数据库名", database)?;
     validate_sqlite_object_name("触发器名称", trigger_name)?;
-    let sql = format!(
+    Ok(format!(
         "DROP TRIGGER {}",
         sqlite_qualified_id(database, trigger_name)
-    );
-    execute_ddl(pool, "删除触发器", sql).await
+    ))
 }
 
 pub async fn run_one_statement(conn: &SqliteObject, stmt: &str) -> Result<(), String> {

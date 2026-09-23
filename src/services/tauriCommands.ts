@@ -619,6 +619,23 @@ export async function createIndex(
   return invoke<void>("create_index", { connId, database, table, request });
 }
 
+/** 预览新增或修改索引的 SQL，不执行变更。 */
+export async function previewIndex(
+  connId: string,
+  database: string,
+  table: string,
+  request: CreateIndexRequest,
+  originalName: string | null = null
+): Promise<string[]> {
+  return invoke<string[]>("preview_index", {
+    connId,
+    database,
+    table,
+    request,
+    originalName,
+  });
+}
+
 /**
  * 删除索引
  */
@@ -675,6 +692,23 @@ export async function createTrigger(
   request: CreateTriggerRequest
 ): Promise<void> {
   return invoke<void>("create_trigger", { connId, database, table, request });
+}
+
+/** 预览新增或修改触发器的 SQL，不执行变更。 */
+export async function previewTrigger(
+  connId: string,
+  database: string,
+  table: string,
+  request: CreateTriggerRequest,
+  originalName: string | null = null
+): Promise<string[]> {
+  return invoke<string[]>("preview_trigger", {
+    connId,
+    database,
+    table,
+    request,
+    originalName,
+  });
 }
 
 /**

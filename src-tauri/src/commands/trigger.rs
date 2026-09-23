@@ -3,7 +3,7 @@ use crate::db::postgres_objects;
 use crate::db::sql_utils::esc_id;
 use crate::db::sqlite;
 use crate::db::sqlserver_objects;
-use crate::models::types::{CreateTriggerRequest, TriggerInfo};
+use crate::models::types::{CreateTriggerRequest, DatabaseType, TriggerInfo};
 use crate::AppState;
 use mysql_async::prelude::*;
 use tauri::State;
@@ -250,17 +250,97 @@ pub async fn drop_trigger(
 
     let mut conn = get_conn_with_retry(&pool).await?;
 
-    let sql = format!(
-        "DROP TRIGGER IF EXISTS {}.{}",
-        esc_id(&database),
-        esc_id(&trigger_name)
-    );
+    let sql = build_mysql_drop_trigger_sql(&database, &trigger_name)?;
 
     conn.query_drop(&sql)
         .await
         .map_err(|e| format!("删除触发器失败: {}", e))?;
 
     Ok(())
+}
+
+pub fn build_mysql_drop_trigger_sql(database: &str, trigger_name: &str) -> Result<String, String> {
+    if trigger_name.is_empty() {
+        return Err("触发器名称不能为空".to_string());
+    }
+    Ok(format!(
+        "DROP TRIGGER IF EXISTS {}.{}",
+        esc_id(database),
+        esc_id(trigger_name)
+    ))
+}
+
+/// 只读预览触发器新增或重建，复用执行使用的校验与 SQL 构建器。
+#[tauri::command]
+pub async fn preview_trigger(
+    state: State<'_, AppState>,
+    conn_id: String,
+    database: String,
+    table: String,
+    request: CreateTriggerRequest,
+    original_name: Option<String>,
+) -> Result<Vec<String>, String> {
+    let pool = state
+        .connection_manager
+        .lock()
+        .await
+        .get_database_pool_and_touch(&conn_id)?;
+    let database_type = match pool {
+        DatabasePoolHandle::MySql(_) => DatabaseType::MySql,
+        DatabasePoolHandle::Postgres(_) => DatabaseType::Postgres,
+        DatabasePoolHandle::Sqlite(_) => DatabaseType::Sqlite,
+        DatabasePoolHandle::SqlServer(_) => DatabaseType::SqlServer,
+        DatabasePoolHandle::ClickHouse(_) => DatabaseType::ClickHouse,
+    };
+    build_trigger_preview_sqls(
+        database_type,
+        &database,
+        &table,
+        &request,
+        original_name.as_deref(),
+    )
+}
+
+pub fn build_trigger_preview_sqls(
+    database_type: DatabaseType,
+    database: &str,
+    table: &str,
+    request: &CreateTriggerRequest,
+    original_name: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let create_sql = match database_type {
+        DatabaseType::MySql => {
+            validate_trigger_params(request)?;
+            build_create_trigger_sql(database, table, request)
+        }
+        DatabaseType::Postgres => {
+            postgres_objects::validate_trigger_params(request)?;
+            postgres_objects::build_create_trigger_sql(database, table, request)
+        }
+        DatabaseType::Sqlite => sqlite::build_sqlite_create_trigger_sql(database, table, request)?,
+        DatabaseType::SqlServer => {
+            sqlserver_objects::build_create_trigger_sql(database, table, request)?
+        }
+        DatabaseType::ClickHouse => {
+            return Err(DatabasePoolHandle::clickhouse_write_unsupported_error())
+        }
+    };
+    let mut sqls = Vec::new();
+    if let Some(name) = original_name {
+        sqls.push(match database_type {
+            DatabaseType::MySql => build_mysql_drop_trigger_sql(database, name)?,
+            DatabaseType::Postgres => {
+                postgres_objects::build_drop_trigger_sql(database, table, name)?
+            }
+            DatabaseType::Sqlite => sqlite::build_drop_trigger_sql(database, name)?,
+            DatabaseType::SqlServer => sqlserver_objects::build_drop_trigger_sql(database, name)?,
+            DatabaseType::ClickHouse => {
+                return Err(DatabasePoolHandle::clickhouse_write_unsupported_error())
+            }
+        });
+    }
+    sqls.push(create_sql);
+    Ok(sqls)
 }
 
 /// 构建 CREATE TRIGGER SQL 语句 (公开用于测试)
@@ -310,6 +390,61 @@ pub fn validate_trigger_params(request: &CreateTriggerRequest) -> Result<(), Str
 mod tests {
     use super::*;
     use crate::models::types::{CreateTriggerRequest, TriggerInfo};
+
+    #[test]
+    fn trigger_preview_uses_each_dialect_and_drops_original_name_first() {
+        use crate::models::types::DatabaseType;
+        let cases = [
+            (DatabaseType::MySql, "SET NEW.name = 'new'", "DROP TRIGGER IF EXISTS `app`.`old``trigger`", "CREATE TRIGGER `app`.`new_trigger` AFTER INSERT ON `app`.`users` FOR EACH ROW\nSET NEW.name = 'new'"),
+            (DatabaseType::Postgres, "EXECUTE FUNCTION app.log_change()", "DROP TRIGGER IF EXISTS \"old`trigger\" ON \"app\".\"users\"", "CREATE TRIGGER \"new_trigger\" AFTER INSERT ON \"app\".\"users\"\nFOR EACH ROW\nEXECUTE FUNCTION app.log_change()"),
+            (DatabaseType::Sqlite, "BEGIN SELECT 1; END", "DROP TRIGGER \"app\".\"old`trigger\"", "CREATE TRIGGER \"new_trigger\"\nAFTER INSERT ON \"app\".\"users\"\nBEGIN SELECT 1; END"),
+            (DatabaseType::SqlServer, "SELECT 1;", "DROP TRIGGER [app].[old`trigger]", "CREATE TRIGGER [app].[new_trigger] ON [app].[users]\nAFTER INSERT\nAS\nBEGIN\n  SET NOCOUNT ON;\n  SELECT 1;\nEND"),
+        ];
+        for (kind, body, drop_sql, create_sql) in cases {
+            let request = CreateTriggerRequest {
+                name: "new_trigger".into(),
+                timing: "AFTER".into(),
+                event: "INSERT".into(),
+                body: body.into(),
+            };
+            assert_eq!(
+                build_trigger_preview_sqls(kind, "app", "users", &request, Some("old`trigger"))
+                    .unwrap(),
+                vec![drop_sql, create_sql]
+            );
+            assert_eq!(
+                build_trigger_preview_sqls(kind, "app", "users", &request, None).unwrap(),
+                vec![create_sql]
+            );
+        }
+    }
+
+    #[test]
+    fn trigger_preview_validates_without_returning_partial_drop_plan() {
+        use crate::models::types::DatabaseType;
+        let request = CreateTriggerRequest {
+            name: "new_trigger".into(),
+            timing: "BEFORE".into(),
+            event: "INSERT".into(),
+            body: "SELECT 1".into(),
+        };
+        assert!(build_trigger_preview_sqls(
+            DatabaseType::SqlServer,
+            "dbo",
+            "users",
+            &request,
+            Some("old_trigger")
+        )
+        .is_err());
+        assert!(build_trigger_preview_sqls(
+            DatabaseType::ClickHouse,
+            "app",
+            "users",
+            &request,
+            None
+        )
+        .is_err());
+    }
 
     #[test]
     fn test_build_create_trigger_sql_simple() {
