@@ -9,6 +9,7 @@ import type {
   SqlMetadataIndex,
 } from "./sqlCompletionTypes";
 import { analyzeSqlCompletion } from "./sqlCompletionContext";
+import { resolveSqlCompletionScopes } from "./sqlCompletionScopes";
 import { generateSqlCompletionCandidates } from "./sqlCompletionCandidates";
 import { buildSqlMetadataIndex } from "./sqlCompletionMetadataIndex";
 
@@ -408,7 +409,7 @@ export function registerSqlCompletionProvider(
       });
       const sql = model.getValue();
       const offset = model.getOffsetAt(position);
-      const context = analyzeSqlCompletion({
+      let context = analyzeSqlCompletion({
         sql,
         offset,
         dialect: binding.key.dialect,
@@ -421,13 +422,16 @@ export function registerSqlCompletionProvider(
         start.lineNumber !== position.lineNumber
       )
         return empty;
+      const cachedIndex = binding.index;
       const index =
-        binding.index && sqlCompletionKeyId(binding.index.key) === keyId
-          ? binding.index
+        cachedIndex && sqlCompletionKeyId(cachedIndex.key) === keyId
+          ? cachedIndex
           : buildSqlMetadataIndex(
               { databases: [], tables: [], columns: [] },
               binding.key
             );
+      context.defaultNamespace = index.key.database;
+      context = resolveSqlCompletionScopes({ sql, offset, context, index });
       const kinds = monaco.languages.CompletionItemKind;
       const kindMap = {
         table: kinds.Class,

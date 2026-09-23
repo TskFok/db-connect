@@ -1,4 +1,16 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import type * as Monaco from "monaco-editor";
+import {
+  registerSqlCompletionProvider,
+  type SqlCompletionBinding,
+  type SqlDialect,
+} from "../utils/sqlCompletion";
+import { buildSqlMetadataIndex } from "../utils/sqlCompletionMetadataIndex";
+import { loadSqlCompletionSchema } from "../utils/sqlCompletionSchema";
+import {
+  completionKey,
+  completionSchema,
+} from "./fixtures/sqlCompletionFixtures";
 import {
   CLICKHOUSE_KEYWORDS,
   MYSQL_KEYWORDS,
@@ -161,5 +173,121 @@ describe("sqlCompletion", () => {
       expect(quoteIdentifier("we`ird", "clickhouse")).toBe("`we``ird`");
     });
   });
+});
 
+function providerSuggestions(marked: string, binding: SqlCompletionBinding) {
+  const offset = marked.indexOf("|");
+  const sql = marked.replace("|", "");
+  let provider!: Monaco.languages.CompletionItemProvider;
+  const monaco = {
+    languages: {
+      CompletionItemKind: {
+        Class: 1,
+        Field: 2,
+        Keyword: 3,
+        Function: 4,
+        Module: 5,
+      },
+      registerCompletionItemProvider: (
+        _language: string,
+        value: Monaco.languages.CompletionItemProvider
+      ) => {
+        provider = value;
+        return { dispose() {} };
+      },
+    },
+  } as unknown as typeof Monaco;
+  const disposable = registerSqlCompletionProvider(
+    monaco,
+    "scope-test",
+    () => binding
+  );
+  const model = {
+    uri: { toString: () => "scope-test" },
+    getValue: () => sql,
+    getOffsetAt: () => offset,
+    getPositionAt: (at: number) => ({ lineNumber: 1, column: at + 1 }),
+    getVersionId: () => 1,
+    isDisposed: () => false,
+  } as unknown as Monaco.editor.ITextModel;
+  const list = provider.provideCompletionItems(
+    model,
+    { lineNumber: 1, column: offset + 1 } as Monaco.Position,
+    { triggerKind: 0 },
+    { isCancellationRequested: false } as Monaco.CancellationToken
+  ) as Monaco.languages.CompletionList;
+  disposable.dispose();
+  return list.suggestions;
+}
+
+describe("二期查询作用域 provider 集成", () => {
+  it("重复补全共享一次批量元数据，派生表有输出且 CTE 不跨语句", async () => {
+    const source = {
+      getSqlCompletionMetadata: vi.fn().mockResolvedValue(completionSchema),
+      getTableStructure: vi.fn(),
+      executeQuery: vi.fn(),
+    };
+    const key = { ...completionKey, dialect: "postgres" as const };
+    const schema = await loadSqlCompletionSchema(
+      source,
+      key.connId,
+      key.database,
+      key.dialect
+    );
+    const index = buildSqlMetadataIndex(schema, key);
+    const readIndex = vi.fn(() => index);
+    const binding = {
+      key,
+      revision: 0,
+      get index() {
+        return readIndex();
+      },
+    };
+    const derived = providerSuggestions(
+      "SELECT x.| FROM (SELECT id AS k FROM users) x",
+      binding
+    );
+    expect(derived.map((item) => item.filterText)).toContain("k");
+    expect(readIndex).toHaveBeenCalledTimes(1);
+    const second = providerSuggestions(
+      "WITH c AS (SELECT id FROM users) SELECT * FROM c; SELECT * FROM |",
+      binding
+    );
+    expect(second.map((item) => item.label)).not.toContain("c");
+    expect(second.map((item) => item.label)).toContain("users");
+    expect(source.getSqlCompletionMetadata).toHaveBeenCalledTimes(1);
+    expect(source.getTableStructure).not.toHaveBeenCalled();
+    expect(source.executeQuery).not.toHaveBeenCalled();
+  });
+  it.each<SqlDialect>([
+    "mysql",
+    "postgres",
+    "sqlite",
+    "sqlserver",
+    "clickhouse",
+  ])("%s 的 CTE、派生表、EXISTS 与不支持形态", (dialect) => {
+    const key = { ...completionKey, dialect };
+    const binding = {
+      key,
+      revision: 0,
+      index: buildSqlMetadataIndex(completionSchema, key),
+    };
+    const labels = (sql: string) =>
+      providerSuggestions(sql, binding).map((item) => item.filterText);
+    expect(
+      labels("WITH c AS (SELECT id AS k FROM users) SELECT c.| FROM c")
+    ).toContain("k");
+    expect(labels("SELECT d.| FROM (SELECT id AS k FROM users) d")).toContain(
+      "k"
+    );
+    expect(
+      labels(
+        "SELECT * FROM users u WHERE EXISTS (SELECT 1 FROM orders o WHERE u.|)"
+      )
+    ).toContain("name");
+    expect(
+      labels("SELECT d.| FROM (SELECT COLUMNS('x') FROM users) d")
+    ).toEqual([]);
+    expect(labels("SELECT * FROM other.users x WHERE x.|")).toEqual([]);
+  });
 });
