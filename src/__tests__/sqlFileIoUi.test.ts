@@ -26,7 +26,7 @@ const mockExecuteSql = vi.mocked(api.executeSql);
 
 describe("sqlFileIoUi", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   it("导入确认文案应包含备份提示", () => {
@@ -187,6 +187,14 @@ describe("sqlFileIoUi", () => {
     });
     await expect(isConnectionGloballyReadOnly("c1", "db")).resolves.toBe(true);
     expect(mockExecuteSql).toHaveBeenCalledTimes(1);
+  });
+
+  it("SQLite 跳过实例只读探测，不执行其他数据库方言的 SQL", async () => {
+    mockExecuteSql.mockRejectedValue(new Error('unrecognized token: "@"'));
+    await expect(
+      isConnectionGloballyReadOnly("sqlite-1", "main", "sqlite")
+    ).resolves.toBe(false);
+    expect(mockExecuteSql).not.toHaveBeenCalled();
   });
 
   it("isConnectionGloballyReadOnly 在首查失败时回退单字段查询", async () => {

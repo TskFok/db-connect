@@ -142,6 +142,78 @@ describe("DatabaseSqlFileActions", () => {
     vi.restoreAllMocks();
   });
 
+  it("SQLite 导入跳过实例只读探测并完成文件选择、预检和导入", async () => {
+    const sqliteConnection: ActiveConnection = {
+      ...mockActiveConnection,
+      config: {
+        ...mockActiveConnection.config,
+        database_type: "sqlite",
+        name: "SQLite 测试",
+      },
+    };
+    useConnectionStore.setState({
+      activeConnections: { "conn-1": sqliteConnection },
+      activeConnId: "conn-1",
+      activeConnection: sqliteConnection,
+    });
+    mockApi.executeSql.mockRejectedValue(new Error('unrecognized token: "@"'));
+
+    render(<DatabaseSqlFileActions connId="conn-1" database="main" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "导入 SQL 文件" }));
+
+    await waitFor(() => {
+      expect(mockApi.importSqlFile).toHaveBeenCalledWith(
+        "conn-1",
+        "main",
+        "/tmp/fake.sql"
+      );
+    });
+    expect(open).toHaveBeenCalledWith({
+      multiple: false,
+      directory: false,
+      filters: [{ name: "SQL", extensions: ["sql"] }],
+    });
+    expect(mockPreviewSqlFileImport).toHaveBeenCalledWith(
+      "sqlite",
+      "/tmp/fake.sql"
+    );
+    expect(mockApi.executeSql).not.toHaveBeenCalled();
+  });
+
+  it("实例只读探测失败时提示错误并停止导入", async () => {
+    mockApi.executeSql.mockRejectedValue(new Error("只读探测连接超时"));
+
+    render(<DatabaseSqlFileActions connId="conn-1" database="mydb" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "导入 SQL 文件" }));
+
+    await waitFor(() => {
+      expect(Modal.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: expect.stringContaining("只读探测连接超时"),
+        })
+      );
+    });
+    expect(open).not.toHaveBeenCalled();
+    expect(mockPreviewSqlFileImport).not.toHaveBeenCalled();
+    expect(Modal.confirm).not.toHaveBeenCalled();
+    expect(mockApi.importSqlFile).not.toHaveBeenCalled();
+  });
+
+  it("禁用时不执行只读探测、文件选择或导入", () => {
+    render(<DatabaseSqlFileActions connId="conn-1" database="mydb" disabled />);
+
+    const importBtn = screen.getByRole("button", { name: "导入 SQL 文件" });
+    expect(importBtn).toBeDisabled();
+    fireEvent.click(importBtn);
+
+    expect(mockApi.executeSql).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+    expect(mockPreviewSqlFileImport).not.toHaveBeenCalled();
+    expect(mockApi.importSqlFile).not.toHaveBeenCalled();
+  });
+
   it("导入结束后（含部分失败）会刷新当前库表列表并刷新连接视图", async () => {
     const loadTablesSpy = vi.spyOn(useDatabaseStore.getState(), "loadTables");
     const refreshSpy = vi.spyOn(useDatabaseStore.getState(), "refresh");
@@ -269,7 +341,9 @@ describe("DatabaseSqlFileActions", () => {
     fireEvent.click(buttons[1]);
     expect(screen.getByText(/ClickHouse/)).toBeInTheDocument();
     expect(screen.getByText(/system\.tables/)).toBeInTheDocument();
-    expect(screen.getAllByText(/FORMAT Values/).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText(/FORMAT Values/).length).toBeGreaterThanOrEqual(
+      2
+    );
   });
 
   it("导出进行中可使用同一个 exportId 取消", async () => {

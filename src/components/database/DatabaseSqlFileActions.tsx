@@ -142,7 +142,22 @@ export function DatabaseSqlFileActions({
   const handleImportSqlFile = useCallback(async () => {
     if (disabled || !connId) return;
 
-    if (await isConnectionGloballyReadOnly(connId, database, databaseType)) {
+    let readOnly: boolean;
+    try {
+      readOnly = await isConnectionGloballyReadOnly(
+        connId,
+        database,
+        databaseType
+      );
+    } catch (e) {
+      Modal.error({
+        title: "无法导入",
+        content: `检查连接只读状态失败：${String(e)}`,
+      });
+      return;
+    }
+
+    if (readOnly) {
       Modal.warning({
         title: "无法导入",
         content: buildImportReadOnlyWarningText(databaseType),
@@ -160,7 +175,10 @@ export function DatabaseSqlFileActions({
 
     let preview: PreviewSqlFileImportResult;
     try {
-      preview = await api.previewSqlFileImport(databaseType ?? "mysql", filePath);
+      preview = await api.previewSqlFileImport(
+        databaseType ?? "mysql",
+        filePath
+      );
     } catch (e) {
       Modal.error({
         title: "导入预检失败",
@@ -383,6 +401,7 @@ export function DatabaseSqlFileActions({
             type="default"
             size="small"
             icon={<ImportOutlined />}
+            aria-label="导入 SQL 文件"
             disabled={importBlocked}
             onClick={() => void handleImportSqlFile()}
           />

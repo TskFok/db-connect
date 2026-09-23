@@ -149,7 +149,9 @@ export function isServerReadOnlyFromSqlResult(
 export const isSessionReadOnlyFromSqlResult = isServerReadOnlyFromSqlResult;
 
 /**
- * 查询 @@global.read_only / super_read_only，判断实例是否全局只读（写操作前应调用）。
+ * 按数据库类型探测实例 / 会话的只读状态（写操作前应调用）。
+ * SQLite 不做实例级探测；调用方仍需检查连接只读配置，后端写命令也会校验该配置。
+ * 返回 false 不代表数据库文件一定可写，文件权限等错误由实际写操作返回。
  */
 export async function isConnectionGloballyReadOnly(
   connId: string,
@@ -157,6 +159,7 @@ export async function isConnectionGloballyReadOnly(
   databaseType: DatabaseType | string | null | undefined = "mysql"
 ): Promise<boolean> {
   const normalizedType = normalizeDatabaseType(databaseType);
+  if (normalizedType === "sqlite") return false;
   if (normalizedType === "postgres") {
     const roCheck = await api.executeSql(
       connId,

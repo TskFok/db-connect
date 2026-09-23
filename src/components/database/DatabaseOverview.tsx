@@ -285,21 +285,21 @@ export function DatabaseOverview() {
         messageApi.warning("当前连接在配置中标记为只读，无法 TRUNCATE。");
         return;
       }
-      if (
-        await isConnectionGloballyReadOnly(
-          connId,
-          selectedDatabase,
-          databaseType
-        )
-      ) {
-        messageApi.warning(
-          databaseType === "postgres"
-            ? "当前 PostgreSQL 会话处于只读模式，无法执行 TRUNCATE。请切换到可写连接或调整事务只读设置。"
-            : "实例处于只读（read_only / super_read_only），无法执行 TRUNCATE。请在可写主库或副本上操作。"
-        );
-        return;
-      }
       try {
+        if (
+          await isConnectionGloballyReadOnly(
+            connId,
+            selectedDatabase,
+            databaseType
+          )
+        ) {
+          messageApi.warning(
+            databaseType === "postgres"
+              ? "当前 PostgreSQL 会话处于只读模式，无法执行 TRUNCATE。请切换到可写连接或调整事务只读设置。"
+              : "实例处于只读（read_only / super_read_only），无法执行 TRUNCATE。请在可写主库或副本上操作。"
+          );
+          return;
+        }
         await truncateTable(connId, selectedDatabase, tableName);
         messageApi.success(`表 "${tableName}" 已清空`);
       } catch (err) {

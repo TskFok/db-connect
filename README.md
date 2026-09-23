@@ -34,14 +34,14 @@
 - **数据库 / schema 编辑**：MySQL 支持修改字符集/排序规则（utf8mb4、utf8、latin1、gbk 等）；PostgreSQL / SQL Server 支持 schema 创建、删除与重命名；ClickHouse 提供 database 创建、删除与重命名入口，重命名依赖服务端版本支持；SQLite 不展示数据库级编辑、字符集或存储引擎入口
 - **数据库 / schema 重命名**：MySQL 通过创建新库 → 迁移表 → 删除旧库实现；PostgreSQL / SQL Server 走 schema 重命名
 - **新建表**：可视化创建表（列定义、主键、MySQL 引擎、ClickHouse MergeTree 引擎与 ORDER BY、注释）
-- **删除表 / 清空表**：删除表支持确认；MySQL / MariaDB、PostgreSQL、SQL Server、ClickHouse 的物理表支持 **TRUNCATE**（外键等约束导致的失败会给出可读错误提示）；SQLite 的概览清空入口当前存在兼容问题，见下方限制
+- **删除表 / 清空表**：删除表支持确认；MySQL / MariaDB、PostgreSQL、SQL Server、ClickHouse 的物理表支持 **TRUNCATE**（外键等约束导致的失败会给出可读错误提示）；SQLite 概览清空表通过 **DELETE FROM** 删除全部行，保留表结构，不重置自增序列
 - **表搜索**：在数据库概览中按表名或注释搜索（`Cmd/Ctrl+F`）
 - **表收藏**：MySQL / MariaDB、SQLite、SQL Server、ClickHouse 可收藏常用表，在侧边栏顶部快捷访问，支持一键进入和取消收藏；PostgreSQL 当前不展示收藏入口
 - **多标签工作区**：可同时打开多张表的内容页与多个 **SQL** 标签页，在顶部标签栏切换；每个 SQL 标签独立保留编辑器内容与执行结果
 - **例程（存储过程 / 函数）**：MySQL / MariaDB、PostgreSQL、SQL Server 在数据库概览的「例程」子标签中列出当前库 / schema 的 `PROCEDURE` / `FUNCTION`，支持类型筛选、查看完整 DDL、删除；SQLite / ClickHouse 不展示例程入口
 - **事件调度（EVENT）**：MySQL / MariaDB 在「事件」子标签中列出调度事件，支持查看 DDL、启用/停用、删除；其他数据库不展示 EVENT 入口
-- **数据库 / schema 级 SQL 导入 / 导出**：在概览工具栏可将 **`.sql` 文件**导入当前数据库 / schema（MySQL / PostgreSQL 按语句拆分执行；SQL Server 按 `GO` 批处理分隔符逐批执行；ClickHouse 支持多行 DDL、`INSERT ... VALUES` 与 `INSERT ... FORMAT` 数据块；支持 PostgreSQL dollar-quoted 函数体，带进度与失败摘要；SQLite 导入入口当前受下方兼容问题限制）；或导出为 **`.sql`**（结构 + 可选 **INSERT** 数据，INSERT 数量上限可在导出对话框中配置，默认与查询导出上限量级一致）。PostgreSQL 导出覆盖 schema、表、视图、索引、外键、触发器、函数/过程；SQLite 导出覆盖表、视图、索引、触发器与 SQLite 方言 INSERT；SQL Server 导出覆盖当前 schema 的表、视图、普通/唯一索引、外键、触发器、函数/过程与 SQL Server 方言 INSERT；ClickHouse 导出通过 `system.tables` 读取表/视图 `create_table_query`，结构导出包含 `CREATE DATABASE`、表和视图，可选数据导出按表执行 `SELECT ... FORMAT Values` 并受每表行数上限保护
-- **SQLite 当前限制**：概览中的清空表和 `.sql` 导入入口会调用尚未适配 SQLite 的实例只读探测，因而在执行前报错；可在 SQL 编辑器中执行 `DELETE FROM` 或相应 SQL。后端已有清空表与脚本导入实现，但界面入口尚不可用
+- **数据库 / schema 级 SQL 导入 / 导出**：在概览工具栏可将 **`.sql` 文件**导入当前数据库 / schema（MySQL / PostgreSQL 按语句拆分执行；SQL Server 按 `GO` 批处理分隔符逐批执行；ClickHouse 支持多行 DDL、`INSERT ... VALUES` 与 `INSERT ... FORMAT` 数据块；支持 PostgreSQL dollar-quoted 函数体，带进度与失败摘要；SQLite 支持基础 SQL 脚本导入，触发器脚本限制见下文）；或导出为 **`.sql`**（结构 + 可选 **INSERT** 数据，INSERT 数量上限可在导出对话框中配置，默认与查询导出上限量级一致）。PostgreSQL 导出覆盖 schema、表、视图、索引、外键、触发器、函数/过程；SQLite 导出覆盖表、视图、索引、触发器与 SQLite 方言 INSERT；SQL Server 导出覆盖当前 schema 的表、视图、普通/唯一索引、外键、触发器、函数/过程与 SQL Server 方言 INSERT；ClickHouse 导出通过 `system.tables` 读取表/视图 `create_table_query`，结构导出包含 `CREATE DATABASE`、表和视图，可选数据导出按表执行 `SELECT ... FORMAT Values` 并受每表行数上限保护
+- **SQLite 当前限制**：概览支持清空表和 `.sql` 导入，按连接只读配置禁用写入口，文件权限等错误由实际写操作返回。导入仍使用通用分号拆分器，包含 `CREATE TRIGGER ... BEGIN ...; END;` 的脚本（包括本应用导出的触发器定义）暂不能完整导入
 - **SQL Server 当前限制**：SQL Server DDL 导出以基础可重放脚本为目标，不保证无损覆盖压缩、分区、权限、扩展属性、全文/空间/列存等高级属性；数据导出仍受每表行数上限约束；导入未显式限定 schema 的脚本时，SQL Server 仍按当前用户默认 schema 执行；不提供 server 级 database 创建、删除、重命名或跨 database 管理
 - **ClickHouse 当前限制**：支持新增行，但不支持表格行级 update/delete；表结构面板仅查看，不提供可视化索引、触发器、外键、例程和事件管理。结构变更可通过 SQL 编辑器或数据库结构同步执行，具体受同步计划的阻塞项约束；结构/数据导出以可重放基础脚本为目标。更多验证清单见 [`docs/clickhouse-support.md`](docs/clickhouse-support.md)
 

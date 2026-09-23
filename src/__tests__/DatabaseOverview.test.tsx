@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, fireEvent, screen } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, fireEvent, screen, waitFor } from "@testing-library/react";
+import * as api from "../services/tauriCommands";
 import { formatBytes } from "../utils/formatBytes";
 import { DatabaseOverview } from "../components/database/DatabaseOverview";
 import {
@@ -14,7 +15,7 @@ import { useSettingsStore } from "../stores/settingsStore";
 import { LIST_TABLE_IDS } from "../utils/listTableColumns";
 
 vi.mock("../services/tauriCommands", () => ({
-  isConnectionGloballyReadOnly: vi.fn().mockResolvedValue(false),
+  executeSql: vi.fn(),
 }));
 
 const mockTables: TableInfo[] = [
@@ -67,8 +68,17 @@ describe("resolveTableListColumnWidth", () => {
   });
 });
 
-describe("DatabaseOverview 表头列宽调节", () => {
+describe("DatabaseOverview", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.executeSql).mockResolvedValue({
+      result_type: "select",
+      columns: ["ro", "sro"],
+      rows: [[0, 0]],
+      affected_rows: null,
+      message: "",
+      execution_time_ms: 0,
+    });
     if (!window.matchMedia) {
       vi.stubGlobal("matchMedia", () => ({
         matches: false,
@@ -111,6 +121,79 @@ describe("DatabaseOverview 表头列宽调节", () => {
       tables: { app_db: mockTables },
       treeLoading: false,
     });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function useSqliteConnection(readOnly = false) {
+    useConnectionStore.setState({
+      activeConnection: {
+        connId: "sqlite-1",
+        config: {
+          id: "sqlite-1",
+          name: "SQLite 测试",
+          database_type: "sqlite",
+          sqlite_path: "/tmp/test.sqlite",
+          host: "",
+          port: 0,
+          username: "",
+          read_only: readOnly,
+        },
+      },
+    });
+    useDatabaseStore.setState({
+      selectedDatabase: "main",
+      tables: {
+        main: [{ ...mockTables[0], engine: "SQLite", table_type: "TABLE" }],
+      },
+    });
+  }
+
+  it("SQLite 概览确认清空后执行清空操作，不发送实例探测 SQL", async () => {
+    useSqliteConnection();
+    vi.mocked(api.executeSql).mockRejectedValue(
+      new Error('unrecognized token: "@"')
+    );
+    const truncateSpy = vi
+      .spyOn(useDatabaseStore.getState(), "truncateTable")
+      .mockResolvedValue();
+    render(<DatabaseOverview />);
+
+    fireEvent.click(screen.getByRole("button", { name: "清空表 users" }));
+    fireEvent.click(await screen.findByRole("button", { name: "清 空" }));
+
+    await waitFor(() => {
+      expect(truncateSpy).toHaveBeenCalledWith("sqlite-1", "main", "users");
+    });
+    expect(api.executeSql).not.toHaveBeenCalled();
+    expect(await screen.findByText('表 "users" 已清空')).toBeInTheDocument();
+  });
+
+  it("清空前探测失败时显示错误且不执行清空", async () => {
+    const truncateSpy = vi
+      .spyOn(useDatabaseStore.getState(), "truncateTable")
+      .mockResolvedValue();
+    render(<DatabaseOverview />);
+    await waitFor(() => expect(api.executeSql).toHaveBeenCalledTimes(1));
+    vi.mocked(api.executeSql).mockRejectedValue(new Error("连接已断开"));
+
+    fireEvent.click(screen.getByRole("button", { name: "清空表 users" }));
+    fireEvent.click(await screen.findByRole("button", { name: "清 空" }));
+
+    expect(await screen.findByText(/连接已断开/)).toBeInTheDocument();
+    expect(truncateSpy).not.toHaveBeenCalled();
+  });
+
+  it("SQLite 只读连接禁用清空和导入入口", () => {
+    useSqliteConnection(true);
+    render(<DatabaseOverview />);
+
+    expect(screen.getByRole("button", { name: "清空表 users" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "导入 SQL 文件" })
+    ).toBeDisabled();
   });
 
   it("拖动表头手柄应更新持久化列宽", () => {
