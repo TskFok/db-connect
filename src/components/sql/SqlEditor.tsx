@@ -265,7 +265,8 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
   const completionMetadata = useSqlCompletionMetadata(
     connId,
     currentDb,
-    completionDialectRef.current
+    completionDialectRef.current,
+    tabId
   );
   const completionMetadataRef = useRef(completionMetadata);
   completionMetadataRef.current = completionMetadata;
@@ -531,8 +532,13 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
           const first = tokenizeSql(sql, completionDialectRef.current).find(
             (token) => token.kind !== "comment"
           );
-          return !!first && !first.quoted &&
-            ["CREATE", "ALTER", "DROP", "RENAME"].includes(first.text.toUpperCase());
+          return (
+            !!first &&
+            !first.quoted &&
+            ["CREATE", "ALTER", "DROP", "RENAME"].includes(
+              first.text.toUpperCase()
+            )
+          );
         })
       ) {
         invalidateSqlCompletion({ connId: cid, reason: "schema-change" });
@@ -1039,7 +1045,9 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
           <Select
             size="small"
             value={currentDb}
-            onChange={(value: string | undefined) => setCurrentDb(value ?? null)}
+            onChange={(value: string | undefined) =>
+              setCurrentDb(value ?? null)
+            }
             style={{ width: 180 }}
             allowClear
             placeholder="选择数据库"

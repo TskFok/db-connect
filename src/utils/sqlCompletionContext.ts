@@ -500,6 +500,14 @@ export function analyzeSqlCompletion(input: {
       context.join = {
         leftRelationIds: introduced.slice(0, -1).map((d) => d.relation.id),
         rightRelationId: introduced[introduced.length - 1].relation.id,
+        conditionState: onConditionState(
+          active.tokens,
+          topBefore[clauseIndex]?.end ?? offset,
+          offset,
+          editable,
+          active.depth,
+          depths
+        ),
       };
   }
   if (
@@ -536,6 +544,48 @@ export function analyzeSqlCompletion(input: {
     active.scope.relations = [];
   }
   return context;
+}
+
+function onConditionState(
+  tokens: SqlToken[],
+  clauseEnd: number,
+  offset: number,
+  editable: SqlToken | undefined,
+  depth: number,
+  depths: Map<SqlToken, number>
+): NonNullable<SqlCompletionContext["join"]>["conditionState"] {
+  const boundary =
+    tokens.find(
+      (token) =>
+        token.start >= clauseEnd &&
+        depths.get(token) === depth &&
+        [
+          "JOIN",
+          "INNER",
+          "LEFT",
+          "RIGHT",
+          "FULL",
+          "CROSS",
+          "WHERE",
+          "GROUP",
+          "HAVING",
+          "ORDER",
+          "LIMIT",
+          "UNION",
+          "INTERSECT",
+          "EXCEPT",
+        ].includes(word(token))
+    )?.start ?? Infinity;
+  const entered = tokens.filter(
+    (token) => token.start >= clauseEnd && token.start < boundary
+  );
+  if (entered.length === 0) return "empty";
+  return entered.length === 1 &&
+    entered[0] === editable &&
+    entered[0].start < offset &&
+    entered[0].kind === "identifier"
+    ? "prefix"
+    : "expression";
 }
 
 function operatorContinuation(

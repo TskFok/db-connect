@@ -10,8 +10,8 @@ use crate::db::table_query::TableQueryCancellation;
 use crate::models::types::{
     AddColumnRequest, ColumnInfo, ConnectionConfig, CreateIndexRequest, CreateTableRequest,
     CreateTriggerRequest, ForeignKeyInfo, IndexColumnInfo, IndexInfo, QueryResult, SessionInfo,
-    SqlCompletionColumn, SqlCompletionMetadata, SqlCompletionTable, SqlExecuteResult, TableInfo,
-    TriggerInfo,
+    SqlCompletionColumn, SqlCompletionForeignKey, SqlCompletionMetadata, SqlCompletionTable,
+    SqlExecuteResult, TableInfo, TriggerInfo,
 };
 use deadpool_sqlite::{Config as SqliteConfig, Object as SqliteObject, Pool, Runtime};
 use rusqlite::types::Value as SqliteValue;
@@ -596,6 +596,112 @@ struct SqliteForeignKeyAgg {
     columns: Vec<(i64, String, String)>,
     update_rule: String,
     delete_rule: String,
+}
+
+struct SqliteCompletionForeignKeyAgg {
+    referenced_table: String,
+    columns: Vec<(i64, String, String)>,
+    complete: bool,
+}
+
+fn escape_sqlite_completion_fk_id_part(value: &str) -> String {
+    value.replace('%', "%25").replace('.', "%2E")
+}
+
+/// 一次表值 pragma 查询读取所选 attached database 的全部显式列外键。
+/// `REFERENCES parent` 未声明目标列时，pragma 的 `to` 为 NULL，本期跳过整条约束。
+pub async fn list_sql_completion_foreign_keys(
+    pool: &Pool,
+    namespace: &str,
+) -> Result<Vec<SqlCompletionForeignKey>, String> {
+    let namespace = namespace.to_string();
+    let conn = pool
+        .get()
+        .await
+        .map_err(|e| format!("获取 SQLite 连接失败: {}", e))?;
+    conn.interact(move |conn| list_sql_completion_foreign_keys_on_conn(conn, &namespace))
+        .await
+        .map_err(|e| format!("SQLite 外键查询任务失败: {}", e))?
+}
+
+fn list_sql_completion_foreign_keys_on_conn(
+    conn: &rusqlite::Connection,
+    namespace: &str,
+) -> Result<Vec<SqlCompletionForeignKey>, String> {
+    validate_sqlite_object_name("数据库名", namespace)?;
+    let sql = format!(
+        "SELECT m.name AS table_name, fk.id, fk.seq, \
+                fk.\"table\" AS referenced_table, fk.\"from\" AS child_column, \
+                fk.\"to\" AS parent_column \
+         FROM {}.sqlite_schema AS m \
+         JOIN pragma_foreign_key_list(m.name, ?1) AS fk \
+         WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%' \
+         ORDER BY m.name, fk.id, fk.seq",
+        sqlite_id(namespace)
+    );
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| format!("查询 SQLite 外键失败: {}", e))?;
+    let mut rows = stmt
+        .query([namespace])
+        .map_err(|e| format!("查询 SQLite 外键失败: {}", e))?;
+    let mut map: BTreeMap<(String, String, i64), SqliteCompletionForeignKeyAgg> = BTreeMap::new();
+    while let Some(row) = rows
+        .next()
+        .map_err(|e| format!("读取 SQLite 外键失败: {}", e))?
+    {
+        let table_name: String = row.get("table_name").map_err(|e| e.to_string())?;
+        let id: i64 = row.get("id").map_err(|e| e.to_string())?;
+        let seq: i64 = row.get("seq").map_err(|e| e.to_string())?;
+        let referenced_table: String = row.get("referenced_table").map_err(|e| e.to_string())?;
+        let child_column: Option<String> = row.get("child_column").map_err(|e| e.to_string())?;
+        let parent_column: Option<String> = row.get("parent_column").map_err(|e| e.to_string())?;
+        let complete = child_column.as_deref().is_some_and(|s| !s.is_empty())
+            && parent_column.as_deref().is_some_and(|s| !s.is_empty());
+        let entry = map
+            .entry((namespace.to_string(), table_name, id))
+            .or_insert_with(|| SqliteCompletionForeignKeyAgg {
+                referenced_table,
+                columns: Vec::new(),
+                complete: true,
+            });
+        entry.complete &= complete;
+        if let (Some(child), Some(parent)) = (child_column, parent_column) {
+            entry.columns.push((seq, child, parent));
+        }
+    }
+    Ok(map
+        .into_iter()
+        .filter_map(|((database, table_name, id), mut agg)| {
+            if !agg.complete || agg.columns.is_empty() || agg.referenced_table.is_empty() {
+                return None;
+            }
+            agg.columns.sort_by_key(|(seq, _, _)| *seq);
+            Some(SqlCompletionForeignKey {
+                id: format!(
+                    "{}.{}.fk_{}",
+                    escape_sqlite_completion_fk_id_part(&database),
+                    escape_sqlite_completion_fk_id_part(&table_name),
+                    id
+                ),
+                constraint_name: format!("fk_{}_{}", table_name, id),
+                table_namespace: database.clone(),
+                table_name,
+                columns: agg
+                    .columns
+                    .iter()
+                    .map(|(_, child, _)| child.clone())
+                    .collect(),
+                referenced_namespace: database,
+                referenced_table: agg.referenced_table,
+                referenced_columns: agg
+                    .columns
+                    .into_iter()
+                    .map(|(_, _, parent)| parent)
+                    .collect(),
+            })
+        })
+        .collect())
 }
 
 pub async fn list_foreign_keys(
@@ -2151,6 +2257,106 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use uuid::Uuid;
+
+    #[tokio::test]
+    async fn sql_completion_foreign_keys_from_memory_schema_keep_pairs_and_namespace() {
+        let pool = SqliteConfig::new(":memory:")
+            .builder(Runtime::Tokio1)
+            .unwrap()
+            .max_size(1)
+            .build()
+            .unwrap();
+        let conn = pool.get().await.unwrap();
+        conn.interact(|conn| {
+            conn.execute_batch(
+                "CREATE TABLE users (tenant_id INTEGER, id INTEGER, PRIMARY KEY (tenant_id, id));
+                 CREATE TABLE orders (tenant_id INTEGER, buyer_id INTEGER,
+                   FOREIGN KEY (tenant_id, buyer_id) REFERENCES users (tenant_id, id));
+                 CREATE TABLE employees (id INTEGER PRIMARY KEY, manager_id INTEGER,
+                   FOREIGN KEY (manager_id) REFERENCES employees (id));
+                 CREATE TABLE implicit_ref (user_id INTEGER REFERENCES employees);
+                 ATTACH DATABASE ':memory:' AS archive;
+                 CREATE TABLE archive.users (id INTEGER PRIMARY KEY);
+                 CREATE TABLE archive.orders (user_id INTEGER REFERENCES users(id));",
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        drop(conn);
+
+        let main = list_sql_completion_foreign_keys(&pool, "main")
+            .await
+            .unwrap();
+        assert_eq!(main.len(), 2); // implicit_ref has no explicit parent column.
+        let orders = main.iter().find(|fk| fk.table_name == "orders").unwrap();
+        assert_eq!(orders.table_namespace, "main");
+        assert_eq!(orders.referenced_namespace, "main");
+        assert_eq!(orders.referenced_table, "users");
+        assert_eq!(orders.columns, vec!["tenant_id", "buyer_id"]);
+        assert_eq!(orders.referenced_columns, vec!["tenant_id", "id"]);
+        assert_eq!(orders.id, "main.orders.fk_0");
+        let self_ref = main.iter().find(|fk| fk.table_name == "employees").unwrap();
+        assert_eq!(self_ref.columns, vec!["manager_id"]);
+        assert_eq!(self_ref.referenced_columns, vec!["id"]);
+
+        let archive = list_sql_completion_foreign_keys(&pool, "archive")
+            .await
+            .unwrap();
+        assert_eq!(archive.len(), 1);
+        assert_eq!(archive[0].id, "archive.orders.fk_0");
+        assert_eq!(archive[0].referenced_namespace, "archive");
+        assert_eq!(archive[0].columns, vec!["user_id"]);
+        assert_eq!(archive[0].referenced_columns, vec!["id"]);
+    }
+
+    #[tokio::test]
+    async fn sql_completion_foreign_keys_empty_memory_database_is_empty() {
+        let pool = SqliteConfig::new(":memory:")
+            .builder(Runtime::Tokio1)
+            .unwrap()
+            .max_size(1)
+            .build()
+            .unwrap();
+        assert!(list_sql_completion_foreign_keys(&pool, "main")
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn sql_completion_foreign_keys_ids_distinguish_dotted_namespace_and_table() {
+        let pool = SqliteConfig::new(":memory:")
+            .builder(Runtime::Tokio1)
+            .unwrap()
+            .max_size(1)
+            .build()
+            .unwrap();
+        let conn = pool.get().await.unwrap();
+        conn.interact(|conn| {
+            conn.execute_batch(
+                "CREATE TABLE users (id INTEGER PRIMARY KEY);
+                 CREATE TABLE \"a.b\" (user_id INTEGER REFERENCES users(id));
+                 ATTACH DATABASE ':memory:' AS \"main.a\";
+                 CREATE TABLE \"main.a\".users (id INTEGER PRIMARY KEY);
+                 CREATE TABLE \"main.a\".b (user_id INTEGER REFERENCES users(id));",
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        drop(conn);
+
+        let main = list_sql_completion_foreign_keys(&pool, "main")
+            .await
+            .unwrap();
+        let attached = list_sql_completion_foreign_keys(&pool, "main.a")
+            .await
+            .unwrap();
+        assert_eq!(main.len(), 1);
+        assert_eq!(attached.len(), 1);
+        assert_ne!(main[0].id, attached[0].id);
+    }
 
     async fn test_pool_with_schema() -> (Pool, PathBuf) {
         let path = std::env::temp_dir().join(format!("db-connect-{}.sqlite", Uuid::new_v4()));

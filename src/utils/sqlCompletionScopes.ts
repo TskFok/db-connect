@@ -474,15 +474,27 @@ export function resolveSqlCompletionScopes(input: {
         ? "partial"
         : "high";
     // 一期负责词法替换区间；只重新计算当前查询块内的槽位和子句。
+    let localConditionState: NonNullable<
+      SqlCompletionContext["join"]
+    >["conditionState"] = "expression";
+    let localConfidence: SqlCompletionContext["confidence"] = "unknown";
     if (context.slot !== "none") {
+      // 一期把 WITH 声明标为 partial，因为尚未推导 CTE 输出列。
+      // 二期已解析这些声明；从主 SELECT 起重算当前槽位的语法置信度。
+      const localStart = active.ctes.length
+        ? (active.clauses.find((clause) => clause.name === "select")?.start ??
+          active.range.start)
+        : active.range.start;
       const local = analyzeSqlCompletion({
-        sql: sql.slice(active.range.start, active.range.end),
-        offset: offset - active.range.start,
+        sql: sql.slice(localStart, active.range.end),
+        offset: offset - localStart,
         dialect,
       });
       result.clause = local.clause;
       result.slot = local.slot;
       result.operator = local.operator;
+      localConditionState = local.join?.conditionState ?? "expression";
+      localConfidence = local.confidence;
       if (active.kind === "compound") {
         const clause = clauseAt(active, offset);
         result.clause = clause?.name ?? "unknown";
@@ -499,8 +511,30 @@ export function resolveSqlCompletionScopes(input: {
         result.join = {
           leftRelationIds: introduced.slice(0, -1).map((ref) => ref.id),
           rightRelationId: introduced[introduced.length - 1].id,
+          conditionState: localConditionState,
         };
     }
+    // JOIN 的关系身份来自 FROM 语法与 FK catalog，不依赖 SELECT 投影或
+    // 当前 namespace 的列快照。CTE 左表由候选构建器跳过，不能让它的
+    // 输出列完整性阻止同一 JOIN 中已明确的物理表外键。
+    const activeRelations = scopes.get(active.id)!.relations;
+    if (
+      result.join &&
+      result.slot === "joinCondition" &&
+      localConfidence === "high" &&
+      !blocks.some((block) => block.unsupported) &&
+      activeRelations.some(
+        (relation) =>
+          relation.id === result.join!.rightRelationId &&
+          relation.kind === "table"
+      ) &&
+      result.join.leftRelationIds.some((id) =>
+        activeRelations.some(
+          (relation) => relation.id === id && relation.kind === "table"
+        )
+      )
+    )
+      result.confidence = "high";
     return result;
   } catch {
     // 不回退到一期可能跨查询块的关系集合。

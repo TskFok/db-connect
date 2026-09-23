@@ -135,6 +135,7 @@ pub fn run() {
             trigger::create_trigger,
             trigger::drop_trigger,
             foreign_key::list_foreign_keys,
+            foreign_key::get_sql_completion_foreign_keys,
             foreign_key::add_foreign_key,
             foreign_key::drop_foreign_key,
             routine_event::list_routines,

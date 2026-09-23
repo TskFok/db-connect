@@ -36,6 +36,30 @@ function resolve(
 }
 
 describe("SQL 查询作用域合成", () => {
+  it("混合 CTE 和跨 schema 物理表时保留 JOIN 语法置信度", () => {
+    const schema: SqlSchema = {
+      databases: ["sales"],
+      tables: [{ name: "orders" }],
+      columns: [{ table: "orders", name: "user_id" }],
+    };
+    const { context, active } = resolve(
+      "WITH x AS (SELECT user_id FROM orders) SELECT * FROM x JOIN sales.orders o ON x.user_id=o.user_id JOIN auth.users u ON |",
+      "postgres",
+      schema,
+      "sales"
+    );
+    expect(active.relations.map((relation) => relation.kind)).toEqual([
+      "cte",
+      "table",
+      "table",
+    ]);
+    expect(context.join).toMatchObject({
+      leftRelationIds: [active.relations[0].id, active.relations[1].id],
+      rightRelationId: active.relations[2].id,
+      conditionState: "empty",
+    });
+    expect(context.confidence).toBe("high");
+  });
   it("按依赖顺序推导 CTE 并应用显式输出列名", () => {
     const { active } = resolve(
       "WITH base AS (SELECT id AS k FROM users), renamed(v) AS (SELECT k FROM base) SELECT r.| FROM renamed r"
@@ -166,11 +190,26 @@ describe("SQL 查询作用域合成", () => {
     expect(context.join).toEqual({
       leftRelationIds: [active.relations[0].id],
       rightRelationId: active.relations[1].id,
+      conditionState: "expression",
     });
     expect(context.clause).toBe("on");
     expect(context.slot).toBe("joinCondition");
     expect(context.edit).toEqual(base.edit);
     expect(context.qualifierParts).toEqual(["b"]);
+  });
+  it("内外层 ON 分别重算条件状态和关系实例", () => {
+    const inner = resolve(
+      "SELECT * FROM users u JOIN orders o ON EXISTS (SELECT * FROM users a JOIN orders b ON |)"
+    );
+    expect(inner.context.join).toEqual({
+      leftRelationIds: [inner.active.relations[0].id],
+      rightRelationId: inner.active.relations[1].id,
+      conditionState: "empty",
+    });
+    const outer = resolve(
+      "SELECT * FROM users u JOIN orders o ON EXISTS (SELECT * FROM users a JOIN orders b ON b.id=a.id) AND |"
+    );
+    expect(outer.context.join?.conditionState).toBe("expression");
   });
   it("显式异 namespace 和未知默认 namespace 不回退当前库", () => {
     expect(

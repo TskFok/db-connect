@@ -12,7 +12,7 @@ use crate::db::postgres_ddl::format_pg_error;
 use crate::db::sql_utils::pg_id;
 use crate::models::types::{
     AddForeignKeyRequest, CreateIndexRequest, CreateTriggerRequest, ForeignKeyInfo,
-    IndexColumnInfo, IndexInfo, RoutineInfo, TriggerInfo,
+    IndexColumnInfo, IndexInfo, RoutineInfo, SqlCompletionForeignKey, TriggerInfo,
 };
 use deadpool_postgres::Pool as PgPool;
 use std::collections::BTreeMap;
@@ -416,6 +416,154 @@ pub async fn list_foreign_keys(
     });
 
     Ok(result)
+}
+
+#[derive(Debug)]
+struct PgCompletionForeignKeyRow {
+    constraint_id: i64,
+    constraint_name: String,
+    table_namespace: String,
+    table_name: String,
+    column: String,
+    referenced_namespace: String,
+    referenced_table: String,
+    referenced_column: String,
+    ordinal: i64,
+}
+
+impl PgCompletionForeignKeyRow {
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        constraint_id: i64,
+        constraint_name: &str,
+        table_namespace: &str,
+        table_name: &str,
+        column: &str,
+        referenced_namespace: &str,
+        referenced_table: &str,
+        referenced_column: &str,
+        ordinal: i64,
+    ) -> Self {
+        Self {
+            constraint_id,
+            constraint_name: constraint_name.into(),
+            table_namespace: table_namespace.into(),
+            table_name: table_name.into(),
+            column: column.into(),
+            referenced_namespace: referenced_namespace.into(),
+            referenced_table: referenced_table.into(),
+            referenced_column: referenced_column.into(),
+            ordinal,
+        }
+    }
+}
+
+fn aggregate_pg_completion_foreign_key_rows(
+    rows: Vec<PgCompletionForeignKeyRow>,
+) -> Vec<SqlCompletionForeignKey> {
+    let mut groups: BTreeMap<i64, Vec<PgCompletionForeignKeyRow>> = BTreeMap::new();
+    for row in rows {
+        groups.entry(row.constraint_id).or_default().push(row);
+    }
+    groups
+        .into_values()
+        .filter_map(|mut rows| {
+            rows.sort_by_key(|row| row.ordinal);
+            let first = rows.first()?;
+            if rows.iter().any(|row| {
+                row.ordinal <= 0
+                    || row.constraint_name.is_empty()
+                    || row.column.is_empty()
+                    || row.referenced_column.is_empty()
+                    || row.table_namespace.is_empty()
+                    || row.table_name.is_empty()
+                    || row.referenced_namespace.is_empty()
+                    || row.referenced_table.is_empty()
+                    || row.table_namespace != first.table_namespace
+                    || row.table_name != first.table_name
+                    || row.referenced_namespace != first.referenced_namespace
+                    || row.referenced_table != first.referenced_table
+            }) || rows
+                .windows(2)
+                .any(|pair| pair[0].ordinal == pair[1].ordinal)
+            {
+                return None;
+            }
+            Some(SqlCompletionForeignKey {
+                id: format!(
+                    "{}.{} / {} #{}",
+                    first.table_namespace,
+                    first.table_name,
+                    first.constraint_name,
+                    first.constraint_id
+                ),
+                constraint_name: first.constraint_name.clone(),
+                table_namespace: first.table_namespace.clone(),
+                table_name: first.table_name.clone(),
+                columns: rows.iter().map(|row| row.column.clone()).collect(),
+                referenced_namespace: first.referenced_namespace.clone(),
+                referenced_table: first.referenced_table.clone(),
+                referenced_columns: rows
+                    .iter()
+                    .map(|row| row.referenced_column.clone())
+                    .collect(),
+            })
+        })
+        .collect()
+}
+
+/// 一次性读取与所选 PostgreSQL schema 相邻的全部外键约束。
+pub async fn list_sql_completion_foreign_keys(
+    pool: &PgPool,
+    namespace: &str,
+) -> Result<Vec<SqlCompletionForeignKey>, String> {
+    let client = get_client_with_retry(pool).await?;
+    let rows = client
+        .query(
+            "SELECT con.oid::bigint AS constraint_id, con.conname AS constraint_name, \
+                    child_ns.nspname AS table_namespace, child_table.relname AS table_name, \
+                    child_col.attname AS column_name, parent_ns.nspname AS referenced_namespace, \
+                    parent_table.relname AS referenced_table, parent_col.attname AS referenced_column, \
+                    child.ord::bigint AS ordinal \
+               FROM pg_catalog.pg_constraint AS con \
+               JOIN pg_catalog.pg_class AS child_table ON child_table.oid = con.conrelid \
+               JOIN pg_catalog.pg_namespace AS child_ns ON child_ns.oid = child_table.relnamespace \
+               JOIN pg_catalog.pg_class AS parent_table ON parent_table.oid = con.confrelid \
+               JOIN pg_catalog.pg_namespace AS parent_ns ON parent_ns.oid = parent_table.relnamespace \
+               JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS child(attnum, ord) ON true \
+               JOIN LATERAL unnest(con.confkey) WITH ORDINALITY AS parent(attnum, ord) ON parent.ord = child.ord \
+               LEFT JOIN pg_catalog.pg_attribute AS child_col \
+                 ON child_col.attrelid = con.conrelid AND child_col.attnum = child.attnum \
+               LEFT JOIN pg_catalog.pg_attribute AS parent_col \
+                 ON parent_col.attrelid = con.confrelid AND parent_col.attnum = parent.attnum \
+              WHERE con.contype = 'f' \
+                AND cardinality(con.conkey) = cardinality(con.confkey) \
+                AND (child_ns.nspname = $1 OR parent_ns.nspname = $1) \
+              ORDER BY con.oid, child.ord",
+            &[&namespace],
+        )
+        .await
+        .map_err(|e| format!("查询 SQL 补全外键失败: {e}"))?;
+    let rows = rows
+        .into_iter()
+        .map(|row| PgCompletionForeignKeyRow {
+            constraint_id: row.get("constraint_id"),
+            constraint_name: row.get("constraint_name"),
+            table_namespace: row.get("table_namespace"),
+            table_name: row.get("table_name"),
+            column: row
+                .get::<_, Option<String>>("column_name")
+                .unwrap_or_default(),
+            referenced_namespace: row.get("referenced_namespace"),
+            referenced_table: row.get("referenced_table"),
+            referenced_column: row
+                .get::<_, Option<String>>("referenced_column")
+                .unwrap_or_default(),
+            ordinal: row.get("ordinal"),
+        })
+        .collect();
+    Ok(aggregate_pg_completion_foreign_key_rows(rows))
 }
 
 /// 添加外键。
@@ -887,6 +1035,88 @@ pub async fn drop_routine(
 mod tests {
     use super::*;
     use crate::models::types::CreateIndexColumn;
+
+    #[test]
+    fn sql_completion_foreign_keys_postgres_preserves_case_schema_and_order() {
+        let rows = vec![
+            PgCompletionForeignKeyRow::new(
+                22,
+                "fk_user",
+                "sales",
+                "Orders",
+                "customer_id",
+                "auth",
+                "users",
+                "id",
+                2,
+            ),
+            PgCompletionForeignKeyRow::new(
+                23,
+                "fk_user",
+                "sales",
+                "orders",
+                "customer_id",
+                "auth",
+                "users",
+                "id",
+                1,
+            ),
+            PgCompletionForeignKeyRow::new(
+                22,
+                "fk_user",
+                "sales",
+                "Orders",
+                "tenant_id",
+                "auth",
+                "users",
+                "tenant_id",
+                1,
+            ),
+        ];
+        let keys = aggregate_pg_completion_foreign_key_rows(rows);
+        assert_eq!(keys.len(), 2);
+        let quoted = keys.iter().find(|key| key.table_name == "Orders").unwrap();
+        assert_eq!(quoted.table_namespace, "sales");
+        assert_eq!(quoted.referenced_namespace, "auth");
+        assert_eq!(quoted.columns, ["tenant_id", "customer_id"]);
+        assert_eq!(quoted.referenced_columns, ["tenant_id", "id"]);
+        assert_ne!(
+            quoted.id,
+            keys.iter()
+                .find(|key| key.table_name == "orders")
+                .unwrap()
+                .id
+        );
+    }
+
+    #[test]
+    fn sql_completion_foreign_keys_postgres_rejects_missing_columns() {
+        let rows = vec![
+            PgCompletionForeignKeyRow::new(
+                22,
+                "fk_user",
+                "sales",
+                "orders",
+                "tenant_id",
+                "auth",
+                "users",
+                "tenant_id",
+                1,
+            ),
+            PgCompletionForeignKeyRow::new(
+                22,
+                "fk_user",
+                "sales",
+                "orders",
+                "customer_id",
+                "auth",
+                "users",
+                "",
+                2,
+            ),
+        ];
+        assert!(aggregate_pg_completion_foreign_key_rows(rows).is_empty());
+    }
 
     #[test]
     fn build_create_index_normal() {

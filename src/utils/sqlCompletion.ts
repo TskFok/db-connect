@@ -3,6 +3,8 @@
  * 提供 MySQL 关键词、数据库、表名、列名的补全建议
  */
 
+import type { SqlCompletionForeignKeyResult } from "../types";
+import { buildJoinCandidates } from "./sqlCompletionJoin";
 import type * as Monaco from "monaco-editor";
 import type {
   SqlCompletionCacheKey,
@@ -361,6 +363,13 @@ export interface SqlCompletionBinding {
   key: SqlCompletionCacheKey;
   index?: SqlMetadataIndex;
   revision: number;
+  sessionId?: string;
+  /** 由编辑器的显式补全动作开启，Monaco triggerKind 无法区分快速建议。 */
+  allowJoinRecommendations?: boolean;
+  foreignKeys?: {
+    key: SqlCompletionCacheKey;
+    result: SqlCompletionForeignKeyResult;
+  };
   /** 可选守卫供编辑器在异步预取完成后刷新现有菜单。 */
   requestRefresh?: (isCurrent?: () => boolean) => void;
 }
@@ -381,6 +390,7 @@ export function registerSqlCompletionProvider(
   getBinding: () => SqlCompletionBinding | undefined
 ): Monaco.IDisposable {
   let disposed = false;
+  let requestSequence = 0;
   const registration = monaco.languages.registerCompletionItemProvider("sql", {
     triggerCharacters: [" ", ".", ",", "(", "\n"],
     provideCompletionItems(model, position, _completionContext, token) {
@@ -391,19 +401,23 @@ export function registerSqlCompletionProvider(
         model.uri.toString() !== modelUri
       )
         return empty;
+      const sequence = ++requestSequence;
       const binding = getBinding();
       if (!binding) return empty;
       const version = model.getVersionId();
       const revision = binding.revision;
+      const sessionId = binding.sessionId;
       const keyId = sqlCompletionKeyId(binding.key);
       binding.requestRefresh?.(() => {
         const current = getBinding();
         return (
           !disposed &&
+          sequence === requestSequence &&
           !token.isCancellationRequested &&
           !model.isDisposed() &&
           model.getVersionId() === version &&
           current?.revision === revision &&
+          current.sessionId === sessionId &&
           sqlCompletionKeyId(current.key) === keyId
         );
       });
@@ -432,6 +446,17 @@ export function registerSqlCompletionProvider(
             );
       context.defaultNamespace = index.key.database;
       context = resolveSqlCompletionScopes({ sql, offset, context, index });
+      const snapshot = binding.foreignKeys;
+      const foreignKeys =
+        snapshot &&
+        sqlCompletionKeyId(snapshot.key) === keyId &&
+        snapshot.result.status === "ready"
+          ? snapshot.result.foreignKeys
+          : [];
+      const candidates = generateSqlCompletionCandidates(context, index);
+      if (binding.allowJoinRecommendations) {
+        candidates.unshift(...buildJoinCandidates(context, foreignKeys));
+      }
       const kinds = monaco.languages.CompletionItemKind;
       const kindMap = {
         table: kinds.Class,
@@ -444,26 +469,24 @@ export function registerSqlCompletionProvider(
       const quoted = opener === '"' || opener === "`" || opener === "[";
       return {
         incomplete: true,
-        suggestions: generateSqlCompletionCandidates(context, index).map(
-          (candidate) => ({
-            ...candidate,
-            kind: kindMap[candidate.kind],
-            // Monaco 匹配的是替换范围中的原文，开引号必须进入 filterText。
-            filterText: quoted
-              ? opener +
-                candidate.filterText
-                  .split(opener === "[" ? "]" : opener)
-                  .join((opener === "[" ? "]" : opener).repeat(2)) +
-                (opener === "[" ? "]" : opener)
-              : candidate.filterText,
-            range: {
-              startLineNumber: start.lineNumber,
-              startColumn: start.column,
-              endLineNumber: end.lineNumber,
-              endColumn: end.column,
-            },
-          })
-        ),
+        suggestions: candidates.map((candidate) => ({
+          ...candidate,
+          kind: kindMap[candidate.kind],
+          // Monaco 匹配的是替换范围中的原文，开引号必须进入 filterText。
+          filterText: quoted
+            ? opener +
+              candidate.filterText
+                .split(opener === "[" ? "]" : opener)
+                .join((opener === "[" ? "]" : opener).repeat(2)) +
+              (opener === "[" ? "]" : opener)
+            : candidate.filterText,
+          range: {
+            startLineNumber: start.lineNumber,
+            startColumn: start.column,
+            endLineNumber: end.lineNumber,
+            endColumn: end.column,
+          },
+        })),
       };
     },
   });

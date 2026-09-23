@@ -35,6 +35,7 @@ import { isConnectionGloballyReadOnly } from "../../utils/sqlFileIoUi";
 import { useClientReadOnly } from "../../hooks/useClientReadOnly";
 import { useAntTableScrollY } from "../../hooks/useAntTableScrollY";
 import { normalizeDatabaseType } from "../../utils/connectionConfig";
+import { invalidateSqlCompletion } from "../../utils/sqlCompletionInvalidation";
 
 const { Text } = Typography;
 
@@ -103,7 +104,9 @@ export function ForeignKeyList() {
   const isSqlite = normalizeDatabaseType(databaseType) === "sqlite";
   const isSqlServer = normalizeDatabaseType(databaseType) === "sqlserver";
   const actionOptions = isSqlServer ? SQLSERVER_ACTION_OPTIONS : ACTION_OPTIONS;
-  const dropForeignKeyVerb = isSqlServer ? "DROP CONSTRAINT" : "DROP FOREIGN KEY";
+  const dropForeignKeyVerb = isSqlServer
+    ? "DROP CONSTRAINT"
+    : "DROP FOREIGN KEY";
   const writeBlocked = clientReadOnly || readOnlyDb;
 
   const [diagramExpanded, setDiagramExpanded] = useState(false);
@@ -171,6 +174,7 @@ export function ForeignKeyList() {
         fk.table_name,
         fk.constraint_name
       );
+      invalidateSqlCompletion({ connId, reason: "schema-change" });
       messageApi.success(`已删除外键约束 "${fk.constraint_name}"`);
       loadForeignKeys();
     } catch (e) {
@@ -257,6 +261,7 @@ export function ForeignKeyList() {
           setWizardLoading(true);
           try {
             await api.addForeignKey(connId, database, table, req);
+            invalidateSqlCompletion({ connId, reason: "schema-change" });
             messageApi.success("外键已添加");
             setWizardOpen(false);
             loadForeignKeys();

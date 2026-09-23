@@ -3,10 +3,12 @@ use crate::db::postgres_objects;
 use crate::db::sql_utils::esc_id;
 use crate::db::sqlite;
 use crate::db::sqlserver_objects;
-use crate::models::types::{AddForeignKeyRequest, ForeignKeyInfo};
+use crate::models::types::{
+    AddForeignKeyRequest, ForeignKeyInfo, SqlCompletionForeignKey, SqlCompletionForeignKeyResult,
+};
 use crate::AppState;
 use mysql_async::prelude::*;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use tauri::State;
 
 const SQLITE_FOREIGN_KEY_WRITE_UNSUPPORTED: &str =
@@ -206,6 +208,195 @@ ORDER BY kcu.CONSTRAINT_SCHEMA, kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION
     Ok(result)
 }
 
+#[derive(Debug)]
+struct MysqlCompletionForeignKeyRow {
+    constraint_schema: String,
+    constraint_name: String,
+    table_namespace: String,
+    table_name: String,
+    column: String,
+    ordinal: u64,
+    referenced_namespace: String,
+    referenced_table: String,
+    referenced_column: String,
+}
+
+impl MysqlCompletionForeignKeyRow {
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        constraint_schema: &str,
+        constraint_name: &str,
+        table_namespace: &str,
+        table_name: &str,
+        column: &str,
+        ordinal: u64,
+        referenced_namespace: &str,
+        referenced_table: &str,
+        referenced_column: &str,
+    ) -> Self {
+        Self {
+            constraint_schema: constraint_schema.into(),
+            constraint_name: constraint_name.into(),
+            table_namespace: table_namespace.into(),
+            table_name: table_name.into(),
+            column: column.into(),
+            ordinal,
+            referenced_namespace: referenced_namespace.into(),
+            referenced_table: referenced_table.into(),
+            referenced_column: referenced_column.into(),
+        }
+    }
+}
+
+fn aggregate_mysql_completion_foreign_key_rows(
+    rows: Vec<MysqlCompletionForeignKeyRow>,
+) -> Vec<SqlCompletionForeignKey> {
+    let mut groups: BTreeMap<(String, String, String, String), Vec<MysqlCompletionForeignKeyRow>> =
+        BTreeMap::new();
+    for row in rows {
+        groups
+            .entry((
+                row.constraint_schema.clone(),
+                row.table_namespace.clone(),
+                row.table_name.clone(),
+                row.constraint_name.clone(),
+            ))
+            .or_default()
+            .push(row);
+    }
+
+    groups
+        .into_values()
+        .filter_map(|mut rows| {
+            rows.sort_by_key(|row| row.ordinal);
+            let first = rows.first()?;
+            if rows.iter().any(|row| {
+                row.ordinal == 0
+                    || row.constraint_schema.is_empty()
+                    || row.constraint_name.is_empty()
+                    || row.table_namespace.is_empty()
+                    || row.table_name.is_empty()
+                    || row.column.is_empty()
+                    || row.referenced_column.is_empty()
+                    || row.referenced_namespace.is_empty()
+                    || row.referenced_table.is_empty()
+                    || row.referenced_namespace != first.referenced_namespace
+                    || row.referenced_table != first.referenced_table
+            }) || rows
+                .windows(2)
+                .any(|pair| pair[0].ordinal == pair[1].ordinal)
+            {
+                return None;
+            }
+            Some(SqlCompletionForeignKey {
+                id: format!(
+                    "mysql:{}",
+                    serde_json::json!([
+                        first.constraint_schema,
+                        first.table_namespace,
+                        first.table_name,
+                        first.constraint_name
+                    ])
+                ),
+                constraint_name: first.constraint_name.clone(),
+                table_namespace: first.table_namespace.clone(),
+                table_name: first.table_name.clone(),
+                columns: rows.iter().map(|row| row.column.clone()).collect(),
+                referenced_namespace: first.referenced_namespace.clone(),
+                referenced_table: first.referenced_table.clone(),
+                referenced_columns: rows
+                    .iter()
+                    .map(|row| row.referenced_column.clone())
+                    .collect(),
+            })
+        })
+        .collect()
+}
+
+fn mysql_completion_text(value: Option<mysql_async::Value>) -> String {
+    value
+        .and_then(|value| mysql_async::from_value_opt::<Option<String>>(value).ok())
+        .flatten()
+        .unwrap_or_default()
+}
+
+/// 一次性读取与所选 MySQL 库相邻的全部外键约束。
+pub async fn list_sql_completion_foreign_keys(
+    pool: &mysql_async::Pool,
+    namespace: &str,
+) -> Result<Vec<SqlCompletionForeignKey>, String> {
+    let mut conn = get_conn_with_retry(pool).await?;
+    let rows: Vec<mysql_async::Row> = conn
+        .exec(
+            r#"SELECT kcu.CONSTRAINT_SCHEMA, kcu.CONSTRAINT_NAME,
+                      kcu.TABLE_SCHEMA, kcu.TABLE_NAME, kcu.COLUMN_NAME,
+                      kcu.ORDINAL_POSITION, kcu.REFERENCED_TABLE_SCHEMA,
+                      kcu.REFERENCED_TABLE_NAME, kcu.REFERENCED_COLUMN_NAME
+                 FROM information_schema.KEY_COLUMN_USAGE AS kcu
+                 JOIN information_schema.REFERENTIAL_CONSTRAINTS AS rc
+                   ON rc.CONSTRAINT_SCHEMA = kcu.CONSTRAINT_SCHEMA
+                  AND rc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
+                  AND rc.TABLE_NAME = kcu.TABLE_NAME
+                WHERE kcu.REFERENCED_TABLE_NAME IS NOT NULL
+                  AND (kcu.TABLE_SCHEMA = ? OR kcu.REFERENCED_TABLE_SCHEMA = ?)
+                ORDER BY kcu.CONSTRAINT_SCHEMA, kcu.TABLE_SCHEMA,
+                         kcu.TABLE_NAME, kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION"#,
+            (namespace, namespace),
+        )
+        .await
+        .map_err(|e| format!("查询 SQL 补全外键失败: {e}"))?;
+    let rows = rows
+        .into_iter()
+        .map(|row| MysqlCompletionForeignKeyRow {
+            constraint_schema: mysql_completion_text(row.get("CONSTRAINT_SCHEMA")),
+            constraint_name: mysql_completion_text(row.get("CONSTRAINT_NAME")),
+            table_namespace: mysql_completion_text(row.get("TABLE_SCHEMA")),
+            table_name: mysql_completion_text(row.get("TABLE_NAME")),
+            column: mysql_completion_text(row.get("COLUMN_NAME")),
+            ordinal: ordinal_as_u64(&row),
+            referenced_namespace: mysql_completion_text(row.get("REFERENCED_TABLE_SCHEMA")),
+            referenced_table: mysql_completion_text(row.get("REFERENCED_TABLE_NAME")),
+            referenced_column: mysql_completion_text(row.get("REFERENCED_COLUMN_NAME")),
+        })
+        .collect();
+    Ok(aggregate_mysql_completion_foreign_key_rows(rows))
+}
+
+/// 批量读取选中 namespace 相邻的真实外键，供 SQL JOIN 显式补全使用。
+#[tauri::command]
+pub async fn get_sql_completion_foreign_keys(
+    state: State<'_, AppState>,
+    conn_id: String,
+    database: Option<String>,
+) -> Result<SqlCompletionForeignKeyResult, String> {
+    let Some(namespace) = database.as_deref().filter(|name| !name.trim().is_empty()) else {
+        return Ok(SqlCompletionForeignKeyResult::ready(Vec::new()));
+    };
+    let handle = {
+        let mut manager = state.connection_manager.lock().await;
+        manager.get_database_pool_and_touch(&conn_id)?
+    };
+    let foreign_keys = match handle {
+        DatabasePoolHandle::MySql(pool) => {
+            list_sql_completion_foreign_keys(&pool, namespace).await?
+        }
+        DatabasePoolHandle::Postgres(handle) => {
+            postgres_objects::list_sql_completion_foreign_keys(&handle.pool, namespace).await?
+        }
+        DatabasePoolHandle::Sqlite(handle) => {
+            sqlite::list_sql_completion_foreign_keys(&handle.pool, namespace).await?
+        }
+        DatabasePoolHandle::SqlServer(handle) => {
+            sqlserver_objects::list_sql_completion_foreign_keys(&handle.pool, namespace).await?
+        }
+        DatabasePoolHandle::ClickHouse(_) => {
+            return Ok(SqlCompletionForeignKeyResult::unsupported());
+        }
+    };
+    Ok(SqlCompletionForeignKeyResult::ready(foreign_keys))
+}
+
 fn validate_referential_action(rule: &str) -> Result<(), String> {
     let u = rule.to_uppercase();
     match u.as_str() {
@@ -396,6 +587,90 @@ pub async fn drop_foreign_key(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sql_completion_foreign_keys_mysql_nullable_catalog_column_does_not_panic() {
+        assert_eq!(mysql_completion_text(Some(mysql_async::Value::NULL)), "");
+        assert_eq!(mysql_completion_text(None), "");
+        assert_eq!(
+            mysql_completion_text(Some(mysql_async::Value::Bytes(b"customer_id".to_vec()))),
+            "customer_id"
+        );
+    }
+
+    #[test]
+    fn sql_completion_foreign_keys_mysql_groups_by_child_table_and_preserves_ordinals() {
+        let rows = vec![
+            MysqlCompletionForeignKeyRow::new(
+                "sales",
+                "same_fk",
+                "sales",
+                "orders",
+                "customer_id",
+                2,
+                "auth",
+                "users",
+                "id",
+            ),
+            MysqlCompletionForeignKeyRow::new(
+                "sales", "same_fk", "sales", "invoices", "payer_id", 1, "auth", "users", "id",
+            ),
+            MysqlCompletionForeignKeyRow::new(
+                "sales",
+                "same_fk",
+                "sales",
+                "orders",
+                "tenant_id",
+                1,
+                "auth",
+                "users",
+                "tenant_id",
+            ),
+        ];
+        let keys = aggregate_mysql_completion_foreign_key_rows(rows);
+        assert_eq!(keys.len(), 2);
+        let orders = keys.iter().find(|key| key.table_name == "orders").unwrap();
+        assert_eq!(orders.table_namespace, "sales");
+        assert_eq!(orders.referenced_namespace, "auth");
+        assert_eq!(orders.columns, ["tenant_id", "customer_id"]);
+        assert_eq!(orders.referenced_columns, ["tenant_id", "id"]);
+        assert_ne!(
+            orders.id,
+            keys.iter()
+                .find(|key| key.table_name == "invoices")
+                .unwrap()
+                .id
+        );
+    }
+
+    #[test]
+    fn sql_completion_foreign_keys_mysql_rejects_incomplete_column_mapping() {
+        let rows = vec![
+            MysqlCompletionForeignKeyRow::new(
+                "sales",
+                "fk",
+                "sales",
+                "orders",
+                "tenant_id",
+                1,
+                "auth",
+                "users",
+                "tenant_id",
+            ),
+            MysqlCompletionForeignKeyRow::new(
+                "sales",
+                "fk",
+                "sales",
+                "orders",
+                "customer_id",
+                2,
+                "auth",
+                "users",
+                "",
+            ),
+        ];
+        assert!(aggregate_mysql_completion_foreign_key_rows(rows).is_empty());
+    }
     use crate::models::types::AddForeignKeyRequest;
 
     #[test]

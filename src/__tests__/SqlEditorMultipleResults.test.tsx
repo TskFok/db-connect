@@ -54,6 +54,7 @@ vi.mock("@monaco-editor/react", async () => {
             trigger: () => undefined,
             onDidChangeModel: () => ({ dispose: () => undefined }),
             onDidFocusEditorText: () => ({ dispose: () => undefined }),
+            onDidBlurEditorText: () => ({ dispose: () => undefined }),
             addAction: () => ({ dispose: () => undefined }),
           } as unknown as Parameters<OnMount>[0],
           monaco

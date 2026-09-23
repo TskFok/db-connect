@@ -79,7 +79,11 @@ export interface SqlCompletionContext {
   edit: { start: number; end: number };
   scopes: QueryScope[];
   confidence: "high" | "partial" | "unknown";
-  join?: { leftRelationIds: string[]; rightRelationId: string };
+  join?: {
+    leftRelationIds: string[];
+    rightRelationId: string;
+    conditionState: "empty" | "prefix" | "expression";
+  };
   excludedColumns: string[];
   operator?: "NOT" | "IS" | "IS NOT";
 }

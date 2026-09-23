@@ -10,7 +10,7 @@ use crate::db::sql_utils::{sqlserver_id, sqlserver_str};
 use crate::db::sqlserver::{normalize_sqlserver_error, SqlServerPool};
 use crate::models::types::{
     AddForeignKeyRequest, CreateIndexRequest, CreateTriggerRequest, ForeignKeyInfo,
-    IndexColumnInfo, IndexInfo, RoutineInfo, TriggerInfo,
+    IndexColumnInfo, IndexInfo, RoutineInfo, SqlCompletionForeignKey, TriggerInfo,
 };
 use std::collections::BTreeMap;
 use tiberius::Row;
@@ -574,6 +574,153 @@ pub(crate) fn aggregate_foreign_key_rows(
     result
 }
 
+#[derive(Debug, Clone)]
+struct SqlServerCompletionForeignKeyRow {
+    object_id: i32,
+    constraint_name: String,
+    table_schema: String,
+    table_name: String,
+    column_name: String,
+    referenced_table_schema: String,
+    referenced_table_name: String,
+    referenced_column_name: String,
+    ordinal: u32,
+}
+
+impl SqlServerCompletionForeignKeyRow {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        object_id: i32,
+        constraint_name: &str,
+        table_schema: &str,
+        table_name: &str,
+        column_name: &str,
+        referenced_table_schema: &str,
+        referenced_table_name: &str,
+        referenced_column_name: &str,
+        ordinal: u32,
+    ) -> Self {
+        Self {
+            object_id,
+            constraint_name: constraint_name.to_string(),
+            table_schema: table_schema.to_string(),
+            table_name: table_name.to_string(),
+            column_name: column_name.to_string(),
+            referenced_table_schema: referenced_table_schema.to_string(),
+            referenced_table_name: referenced_table_name.to_string(),
+            referenced_column_name: referenced_column_name.to_string(),
+            ordinal,
+        }
+    }
+}
+
+fn aggregate_sql_completion_foreign_key_rows(
+    rows: Vec<SqlServerCompletionForeignKeyRow>,
+) -> Vec<SqlCompletionForeignKey> {
+    let mut map: BTreeMap<i32, (SqlCompletionForeignKey, Vec<(u32, String, String)>, bool)> =
+        BTreeMap::new();
+    for row in rows {
+        let complete = !row.constraint_name.is_empty()
+            && row.object_id != 0
+            && !row.table_schema.is_empty()
+            && !row.table_name.is_empty()
+            && !row.column_name.is_empty()
+            && !row.referenced_table_schema.is_empty()
+            && !row.referenced_table_name.is_empty()
+            && !row.referenced_column_name.is_empty()
+            && row.ordinal > 0;
+        let entry = map.entry(row.object_id).or_insert_with(|| {
+            (
+                SqlCompletionForeignKey {
+                    id: format!(
+                        "{}.{}.{}#{}",
+                        row.table_schema, row.table_name, row.constraint_name, row.object_id
+                    ),
+                    constraint_name: row.constraint_name,
+                    table_namespace: row.table_schema,
+                    table_name: row.table_name,
+                    columns: Vec::new(),
+                    referenced_namespace: row.referenced_table_schema,
+                    referenced_table: row.referenced_table_name,
+                    referenced_columns: Vec::new(),
+                },
+                Vec::new(),
+                true,
+            )
+        });
+        entry.2 &= complete;
+        entry
+            .1
+            .push((row.ordinal, row.column_name, row.referenced_column_name));
+    }
+    map.into_values()
+        .filter_map(|(mut fk, mut columns, complete)| {
+            if !complete || columns.is_empty() {
+                return None;
+            }
+            columns.sort_by_key(|(ordinal, _, _)| *ordinal);
+            fk.columns = columns.iter().map(|(_, child, _)| child.clone()).collect();
+            fk.referenced_columns = columns.into_iter().map(|(_, _, parent)| parent).collect();
+            Some(fk)
+        })
+        .collect()
+}
+
+fn list_sql_completion_foreign_keys_sql(schema: &str) -> String {
+    format!(
+        "SELECT CAST(fk.object_id AS int) AS object_id, fk.name AS constraint_name, \
+                cs.name AS table_schema, ct.name AS table_name, \
+                cc.name AS column_name, rs.name AS referenced_table_schema, \
+                rt.name AS referenced_table_name, rc.name AS referenced_column_name, \
+                CAST(fkc.constraint_column_id AS int) AS ordinal \
+         FROM sys.foreign_keys fk \
+         JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id \
+         JOIN sys.tables ct ON ct.object_id = fk.parent_object_id \
+         JOIN sys.schemas cs ON cs.schema_id = ct.schema_id \
+         LEFT JOIN sys.columns cc ON cc.object_id = ct.object_id AND cc.column_id = fkc.parent_column_id \
+         JOIN sys.tables rt ON rt.object_id = fk.referenced_object_id \
+         JOIN sys.schemas rs ON rs.schema_id = rt.schema_id \
+         LEFT JOIN sys.columns rc ON rc.object_id = rt.object_id AND rc.column_id = fkc.referenced_column_id \
+         WHERE (cs.name = {0} OR rs.name = {0}) \
+         ORDER BY fk.object_id, fkc.constraint_column_id",
+        n_str(schema)
+    )
+}
+
+pub async fn list_sql_completion_foreign_keys(
+    pool: &SqlServerPool,
+    namespace: &str,
+) -> Result<Vec<SqlCompletionForeignKey>, String> {
+    let mut client = pool
+        .get()
+        .await
+        .map_err(|e| normalize_sqlserver_error("获取连接失败", e.to_string()))?;
+    let rows = client
+        .simple_query(list_sql_completion_foreign_keys_sql(namespace))
+        .await
+        .map_err(|e| normalize_sqlserver_error("查询 SQL Server 外键信息失败", e.to_string()))?
+        .into_first_result()
+        .await
+        .map_err(|e| normalize_sqlserver_error("读取 SQL Server 外键信息失败", e.to_string()))?;
+    Ok(aggregate_sql_completion_foreign_key_rows(
+        rows.iter()
+            .map(|row| {
+                SqlServerCompletionForeignKeyRow::new(
+                    row.get::<i32, _>("object_id").unwrap_or_default(),
+                    &row_string(row, "constraint_name"),
+                    &row_string(row, "table_schema"),
+                    &row_string(row, "table_name"),
+                    &row_string(row, "column_name"),
+                    &row_string(row, "referenced_table_schema"),
+                    &row_string(row, "referenced_table_name"),
+                    &row_string(row, "referenced_column_name"),
+                    row.get::<i32, _>("ordinal").unwrap_or_default().max(0) as u32,
+                )
+            })
+            .collect(),
+    ))
+}
+
 fn list_foreign_keys_sql(schema: &str, table: &str) -> String {
     format!(
         "SELECT fk.name AS constraint_name, \
@@ -1026,6 +1173,91 @@ mod tests {
     use crate::models::types::{
         AddForeignKeyRequest, CreateIndexColumn, CreateIndexRequest, CreateTriggerRequest,
     };
+
+    #[test]
+    fn sql_completion_foreign_keys_keep_object_identity_order_and_cross_schema_target() {
+        let rows = vec![
+            SqlServerCompletionForeignKeyRow::new(
+                12,
+                "same_fk",
+                "dbo",
+                "orders",
+                "buyer_id",
+                "crm",
+                "customers",
+                "id",
+                2,
+            ),
+            SqlServerCompletionForeignKeyRow::new(
+                13,
+                "same_fk",
+                "crm",
+                "orders",
+                "buyer_id",
+                "crm",
+                "customers",
+                "id",
+                1,
+            ),
+            SqlServerCompletionForeignKeyRow::new(
+                12,
+                "same_fk",
+                "dbo",
+                "orders",
+                "tenant_id",
+                "crm",
+                "customers",
+                "tenant_id",
+                1,
+            ),
+        ];
+        let keys = aggregate_sql_completion_foreign_key_rows(rows);
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0].table_namespace, "dbo");
+        assert_eq!(keys[0].table_name, "orders");
+        assert_eq!(keys[0].referenced_namespace, "crm");
+        assert_eq!(keys[0].columns, vec!["tenant_id", "buyer_id"]);
+        assert_eq!(keys[0].referenced_columns, vec!["tenant_id", "id"]);
+        assert_ne!(keys[0].id, keys[1].id);
+        assert_eq!(keys[1].table_namespace, "crm");
+    }
+
+    #[test]
+    fn sql_completion_foreign_keys_drop_entire_incomplete_constraint() {
+        let rows = vec![
+            SqlServerCompletionForeignKeyRow::new(
+                12,
+                "fk",
+                "dbo",
+                "orders",
+                "tenant_id",
+                "crm",
+                "customers",
+                "tenant_id",
+                1,
+            ),
+            SqlServerCompletionForeignKeyRow::new(
+                12,
+                "fk",
+                "dbo",
+                "orders",
+                "buyer_id",
+                "crm",
+                "customers",
+                "",
+                2,
+            ),
+        ];
+        assert!(aggregate_sql_completion_foreign_key_rows(rows).is_empty());
+    }
+
+    #[test]
+    fn sql_completion_foreign_keys_query_matches_both_adjacent_schemas() {
+        let sql = list_sql_completion_foreign_keys_sql("dbo");
+        assert!(sql.contains("cs.name = N'dbo' OR rs.name = N'dbo'"));
+        assert!(sql.contains("fk.object_id"));
+        assert!(sql.contains("fkc.constraint_column_id"));
+    }
 
     #[test]
     fn build_create_index_sql_supports_normal_unique_and_order() {

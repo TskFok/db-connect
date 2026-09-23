@@ -48,6 +48,10 @@ const connection = {
 describe("SQL 编辑的订阅隔离", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(api.getSqlCompletionForeignKeys).mockResolvedValue({
+      status: "ready",
+      foreignKeys: [],
+    });
     useConnectionStore.setState({
       activeConnection: connection,
       activeConnId: connection.connId,

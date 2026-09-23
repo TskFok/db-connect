@@ -115,6 +115,7 @@ describe("SQL completion context", () => {
     expect(value.join).toEqual({
       leftRelationIds: [visible[0].id],
       rightRelationId: visible[1].id,
+      conditionState: "empty",
     });
     const self = relations("SELECT | FROM users u JOIN users v ON u.id = v.id");
     expect(self[0].id).not.toBe(self[1].id);
@@ -160,6 +161,26 @@ describe("SQL completion context", () => {
         "sqlserver"
       )[0]
     ).toMatchObject({ name: "orders", namespace: "dbo" });
+  });
+});
+
+describe("ON 条件状态", () => {
+  it.each([
+    ["SELECT * FROM orders o JOIN customers c ON |", "empty"],
+    ["SELECT * FROM orders o JOIN customers c ON cus|", "prefix"],
+    [
+      "SELECT * FROM orders o JOIN customers c ON o.customer_id = c.id|",
+      "expression",
+    ],
+    ["SELECT * FROM orders o JOIN customers c ON (o.id|", "expression"],
+    ["SELECT * FROM orders o JOIN customers c ON o.id AND |", "expression"],
+    ["SELECT * FROM orders o JOIN customers c ON cus| = c.id", "expression"],
+    [
+      "SELECT * FROM orders o JOIN customers c ON o.customer_id = c.|id",
+      "expression",
+    ],
+  ] as const)("%s → %s", (sql, state) => {
+    expect(context(sql).join?.conditionState).toBe(state);
   });
 });
 

@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ForeignKeyInfo, AddForeignKeyRequest, RoutineInfo, EventInfo } from "../types";
+import type {
+  ForeignKeyInfo,
+  AddForeignKeyRequest,
+  RoutineInfo,
+  EventInfo,
+} from "../types";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -12,6 +17,21 @@ describe("tauriCommands 外键与例程/事件", () => {
   beforeEach(() => {
     vi.mocked(invoke).mockReset();
   });
+
+  it.each(["ready", "unsupported"] as const)(
+    "批量补全外键保留 %s 状态",
+    async (status) => {
+      vi.mocked(invoke).mockResolvedValue({ status, foreignKeys: [] });
+      expect(await api.getSqlCompletionForeignKeys("cid", "public")).toEqual({
+        status,
+        foreignKeys: [],
+      });
+      expect(invoke).toHaveBeenCalledWith("get_sql_completion_foreign_keys", {
+        connId: "cid",
+        database: "public",
+      });
+    }
+  );
 
   it("listForeignKeys", async () => {
     const mock: ForeignKeyInfo[] = [
@@ -81,7 +101,9 @@ describe("tauriCommands 外键与例程/事件", () => {
   });
 
   it("getRoutineDefinition 透传 PostgreSQL identity arguments", async () => {
-    vi.mocked(invoke).mockResolvedValue("CREATE FUNCTION p1() RETURNS int" as never);
+    vi.mocked(invoke).mockResolvedValue(
+      "CREATE FUNCTION p1() RETURNS int" as never
+    );
     await api.getRoutineDefinition("cid", "d", "p1", "FUNCTION", "a integer");
     expect(invoke).toHaveBeenCalledWith("get_routine_definition", {
       connId: "cid",
@@ -125,7 +147,10 @@ describe("tauriCommands 外键与例程/事件", () => {
     ];
     vi.mocked(invoke).mockResolvedValue(ev);
     const r = await api.listEvents("cid", "d");
-    expect(invoke).toHaveBeenCalledWith("list_events", { connId: "cid", database: "d" });
+    expect(invoke).toHaveBeenCalledWith("list_events", {
+      connId: "cid",
+      database: "d",
+    });
     expect(r[0].name).toBe("ev1");
   });
 

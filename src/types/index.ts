@@ -428,6 +428,22 @@ export interface CreateTriggerRequest {
 }
 
 /** 外键信息（相对当前表：outgoing / incoming） */
+/** SQL 补全快照中的真实约束，固定为子表到父表方向。 */
+export interface SqlCompletionForeignKey {
+  id: string;
+  constraintName: string;
+  tableNamespace: string;
+  tableName: string;
+  columns: string[];
+  referencedNamespace: string;
+  referencedTable: string;
+  referencedColumns: string[];
+}
+
+export type SqlCompletionForeignKeyResult =
+  | { status: "ready"; foreignKeys: SqlCompletionForeignKey[] }
+  | { status: "unsupported"; foreignKeys: [] };
+
 export interface ForeignKeyInfo {
   constraint_name: string;
   direction: string;

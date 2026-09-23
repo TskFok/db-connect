@@ -2,7 +2,7 @@
 
 > **执行要求：** 实施时使用 `superpowers:subagent-driven-development` 或 `superpowers:executing-plans`，逐任务执行并用复选框记录进度。
 
-**状态：** 待实施。本文件是实施计划，不表示功能已交付。
+**状态：** 已实现并完成验证。实现保留在当前 `master` 工作区，未提交。
 
 **目标：** 在用户主动打开 SQL 补全且光标位于 `JOIN ... ON` 的条件槽时，基于数据库真实外键给出可插入的、带正确别名与列顺序的等值连接条件。
 
@@ -69,7 +69,7 @@
 
 **接口：** 输入 `connId` 与选中 `database: string | null`；输出 TS `getSqlCompletionForeignKeys(connId, database): Promise<SqlCompletionForeignKeyResult>` 及对应 Rust DTO。将新 DTO 与 `ForeignKeyInfo` 分开，命令路由待任务 6 在四种适配器完成后接入。
 
-- [ ] 写 TS 命令测试：`getSqlCompletionForeignKeys('cid', 'public')` 调用 `invoke('get_sql_completion_foreign_keys', {connId:'cid', database:'public'})`；ClickHouse 的 `unsupported` 结果可原样返回。
+- [x] 写 TS 命令测试：`getSqlCompletionForeignKeys('cid', 'public')` 调用 `invoke('get_sql_completion_foreign_keys', {connId:'cid', database:'public'})`；ClickHouse 的 `unsupported` 结果可原样返回。
 
   ```ts
   vi.mocked(invoke).mockResolvedValue({ status: 'ready', foreignKeys: [] });
@@ -81,8 +81,8 @@
   });
   ```
 
-- [ ] 运行 `npm test -- src/__tests__/foreignKeyAndRoutineCommands.test.ts`，预期新增测试因 API 不存在而失败。
-- [ ] 添加 Rust/TS DTO；Rust 结果用 `#[serde(rename_all = "camelCase")]` 或显式转换统一字段，不改变 `ForeignKeyInfo` 现有 JSON。模型核心形状：
+- [x] 运行 `npm test -- src/__tests__/foreignKeyAndRoutineCommands.test.ts`，预期新增测试因 API 不存在而失败。
+- [x] 添加 Rust/TS DTO；Rust 结果用 `#[serde(rename_all = "camelCase")]` 或显式转换统一字段，不改变 `ForeignKeyInfo` 现有 JSON。模型核心形状：
 
   ```ts
   export interface SqlCompletionForeignKey {
@@ -100,8 +100,8 @@
     | { status: 'unsupported'; foreignKeys: [] };
   ```
 
-- [ ] 为 Rust DTO 写序列化测试，断言 JSON 使用 `foreignKeys`、`constraintName` 等 camelCase 字段，`ForeignKeyInfo` 旧格式保持不变。
-- [ ] 运行 `npm test -- src/__tests__/foreignKeyAndRoutineCommands.test.ts`、`cargo test --manifest-path src-tauri/Cargo.toml sql_completion_foreign_key_dto`，预期通过。此时运行时命令尚未注册，由任务 6 收口。
+- [x] 为 Rust DTO 写序列化测试，断言 JSON 使用 `foreignKeys`、`constraintName` 等 camelCase 字段，`ForeignKeyInfo` 旧格式保持不变。
+- [x] 运行 `npm test -- src/__tests__/foreignKeyAndRoutineCommands.test.ts`、`cargo test --manifest-path src-tauri/Cargo.toml sql_completion_foreign_key_dto`，预期通过。此时运行时命令尚未注册，由任务 6 收口。
 
 ### 任务 2：MySQL 与 PostgreSQL 一次读取关系集
 
@@ -109,9 +109,9 @@
 
 **接口：** 输出 `list_sql_completion_foreign_keys(pool, namespace) -> Result<Vec<SqlCompletionForeignKey>, String>` 方言实现，供任务 6 命令调用。每次请求仅一条 catalog 查询，内存中按约束聚合并排序。
 
-- [ ] 先写聚合纯函数测试：打乱行顺序的 `(constraint, ordinal, childCol, parentCol)` 能输出顺序相同的两数组；同一 schema 中不同子表上同名约束不会合并；跨 schema 的 `sales.orders -> auth.users` 被请求 `sales` 时返回且保留两个 namespace；列缺失的约束不输出。
-- [ ] 运行 `cargo test --manifest-path src-tauri/Cargo.toml sql_completion_foreign_keys`，预期新测试失败。
-- [ ] MySQL 查询以 `information_schema.KEY_COLUMN_USAGE kcu` 连接 `REFERENTIAL_CONSTRAINTS rc`，限制 `kcu.REFERENCED_TABLE_NAME IS NOT NULL AND (kcu.TABLE_SCHEMA = :schema OR kcu.REFERENCED_TABLE_SCHEMA = :schema)`；连接键包含 `CONSTRAINT_SCHEMA`、`CONSTRAINT_NAME`、`TABLE_NAME`，防止同名约束串行；按 `ORDINAL_POSITION` 聚合。`REFERENCED_COLUMN_NAME` 为空时丢弃该整条约束，不猜测主键。复用 `mysql_async::exec` 参数绑定，不拼接用户输入。
+- [x] 先写聚合纯函数测试：打乱行顺序的 `(constraint, ordinal, childCol, parentCol)` 能输出顺序相同的两数组；同一 schema 中不同子表上同名约束不会合并；跨 schema 的 `sales.orders -> auth.users` 被请求 `sales` 时返回且保留两个 namespace；列缺失的约束不输出。
+- [x] 运行 `cargo test --manifest-path src-tauri/Cargo.toml sql_completion_foreign_keys`，预期新测试失败。
+- [x] MySQL 查询以 `information_schema.KEY_COLUMN_USAGE kcu` 连接 `REFERENTIAL_CONSTRAINTS rc`，限制 `kcu.REFERENCED_TABLE_NAME IS NOT NULL AND (kcu.TABLE_SCHEMA = :schema OR kcu.REFERENCED_TABLE_SCHEMA = :schema)`；连接键包含 `CONSTRAINT_SCHEMA`、`CONSTRAINT_NAME`、`TABLE_NAME`，防止同名约束串行；按 `ORDINAL_POSITION` 聚合。`REFERENCED_COLUMN_NAME` 为空时丢弃该整条约束，不猜测主键。复用 `mysql_async::exec` 参数绑定，不拼接用户输入。
 
   ```sql
   SELECT kcu.CONSTRAINT_SCHEMA, kcu.CONSTRAINT_NAME,
@@ -129,7 +129,7 @@
             kcu.TABLE_NAME, kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION
   ```
 
-- [ ] PostgreSQL 查询复用现有 `pg_catalog.pg_constraint`、`pg_class`、`pg_namespace` 关系，筛选 `contype='f' AND (child_schema=$1 OR parent_schema=$1)`；`conkey` 和 `confkey` 以 `WITH ORDINALITY` 相同下标配对，或者分别取有序数组后验证长度一致。唯一身份用 `con.oid` 或完整子表 namespace+表名+约束名；为分区继承约束去重时只保留同一真实约束，不吞掉不同列映射。
+- [x] PostgreSQL 查询复用现有 `pg_catalog.pg_constraint`、`pg_class`、`pg_namespace` 关系，筛选 `contype='f' AND (child_schema=$1 OR parent_schema=$1)`；`conkey` 和 `confkey` 以 `WITH ORDINALITY` 相同下标配对，或者分别取有序数组后验证长度一致。唯一身份用 `con.oid` 或完整子表 namespace+表名+约束名；为分区继承约束去重时只保留同一真实约束，不吞掉不同列映射。
 
   ```sql
   -- 核心配对；表和命名空间 JOIN 复用现有单表查询。
@@ -141,7 +141,7 @@
   ORDER BY con.oid, child.ord
   ```
 
-- [ ] 增加 PG 大小写与跨 schema 测试：`"Orders"` 与 `orders` 在 DTO 中保持大小写；`sales.orders -> auth.users` 两端 namespace 不丢失。运行上述 Rust 测试，预期通过。可用现有测试连接时再加数据库集成测试；纯聚合测试为必需门槛。
+- [x] 增加 PG 大小写与跨 schema 测试：`"Orders"` 与 `orders` 在 DTO 中保持大小写；`sales.orders -> auth.users` 两端 namespace 不丢失。运行上述 Rust 测试，预期通过。可用现有测试连接时再加数据库集成测试；纯聚合测试为必需门槛。
 
 ### 任务 3：SQLite 与 SQL Server 批量路径
 
@@ -149,9 +149,9 @@
 
 **接口：** 各导出 `list_sql_completion_foreign_keys(pool, namespace) -> Result<Vec<SqlCompletionForeignKey>, String>`，供任务 6 命令分派。仅查询选中 SQLite attached database 或 SQL Server schema 及其相邻约束。
 
-- [ ] SQLite 先写真实内存库测试：建 `users` 与带复合外键的 `orders`，再建自关联 `employees(manager_id)`；单次批量调用返回两条约束、复合列序正确，且 `main` 与另一个 attached database 同名表不混淆。空库返回空数组。
-- [ ] 运行 `cargo test --manifest-path src-tauri/Cargo.toml sql_completion_foreign_keys`，预期 SQLite 新测试失败。
-- [ ] SQLite 复用 `list_foreign_keys_on_conn` 的表值函数思路，执行一条查询：`FROM <quoted-db>.sqlite_schema AS m JOIN pragma_foreign_key_list(m.name, ?1) AS fk`，`m.type='table'` 且排除 `sqlite_%`；在 Rust 内存以 `(database, m.name, fk.id)` 聚合、按 `fk.seq` 配对子/父列。`fk."to"` 为空（隐式引用父表主键）时，在本期不猜测并跳过该约束；补文档和测试说明。`database` 先经 `validate_sqlite_object_name` 再用 `sqlite_id` 引用，pragma 的 schema 参数绑定。
+- [x] SQLite 先写真实内存库测试：建 `users` 与带复合外键的 `orders`，再建自关联 `employees(manager_id)`；单次批量调用返回两条约束、复合列序正确，且 `main` 与另一个 attached database 同名表不混淆。空库返回空数组。
+- [x] 运行 `cargo test --manifest-path src-tauri/Cargo.toml sql_completion_foreign_keys`，预期 SQLite 新测试失败。
+- [x] SQLite 复用 `list_foreign_keys_on_conn` 的表值函数思路，执行一条查询：`FROM <quoted-db>.sqlite_schema AS m JOIN pragma_foreign_key_list(m.name, ?1) AS fk`，`m.type='table'` 且排除 `sqlite_%`；在 Rust 内存以 `(database, m.name, fk.id)` 聚合、按 `fk.seq` 配对子/父列。`fk."to"` 为空（隐式引用父表主键）时，在本期不猜测并跳过该约束；补文档和测试说明。`database` 先经 `validate_sqlite_object_name` 再用 `sqlite_id` 引用，pragma 的 schema 参数绑定。
 
   ```sql
   SELECT m.name AS table_name, fk.id, fk.seq,
@@ -163,8 +163,8 @@
    ORDER BY m.name, fk.id, fk.seq
   ```
 
-- [ ] SQL Server 先写聚合测试：两个 schema 里同名表/约束不合并，`constraint_column_id` 顺序保留，`dbo.orders -> crm.customers` 在 `dbo` 请求中出现；catalog 行缺列时拒绝整条约束。
-- [ ] SQL Server 查询复用 `sys.foreign_keys` + `sys.foreign_key_columns` + `sys.tables/sys.schemas/sys.columns`，筛选 `(cs.name = <quoted literal> OR rs.name = <quoted literal>)`，按 `fk.object_id, fkc.constraint_column_id` 排序；使用现有 `n_str` 生成安全的 Unicode 字符串字面量。按 `fk.object_id` 聚合，而非单独按名字。运行 `cargo test --manifest-path src-tauri/Cargo.toml sql_completion_foreign_keys`，预期通过。
+- [x] SQL Server 先写聚合测试：两个 schema 里同名表/约束不合并，`constraint_column_id` 顺序保留，`dbo.orders -> crm.customers` 在 `dbo` 请求中出现；catalog 行缺列时拒绝整条约束。
+- [x] SQL Server 查询复用 `sys.foreign_keys` + `sys.foreign_key_columns` + `sys.tables/sys.schemas/sys.columns`，筛选 `(cs.name = <quoted literal> OR rs.name = <quoted literal>)`，按 `fk.object_id, fkc.constraint_column_id` 排序；使用现有 `n_str` 生成安全的 Unicode 字符串字面量。按 `fk.object_id` 聚合，而非单独按名字。运行 `cargo test --manifest-path src-tauri/Cargo.toml sql_completion_foreign_keys`，预期通过。
 
 ### 任务 4：前端缓存与异步失效
 
@@ -172,7 +172,7 @@
 
 **接口：** 输入第一期 `SqlCompletionCacheKey {connId; database; dialect; connectionRevision}` 与 `src/utils/sqlCompletionInvalidation.ts` 的 `subscribeSqlCompletionInvalidation` / `getSqlCompletionConnectionRevision`。输出 `createSqlCompletionForeignKeyCache(source, now?)`，其 `{get(key), peek(key), invalidate(event)}` 与一期缓存同形；`source` 只需 `getSqlCompletionForeignKeys(connId, database)`。TTL 60 秒，最多 8 个已完成条目，按最近使用顺序淘汰。
 
-- [ ] 写失败测试：相同键并发调用只触发一次 API；不同库和 revision 各发一次；失效后旧 Promise 完成不写新缓存；59 秒命中、60 秒过期，9 个 namespace 淘汰最久未使用项；`unsupported` 可缓存但不生候选；被拒绝的请求不缓存为 ready，稍后可重试。测试使用注入时钟和手动控制 Promise，无定时等待。
+- [x] 写失败测试：相同键并发调用只触发一次 API；不同库和 revision 各发一次；失效后旧 Promise 完成不写新缓存；59 秒命中、60 秒过期，9 个 namespace 淘汰最久未使用项；`unsupported` 可缓存但不生候选；被拒绝的请求不缓存为 ready，稍后可重试。测试使用注入时钟和手动控制 Promise，无定时等待。
 
   ```ts
   const key = {
@@ -197,11 +197,11 @@
   expect(source.getSqlCompletionForeignKeys).toHaveBeenCalledTimes(2);
   ```
 
-- [ ] 运行 `npm test -- src/__tests__/sqlCompletionForeignKeyCache.test.ts`，预期因模块不存在而失败。
-- [ ] 实现按键 `Map` 的结果与 in-flight 请求去重，键包含全部四字段；每次加载记录代数，失效时增代数并删除缓存。只在代数和键一致时保存结果；成功项 60 秒过期、最多 8 项 LRU，淘汰不得让仍在途的旧请求回写；连接切换清理旧 key，不能把 `[]` 与“无权限”混成同一永久成功状态。
-- [ ] 订阅 `subscribeSqlCompletionInvalidation`：`refresh` 的 `database` 是具体字符串时清对应 namespace，`null` 只清库列表键，`undefined` 清该连接所有键；`disconnect` 清该连接所有键且一期提升 revision。外键快照包含跨 schema 的入向关系，因此 `schema-change` 在本缓存中保守扩大为该连接所有外键条目失效，避免其他 namespace 继续推荐已删除约束；一期表列缓存仍沿用其原有局部失效规则。只清内存，不遍历命名空间发查询。外键缓存不另起独立 revision，使用 `getSqlCompletionConnectionRevision(connId)` 构造 key；每个受影响 key 增代数以拒绝旧结果。
-- [ ] 编辑器在一期表列缓存加载点旁使用同一 key 和失效信号；加载失败时仅禁用关系项，不使普通补全报错。没有库/schema 时不请求外键。组件卸载或活动连接、库、tab 改变后，旧 Promise 不能写当前 `foreignKeysRef`。
-- [ ] 运行上述 Vitest 与 `npm run build`，预期通过。
+- [x] 运行 `npm test -- src/__tests__/sqlCompletionForeignKeyCache.test.ts`，预期因模块不存在而失败。
+- [x] 实现按键 `Map` 的结果与 in-flight 请求去重，键包含全部四字段；每次加载记录代数，失效时增代数并删除缓存。只在代数和键一致时保存结果；成功项 60 秒过期、最多 8 项 LRU，淘汰不得让仍在途的旧请求回写；连接切换清理旧 key，不能把 `[]` 与“无权限”混成同一永久成功状态。
+- [x] 订阅 `subscribeSqlCompletionInvalidation`：`refresh` 的 `database` 是具体字符串时清对应 namespace，`null` 只清库列表键，`undefined` 清该连接所有键；`disconnect` 清该连接所有键且一期提升 revision。外键快照包含跨 schema 的入向关系，因此 `schema-change` 在本缓存中保守扩大为该连接所有外键条目失效，避免其他 namespace 继续推荐已删除约束；一期表列缓存仍沿用其原有局部失效规则。只清内存，不遍历命名空间发查询。外键缓存不另起独立 revision，使用 `getSqlCompletionConnectionRevision(connId)` 构造 key；每个受影响 key 增代数以拒绝旧结果。
+- [x] 编辑器在一期表列缓存加载点旁使用同一 key 和失效信号；加载失败时仅禁用关系项，不使普通补全报错。没有库/schema 时不请求外键。组件卸载或活动连接、库、tab 改变后，旧 Promise 不能写当前 `foreignKeysRef`。
+- [x] 运行上述 Vitest 与 `npm run build`，预期通过。
 
 ### 任务 5：ON 状态解析与真实 FK 匹配
 
@@ -209,9 +209,9 @@
 
 **接口：** 输出 `buildJoinCandidates(context: SqlCompletionContext, foreignKeys: SqlCompletionForeignKey[]): CompletionCandidate[]`。输入 `context.join.leftRelationIds/rightRelationId` 是 relation **实例** ID；`conditionState` 由分析器按 `ON` 后 token 范围判定，不凭表名推断 JOIN 顺序。
 
-- [ ] 先写分析器失败测试：`JOIN customers c ON |` 返回 `conditionState: 'empty'`；`ON cus|` 返回 `prefix`；`ON o.customer_id = c.id|`、`ON (o.id|` 和 `ON o.id AND |` 返回 `expression`；把状态新增到 `context.join`，在分析器读取同一条语句的 token 范围判断，不以 `excludedColumns` 判断。
-- [ ] 写二期作用域回归测试：外层 `JOIN ... ON x = y` 的内部子查询另有 `JOIN ... ON |` 时，`resolveSqlCompletionScopes` 重新赋予内层 `join.leftRelationIds/rightRelationId` 和 `conditionState:'empty'`；光标回到外层完整条件时为 `expression`。二期 resolve 若重建 `context.join`，必须同步重算 `conditionState`，不能沿用一期外层状态。
-- [ ] 写匹配失败测试：`orders o JOIN customers c ON ` 得 `"o"."customer_id" = "c"."id"`；反向 FK 仍得到同一 SQL；一条双列 FK 得带括号且按 ordinal 配对的 `AND` 条件；同两表两条 FK 得两项，`detail` 区分约束名。
+- [x] 先写分析器失败测试：`JOIN customers c ON |` 返回 `conditionState: 'empty'`；`ON cus|` 返回 `prefix`；`ON o.customer_id = c.id|`、`ON (o.id|` 和 `ON o.id AND |` 返回 `expression`；把状态新增到 `context.join`，在分析器读取同一条语句的 token 范围判断，不以 `excludedColumns` 判断。
+- [x] 写二期作用域回归测试：外层 `JOIN ... ON x = y` 的内部子查询另有 `JOIN ... ON |` 时，`resolveSqlCompletionScopes` 重新赋予内层 `join.leftRelationIds/rightRelationId` 和 `conditionState:'empty'`；光标回到外层完整条件时为 `expression`。二期 resolve 若重建 `context.join`，必须同步重算 `conditionState`，不能沿用一期外层状态。
+- [x] 写匹配失败测试：`orders o JOIN customers c ON ` 得 `"o"."customer_id" = "c"."id"`；反向 FK 仍得到同一 SQL；一条双列 FK 得带括号且按 ordinal 配对的 `AND` 条件；同两表两条 FK 得两项，`detail` 区分约束名。
 
   ```ts
   const fk: SqlCompletionForeignKey = {
@@ -240,11 +240,11 @@
     .toBe('"o"."customer_id" = "c"."id"');
   ```
 
-- [ ] 加入审查重点测试：`employees e JOIN employees m` 对 `manager_id -> id` 的同一 FK 得 `"e"."manager_id" = "m"."id"` 与 `"m"."manager_id" = "e"."id"` 两项，详情分别标注子表别名；无别名自关联时不推荐；`sales.orders` 与 `archive.orders` 不能互换；PG `"Orders"` 与未引用 `orders` 各匹配对应表；MySQL/SQL Server 不确定大小写规则且出现多个 case-fold 命中时返回空数组。
-- [ ] 加入 PG 别名引用测试：`FROM orders O JOIN customers C ON `，`aliasQuoted` 为 false 时插入 `"o"."customer_id" = "c"."id"`；改成 `"O"` 与 `"C"` 且 `aliasQuoted` 为 true 时插入 `"O"."customer_id" = "C"."id"`。列名如 catalog 的 `"CustomerID"` 保持大小写。
-- [ ] 加入拒绝测试：CTE/derived、未知 relation ID、低置信度、`slot !== 'joinCondition'`、`conditionState: 'expression'`、列数组长度不等、元数据中同一完全限定名仍有多个实体时均为 `[]`。`excludedColumns` 在 JOIN 测试中非空也不影响真实 FK 候选。`ON` 左侧含多张表时只为与右侧有真实 FK 的左表产出候选，并用 `(约束 ID, 子 relation ID, 父 relation ID)` 稳定去重排序。
-- [ ] 运行 `npm test -- src/__tests__/sqlCompletionContext.test.ts src/__tests__/sqlCompletionScopes.test.ts src/__tests__/sqlCompletionJoin.test.ts`，预期新测试失败。
-- [ ] 实现两阶段解析：先用当前 `scopeId` 找可见 relation ID，取 `kind==='table'` 的 JOIN 左右实例；依据 dialect 与 `*Quoted` 规则解析 namespace/name。无显式 namespace 时使用 `context.defaultNamespace`；若缺失，只有 catalog 唯一命中才可继续，且不能跨两个 namespace 作同名猜测。对每个 FK 双向比较完整 `(namespace, table)` 对；同一个关系实例不得匹配自身。
+- [x] 加入审查重点测试：`employees e JOIN employees m` 对 `manager_id -> id` 的同一 FK 得 `"e"."manager_id" = "m"."id"` 与 `"m"."manager_id" = "e"."id"` 两项，详情分别标注子表别名；无别名自关联时不推荐；`sales.orders` 与 `archive.orders` 不能互换；PG `"Orders"` 与未引用 `orders` 各匹配对应表；MySQL/SQL Server 不确定大小写规则且出现多个 case-fold 命中时返回空数组。
+- [x] 加入 PG 别名引用测试：`FROM orders O JOIN customers C ON `，`aliasQuoted` 为 false 时插入 `"o"."customer_id" = "c"."id"`；改成 `"O"` 与 `"C"` 且 `aliasQuoted` 为 true 时插入 `"O"."customer_id" = "C"."id"`。列名如 catalog 的 `"CustomerID"` 保持大小写。
+- [x] 加入拒绝测试：CTE/derived、未知 relation ID、低置信度、`slot !== 'joinCondition'`、`conditionState: 'expression'`、列数组长度不等、元数据中同一完全限定名仍有多个实体时均为 `[]`。`excludedColumns` 在 JOIN 测试中非空也不影响真实 FK 候选。`ON` 左侧含多张表时只为与右侧有真实 FK 的左表产出候选，并用 `(约束 ID, 子 relation ID, 父 relation ID)` 稳定去重排序。
+- [x] 运行 `npm test -- src/__tests__/sqlCompletionContext.test.ts src/__tests__/sqlCompletionScopes.test.ts src/__tests__/sqlCompletionJoin.test.ts`，预期新测试失败。
+- [x] 实现两阶段解析：先用当前 `scopeId` 找可见 relation ID，取 `kind==='table'` 的 JOIN 左右实例；依据 dialect 与 `*Quoted` 规则解析 namespace/name。无显式 namespace 时使用 `context.defaultNamespace`；若缺失，只有 catalog 唯一命中才可继续，且不能跨两个 namespace 作同名猜测。对每个 FK 双向比较完整 `(namespace, table)` 对；同一个关系实例不得匹配自身。
 
   ```ts
   // 关键谓词示意：每个 relation ID 只指向一个作用域内的实例。
@@ -255,8 +255,8 @@
   // resolveBaseTable 必须返回完整 namespace + table，歧义返回 null。
   ```
 
-- [ ] 使用 `alias ?? name` 生成两侧限定符：别名传 `quoteSqlReference(alias, aliasQuoted ?? false, dialect)`；无别名表名传 `quoteSqlReference(name, nameQuoted ?? false, dialect)` 或使用已经绑定的 catalog 名称再 `quoteIdentifier`。子列和父列来自 catalog，分别 `quoteIdentifier(column,dialect)`，不得再按 SQL 未引用规则折叠。避免已输入条件被替换，只按 `context.edit` 覆盖当前词。自关联同时尝试两种子表/父表实例指派；普通双表若 FK 子表在 JOIN 右侧则保持 SQL 左右可读顺序但列配对不变。构造完整 `CompletionCandidate` 的 `label/filterText/insertText/detail/sortText/kind`，`sortText` 前缀确保真实关系项优先于一般列项并保留稳定的角色排序。
-- [ ] 运行 `npm test -- src/__tests__/sqlCompletionContext.test.ts src/__tests__/sqlCompletionScopes.test.ts src/__tests__/sqlCompletionJoin.test.ts` 与 `npm run build`，预期通过。
+- [x] 使用 `alias ?? name` 生成两侧限定符：别名传 `quoteSqlReference(alias, aliasQuoted ?? false, dialect)`；无别名表名传 `quoteSqlReference(name, nameQuoted ?? false, dialect)` 或使用已经绑定的 catalog 名称再 `quoteIdentifier`。子列和父列来自 catalog，分别 `quoteIdentifier(column,dialect)`，不得再按 SQL 未引用规则折叠。避免已输入条件被替换，只按 `context.edit` 覆盖当前词。自关联同时尝试两种子表/父表实例指派；普通双表若 FK 子表在 JOIN 右侧则保持 SQL 左右可读顺序但列配对不变。构造完整 `CompletionCandidate` 的 `label/filterText/insertText/detail/sortText/kind`，`sortText` 前缀确保真实关系项优先于一般列项并保留稳定的角色排序。
+- [x] 运行 `npm test -- src/__tests__/sqlCompletionContext.test.ts src/__tests__/sqlCompletionScopes.test.ts src/__tests__/sqlCompletionJoin.test.ts` 与 `npm run build`，预期通过。
 
 ### 任务 6：注册命令并接入 Monaco 候选流水线
 
@@ -264,13 +264,13 @@
 
 **接口：** 输入四种方言的 `list_sql_completion_foreign_keys`、`buildJoinCandidates` 与 `createSqlCompletionForeignKeyCache`；输出 Tauri 命令 `get_sql_completion_foreign_keys`。在一期 `SqlCompletionContext` 候选过滤之后合并 `CompletionCandidate`，交给现有 Monaco 映射。保留现有单表外键 UI。
 
-- [ ] 先写 provider 测试：高置信度 JOIN 条件且快照 ready 时关系项进入建议，`range` 对应 `context.edit`；在普通 `WHERE`、无 FK、unsupported 或 API 拒绝时仍得到原有列/关键词建议；过期补全请求完成后不显示旧关系；按键选择关系项才插入条件，不触发 model 文本自动修改。
-- [ ] 运行 `npm test -- src/__tests__/sqlCompletionJoinProvider.test.ts`，预期失败。
-- [ ] 在 Rust 新命令中对库/schema 为空返回 ready 空数组；按 `DatabasePoolHandle` 分派任务 2、3 的四个批量实现，ClickHouse 返回 unsupported。注册 `src-tauri/src/lib.rs`；不得调用单表 `list_foreign_keys` 拼列表。运行 `cargo check --manifest-path src-tauri/Cargo.toml`，预期通过。
-- [ ] 在一期 provider 的上下文解析与候选构建路径中调用纯函数，依据 `context.edit` 转换 Monaco 的 1-based range；保留一期已有 `CancellationToken`/请求序号守卫，必要时补 `model.getVersionId()`、活动连接 key 与 tab 身份校验。provider 只读取匹配 `binding.key` 的外键快照，缺失或 unsupported 时传空列表；API 预取由编辑器在 key 变化、TTL 到期或失效后触发，不在候选循环内发请求。
-- [ ] `SqlEditor` 启动预取时每个选中库/schema 只调用一次批量端点；连库切换、schema 切换、DDL 后一期失效信号和编辑器关闭均清理旧数据。`ForeignKeyList.tsx` 中 `addForeignKey`、`dropForeignKey` 成功后调用 `invalidateSqlCompletion({connId, reason:'schema-change'})`，使该连接的外键快照失效，覆盖跨 schema 约束的入向、出向缓存；仅当前活跃编辑器按需重载，不遍历所有命名空间查询。其对应测试断言成功时触发、失败时不触发，并验证修改 `sales → auth` 外键后两个已缓存 schema 均失效。
-- [ ] 运行 `npm test -- src/__tests__/sqlCompletionJoinProvider.test.ts src/__tests__/sqlCompletionJoin.test.ts src/__tests__/sqlCompletionForeignKeyCache.test.ts`、`npm run build`、`npm run lint`、`cargo test --manifest-path src-tauri/Cargo.toml sql_completion_foreign_keys`，预期全部通过；若已有无关 lint 错误，记录其位置并确认新增文件无错误。
-- [ ] 手工验收五个 SQL：单列 FK、复合 FK、自关联别名、双 FK、CTE JOIN；确认仅显式选择建议才替换前缀，既有 `ON` 保持原样，ClickHouse 和无权限账户仍可使用普通补全。
+- [x] 先写 provider 测试：高置信度 JOIN 条件且快照 ready 时关系项进入建议，`range` 对应 `context.edit`；在普通 `WHERE`、无 FK、unsupported 或 API 拒绝时仍得到原有列/关键词建议；过期补全请求完成后不显示旧关系；按键选择关系项才插入条件，不触发 model 文本自动修改。
+- [x] 运行 `npm test -- src/__tests__/sqlCompletionJoinProvider.test.ts`，预期失败。
+- [x] 在 Rust 新命令中对库/schema 为空返回 ready 空数组；按 `DatabasePoolHandle` 分派任务 2、3 的四个批量实现，ClickHouse 返回 unsupported。注册 `src-tauri/src/lib.rs`；不得调用单表 `list_foreign_keys` 拼列表。运行 `cargo check --manifest-path src-tauri/Cargo.toml`，预期通过。
+- [x] 在一期 provider 的上下文解析与候选构建路径中调用纯函数，依据 `context.edit` 转换 Monaco 的 1-based range；保留一期已有 `CancellationToken`/请求序号守卫，必要时补 `model.getVersionId()`、活动连接 key 与 tab 身份校验。provider 只读取匹配 `binding.key` 的外键快照，缺失或 unsupported 时传空列表；API 预取由编辑器在 key 变化、TTL 到期或失效后触发，不在候选循环内发请求。
+- [x] `SqlEditor` 启动预取时每个选中库/schema 只调用一次批量端点；连库切换、schema 切换、DDL 后一期失效信号和编辑器关闭均清理旧数据。`ForeignKeyList.tsx` 中 `addForeignKey`、`dropForeignKey` 成功后调用 `invalidateSqlCompletion({connId, reason:'schema-change'})`，使该连接的外键快照失效，覆盖跨 schema 约束的入向、出向缓存；仅当前活跃编辑器按需重载，不遍历所有命名空间查询。其对应测试断言成功时触发、失败时不触发，并验证修改 `sales → auth` 外键后两个已缓存 schema 均失效。
+- [x] 运行 `npm test -- src/__tests__/sqlCompletionJoinProvider.test.ts src/__tests__/sqlCompletionJoin.test.ts src/__tests__/sqlCompletionForeignKeyCache.test.ts`、`npm run build`、`npm run lint`、`cargo test --manifest-path src-tauri/Cargo.toml sql_completion_foreign_keys`，预期全部通过；若已有无关 lint 错误，记录其位置并确认新增文件无错误。
+- [x] 手工验收五个 SQL：单列 FK、复合 FK、自关联别名、双 FK、CTE JOIN；确认仅显式选择建议才替换前缀，既有 `ON` 保持原样，ClickHouse 和无权限账户仍可使用普通补全。
 
 ## 验收与风险
 
@@ -279,3 +279,18 @@
 - SQLite 隐式 `REFERENCES parent` 无明确 `to` 列时不推荐；后续若需要支持，应在同一次批量查询中联结主键信息或增加另一条固定批量查询，并写配对测试，不可逐表查 PRAGMA。
 - MySQL/SQL Server 的大小写行为依服务器设置；无可靠设置且候选不唯一时宁可缺少建议。复杂表达式或不完整 SQL 令解析置信度下降时同理。
 - 当前库/schema 之外、与选中 namespace 不邻接的 FK 不在快照中。跨库 JOIN 的更完整覆盖需要另设按一组 namespace 批量查询接口，不能靠循环调用当前 API。
+
+
+## 实施记录（2026-09-23）
+
+- 批量端点已注册，四种关系型数据库每次使用一条 catalog 查询；ClickHouse 明确返回 unsupported。SQLite 内存库集成测试包含复合、自关联、attached database、隐式父列跳过及约束身份碰撞。
+- 外键缓存使用原有四字段 key；60 秒 TTL、8 项 LRU、并发去重、失败重试和失效后旧请求拒绝回写。复用现有 `useSqlCompletionMetadata` / `sqlCompletionEditor` 生命周期，普通元数据与外键分别通知菜单刷新，慢外键不阻塞普通补全。
+- JOIN 语法置信度与列快照完整性分开处理：已明确的跨 schema 物理表不因缺少列快照被拒绝；混合 CTE 左侧只跳过 CTE，保留物理表的真实外键候选。语法不支持或匹配歧义仍拒绝。
+- 实测 Monaco 自动快速建议也使用 Invoke，因此新增「SQL 智能补全」动作及显式会话标记，支持 Ctrl+Space、Cmd+I 等快捷键；续输保留关系项，失焦/连接/模型/tab 切换后清理。`monacoSetup` 显式加载建议菜单模块，修复按需加载时命令未注册的问题。
+- 外键新增/删除成功后广播连接级 schema-change，失败不广播；组件测试通过真实表单与删除确认交互验证。
+- 独立审查发现并修复跨 schema、混合 CTE、显式触发识别及其组合场景。MySQL NULL 元数据读取已改成不会 panic 的可失败转换。
+- 手工验收使用真实 Monaco 和生产补全流水线、固定元数据夹具：单列、复合、自关联双方向、双外键、CTE、已有条件、ClickHouse、无权限降级均符合预期；实测自动输入不显示关系，Ctrl+Space 打开后续输保留候选，接受时仅替换当前前缀。未连接真实 MySQL/PostgreSQL/SQL Server 或无权限账户；这些数据库的查询与聚合通过 Rust 测试验证，SQLite 使用真实内存库。
+- Rust 完整测试：711 passed、12 ignored；cargo check、cargo fmt --check 通过。沙箱内已有 PG 假服务测试受本机端口绑定限制，放宽该限制后全套通过。
+- 全仓 lint 的既有错误位于 `scripts/release.mjs:203,211`（preserve-caught-error）与 `scripts/release.node-test.mjs:382`（URL no-undef）；两文件与 HEAD 相同，本次变更不涉及。
+
+- 最终稳定工作区验证：`npm test` 135 个文件、1676 项全部通过；`npm run build` 通过；本次修改文件的 ESLint、Prettier 与 `git diff --check` 通过。全仓 lint 仅有上方列出的 3 个既有错误。

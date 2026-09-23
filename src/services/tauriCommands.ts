@@ -25,6 +25,7 @@ import type {
   AddColumnRequest,
   CreateTableRequest,
   ForeignKeyInfo,
+  SqlCompletionForeignKeyResult,
   AddForeignKeyRequest,
   RoutineInfo,
   EventInfo,
@@ -694,6 +695,19 @@ export async function dropTrigger(
 }
 
 // ==================== 外键 ====================
+
+export async function getSqlCompletionForeignKeys(
+  connId: string,
+  database: string | null
+): Promise<SqlCompletionForeignKeyResult> {
+  return invoke<SqlCompletionForeignKeyResult>(
+    "get_sql_completion_foreign_keys",
+    {
+      connId,
+      database,
+    }
+  );
+}
 
 export async function listForeignKeys(
   connId: string,

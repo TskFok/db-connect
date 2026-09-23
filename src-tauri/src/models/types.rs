@@ -544,6 +544,50 @@ pub struct ForeignKeyInfo {
     pub delete_rule: String,
 }
 
+/// SQL 补全使用的外键快照，方向固定为子表到父表。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SqlCompletionForeignKey {
+    pub id: String,
+    pub constraint_name: String,
+    pub table_namespace: String,
+    pub table_name: String,
+    pub columns: Vec<String>,
+    pub referenced_namespace: String,
+    pub referenced_table: String,
+    pub referenced_columns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SqlCompletionForeignKeyStatus {
+    Ready,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SqlCompletionForeignKeyResult {
+    pub status: SqlCompletionForeignKeyStatus,
+    pub foreign_keys: Vec<SqlCompletionForeignKey>,
+}
+
+impl SqlCompletionForeignKeyResult {
+    pub fn ready(foreign_keys: Vec<SqlCompletionForeignKey>) -> Self {
+        Self {
+            status: SqlCompletionForeignKeyStatus::Ready,
+            foreign_keys,
+        }
+    }
+
+    pub fn unsupported() -> Self {
+        Self {
+            status: SqlCompletionForeignKeyStatus::Unsupported,
+            foreign_keys: Vec::new(),
+        }
+    }
+}
+
 /// 通过向导添加外键的请求
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddForeignKeyRequest {
@@ -804,6 +848,54 @@ pub struct ExportSqlFileResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sql_completion_foreign_key_dto_uses_camel_case_and_keeps_legacy_shape() {
+        let foreign_key = SqlCompletionForeignKey {
+            id: "sales.orders/fk_customer".to_string(),
+            constraint_name: "fk_customer".to_string(),
+            table_namespace: "sales".to_string(),
+            table_name: "orders".to_string(),
+            columns: vec!["customer_id".to_string()],
+            referenced_namespace: "auth".to_string(),
+            referenced_table: "users".to_string(),
+            referenced_columns: vec!["id".to_string()],
+        };
+        let value =
+            serde_json::to_value(SqlCompletionForeignKeyResult::ready(vec![foreign_key])).unwrap();
+        assert_eq!(value["status"], "ready");
+        assert_eq!(value["foreignKeys"][0]["constraintName"], "fk_customer");
+        assert_eq!(value["foreignKeys"][0]["tableNamespace"], "sales");
+        assert_eq!(value["foreignKeys"][0]["referencedNamespace"], "auth");
+        assert_eq!(
+            value["foreignKeys"][0]["referencedColumns"],
+            serde_json::json!(["id"])
+        );
+        assert!(value["foreign_keys"].is_null());
+
+        let unsupported =
+            serde_json::to_value(SqlCompletionForeignKeyResult::unsupported()).unwrap();
+        assert_eq!(
+            unsupported,
+            serde_json::json!({"status":"unsupported", "foreignKeys":[]})
+        );
+
+        let old = ForeignKeyInfo {
+            constraint_name: "fk_customer".to_string(),
+            direction: "outgoing".to_string(),
+            table_schema: "sales".to_string(),
+            table_name: "orders".to_string(),
+            column_names: vec!["customer_id".to_string()],
+            referenced_table_schema: "auth".to_string(),
+            referenced_table_name: "users".to_string(),
+            referenced_column_names: vec!["id".to_string()],
+            update_rule: "NO ACTION".to_string(),
+            delete_rule: "NO ACTION".to_string(),
+        };
+        let old_value = serde_json::to_value(old).unwrap();
+        assert_eq!(old_value["constraint_name"], "fk_customer");
+        assert!(old_value["constraintName"].is_null());
+    }
 
     #[test]
     fn database_sync_progress_serializes_with_snake_case_phase() {

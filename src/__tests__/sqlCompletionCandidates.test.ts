@@ -195,6 +195,7 @@ describe("二期查询作用域候选", () => {
       join: {
         leftRelationIds: [orders.id],
         rightRelationId: "right",
+        conditionState: "empty",
       },
       scopes: [
         scope("q", [users], {
@@ -556,7 +557,11 @@ describe("SQL 元数据索引与候选", () => {
       {
         slot: "joinCondition",
         clause: "on",
-        join: { leftRelationIds: [users.id], rightRelationId: orders.id },
+        join: {
+          leftRelationIds: [users.id],
+          rightRelationId: orders.id,
+          conditionState: "empty",
+        },
       },
       [users, orders, { ...users, id: "future", alias: "future" }]
     );
