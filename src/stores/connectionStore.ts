@@ -8,6 +8,7 @@ import type {
 import * as api from "../services/tauriCommands";
 import { useDatabaseStore } from "./databaseStore";
 import { useTableDataStore } from "./tableDataStore";
+import { invalidateSqlCompletion } from "../utils/sqlCompletionInvalidation";
 import {
   normalizeConnectionConfig,
   normalizeDatabaseType,
@@ -263,6 +264,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
           const [connId] = connToDisconnect;
           await api.disconnect(connId);
           api.invalidateSessionInfoCache(connId);
+          invalidateSqlCompletion({ connId, reason: "disconnect" });
           const newConnections = { ...activeConnections };
           delete newConnections[connId];
           const newActiveId =
@@ -518,6 +520,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
         set({ loading: true, error: null });
         await api.disconnect(toDisconnect);
         api.invalidateSessionInfoCache(toDisconnect);
+        invalidateSqlCompletion({ connId: toDisconnect, reason: "disconnect" });
 
         const newConnections = { ...activeConnections };
         delete newConnections[toDisconnect];
@@ -556,6 +559,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
         /* ignore */
       }
       api.invalidateSessionInfoCache(connId);
+      invalidateSqlCompletion({ connId, reason: "disconnect" });
 
       const newConnections = { ...activeConnections };
       delete newConnections[connId];

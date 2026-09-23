@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useConnectionStore } from "../stores/connectionStore";
 import {
+  getSqlCompletionConnectionRevision,
+  subscribeSqlCompletionInvalidation,
+} from "../utils/sqlCompletionInvalidation";
+import {
   defaultPortForDatabaseType,
   normalizeDatabaseType,
 } from "../utils/connectionConfig";
@@ -95,6 +99,94 @@ const mockSessionInfo = {
 };
 
 describe("connectionStore", () => {
+  it("正常断开后通知补全缓存并提升连接 revision", async () => {
+    const connId = "completion-disconnect";
+    const conn = {
+      connId,
+      config: {
+        id: "saved",
+        name: "Test",
+        host: "localhost",
+        port: 3306,
+        username: "root",
+      },
+    };
+    useConnectionStore.setState({
+      activeConnections: { [connId]: conn },
+      activeConnId: connId,
+      activeConnection: conn,
+    });
+    mockApi.disconnect.mockResolvedValue(undefined);
+    const before = getSqlCompletionConnectionRevision(connId);
+    const events: unknown[] = [];
+    const unsubscribe = subscribeSqlCompletionInvalidation((event) =>
+      events.push(event)
+    );
+    try {
+      await useConnectionStore.getState().disconnect(connId);
+      expect(events).toEqual([{ connId, reason: "disconnect" }]);
+      expect(getSqlCompletionConnectionRevision(connId)).toBe(before + 1);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("强制清理即使后端失败也通知补全缓存", async () => {
+    const connId = "completion-force";
+    const conn = {
+      connId,
+      config: {
+        id: "saved",
+        name: "Test",
+        host: "localhost",
+        port: 3306,
+        username: "root",
+      },
+    };
+    useConnectionStore.setState({
+      activeConnections: { [connId]: conn },
+      activeConnId: connId,
+      activeConnection: conn,
+    });
+    mockApi.forceDisconnect.mockRejectedValue(new Error("offline"));
+    const before = getSqlCompletionConnectionRevision(connId);
+    const events: unknown[] = [];
+    const unsubscribe = subscribeSqlCompletionInvalidation((event) =>
+      events.push(event)
+    );
+    try {
+      await useConnectionStore.getState().forceCleanupConnection(connId);
+      expect(events).toEqual([{ connId, reason: "disconnect" }]);
+      expect(getSqlCompletionConnectionRevision(connId)).toBe(before + 1);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("删除已保存的活跃连接时也提升 revision", async () => {
+    const connId = "completion-delete";
+    const conn = {
+      connId,
+      config: {
+        id: "saved",
+        name: "Test",
+        host: "localhost",
+        port: 3306,
+        username: "root",
+      },
+    };
+    useConnectionStore.setState({
+      activeConnections: { [connId]: conn },
+      activeConnId: connId,
+      activeConnection: conn,
+    });
+    mockApi.disconnect.mockResolvedValue(undefined);
+    mockApi.deleteSavedConnection.mockResolvedValue(undefined);
+    mockApi.listSavedConnections.mockResolvedValue([]);
+    const before = getSqlCompletionConnectionRevision(connId);
+    await useConnectionStore.getState().deleteSavedConnection("saved");
+    expect(getSqlCompletionConnectionRevision(connId)).toBe(before + 1);
+  });
   beforeEach(() => {
     mockApi.getSessionInfo.mockResolvedValue({ ...mockSessionInfo });
     mockApi.getSessionInfoCached.mockResolvedValue({ ...mockSessionInfo });

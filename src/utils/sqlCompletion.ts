@@ -4,6 +4,13 @@
  */
 
 import type * as Monaco from "monaco-editor";
+import type {
+  SqlCompletionCacheKey,
+  SqlMetadataIndex,
+} from "./sqlCompletionTypes";
+import { analyzeSqlCompletion } from "./sqlCompletionContext";
+import { generateSqlCompletionCandidates } from "./sqlCompletionCandidates";
+import { buildSqlMetadataIndex } from "./sqlCompletionMetadataIndex";
 
 /** 常用 MySQL 关键词 (按类别分组, 用于补全) */
 export const MYSQL_KEYWORDS = [
@@ -306,11 +313,6 @@ export type SqlDialect =
   | "sqlserver"
   | "clickhouse";
 
-export interface SqlCompletionOptions {
-  /** 数据库方言，默认 mysql */
-  dialect?: SqlDialect;
-}
-
 /** 按方言返回关键词列表 */
 export function getSqlKeywords(dialect: SqlDialect = "mysql"): string[] {
   if (dialect === "postgres") return POSTGRES_KEYWORDS;
@@ -341,145 +343,130 @@ export interface SqlSchema {
   columns: { name: string; table: string; type?: string }[];
 }
 
-/**
- * 构建补全建议（纯函数，便于单测）。
- * @param monaco Monaco 实例（仅用于 CompletionItemKind 与类型）
- * @param prefix 当前输入前缀（原样，不要求大写）
- * @param schema 数据库/表/列数据
- * @param range 替换范围
- * @param options 方言等选项
- */
-export function buildSqlSuggestions(
-  monaco: typeof Monaco,
-  prefix: string,
-  schema: SqlSchema,
-  range: Monaco.IRange,
-  options: SqlCompletionOptions = {}
-): Monaco.languages.CompletionItem[] {
-  const dialect = options.dialect ?? "mysql";
-  const keywords = getSqlKeywords(dialect);
-  const upperPrefix = (prefix || "").toUpperCase();
-  const lowerPrefix = (prefix || "").toLowerCase();
-  const keywordDetail =
-    dialect === "postgres"
-      ? "PostgreSQL 关键词"
-      : dialect === "sqlite"
-        ? "SQLite 关键词"
-        : dialect === "sqlserver"
-          ? "SQL Server 关键词"
-          : dialect === "clickhouse"
-            ? "ClickHouse 关键词"
-          : "MySQL 关键词";
-  const dbDetail =
-    dialect === "postgres" || dialect === "sqlserver" ? "schema" : "数据库";
-
-  const suggestions: Monaco.languages.CompletionItem[] = [];
-
-  // 1. 关键词
-  for (const kw of keywords) {
-    if (
-      !upperPrefix ||
-      kw.startsWith(upperPrefix) ||
-      kw.includes(upperPrefix)
-    ) {
-      suggestions.push({
-        label: kw,
-        kind: monaco.languages.CompletionItemKind.Keyword,
-        insertText: kw,
-        range,
-        detail: keywordDetail,
-      });
-    }
-  }
-
-  // 2. 数据库 / schema
-  for (const db of schema.databases) {
-    if (!lowerPrefix || db.toLowerCase().startsWith(lowerPrefix)) {
-      suggestions.push({
-        label: db,
-        kind: monaco.languages.CompletionItemKind.Module,
-        insertText: quoteIdentifier(db, dialect),
-        range,
-        detail: dbDetail,
-      });
-    }
-  }
-
-  // 3. 表名
-  for (const t of schema.tables) {
-    const name = t.name;
-    if (!lowerPrefix || name.toLowerCase().startsWith(lowerPrefix)) {
-      suggestions.push({
-        label: name,
-        kind: monaco.languages.CompletionItemKind.Class,
-        insertText: quoteIdentifier(name, dialect),
-        range,
-        detail: "表",
-      });
-    }
-  }
-
-  // 4. 列名（带表名前缀便于区分）
-  for (const col of schema.columns) {
-    const name = col.name;
-    if (!lowerPrefix || name.toLowerCase().startsWith(lowerPrefix)) {
-      suggestions.push({
-        label: col.table ? `${col.table}.${name}` : name,
-        kind: monaco.languages.CompletionItemKind.Field,
-        insertText: col.table
-          ? `${quoteIdentifier(col.table, dialect)}.${quoteIdentifier(name, dialect)}`
-          : quoteIdentifier(name, dialect),
-        range,
-        detail: col.type ? `列 (${col.type})` : "列",
-      });
-    }
-  }
-
-  return suggestions;
+/** SQL 源文本名称与 catalog 名称分开处理，避免把 PostgreSQL 别名 U 引用成 "U"。 */
+export function quoteSqlReference(
+  name: string,
+  quoted: boolean,
+  dialect: SqlDialect
+): string {
+  const semanticName =
+    dialect === "postgres" && !quoted
+      ? name.replace(/[A-Z]/g, (letter) => letter.toLowerCase())
+      : name;
+  return quoteIdentifier(semanticName, dialect);
 }
 
-/**
- * 为 SQL 编辑器注册补全提供者
- * @param monaco Monaco 实例
- * @param getSchema 获取当前 schema (数据库/表/列), 由调用方根据连接和选中的数据库提供
- * @param options 方言等选项（动态读取，支持回调返回最新方言）
- * @returns 用于注销的 disposable
- */
+export interface SqlCompletionBinding {
+  key: SqlCompletionCacheKey;
+  index?: SqlMetadataIndex;
+  revision: number;
+  /** 可选守卫供编辑器在异步预取完成后刷新现有菜单。 */
+  requestRefresh?: (isCurrent?: () => boolean) => void;
+}
+
+export function sqlCompletionKeyId(key: SqlCompletionCacheKey): string {
+  return JSON.stringify([
+    key.connId,
+    key.database,
+    key.dialect,
+    key.connectionRevision,
+  ]);
+}
+
+/** 每个 provider 只响应其绑定的模型；候选生成不等待网络。 */
 export function registerSqlCompletionProvider(
   monaco: typeof Monaco,
-  getSchema: () => Promise<SqlSchema>,
-  options: SqlCompletionOptions | (() => SqlCompletionOptions) = {}
+  modelUri: string,
+  getBinding: () => SqlCompletionBinding | undefined
 ): Monaco.IDisposable {
-  return monaco.languages.registerCompletionItemProvider("sql", {
+  let disposed = false;
+  const registration = monaco.languages.registerCompletionItemProvider("sql", {
     triggerCharacters: [" ", ".", ",", "(", "\n"],
-    async provideCompletionItems(model, position) {
-      const word = model.getWordUntilPosition(position);
-      const range: Monaco.IRange = {
-        startLineNumber: position.lineNumber,
-        endLineNumber: position.lineNumber,
-        startColumn: word.startColumn,
-        endColumn: word.endColumn,
+    provideCompletionItems(model, position, _completionContext, token) {
+      const empty = { suggestions: [] };
+      if (
+        disposed ||
+        token.isCancellationRequested ||
+        model.uri.toString() !== modelUri
+      )
+        return empty;
+      const binding = getBinding();
+      if (!binding) return empty;
+      const version = model.getVersionId();
+      const revision = binding.revision;
+      const keyId = sqlCompletionKeyId(binding.key);
+      binding.requestRefresh?.(() => {
+        const current = getBinding();
+        return (
+          !disposed &&
+          !token.isCancellationRequested &&
+          !model.isDisposed() &&
+          model.getVersionId() === version &&
+          current?.revision === revision &&
+          sqlCompletionKeyId(current.key) === keyId
+        );
+      });
+      const sql = model.getValue();
+      const offset = model.getOffsetAt(position);
+      const context = analyzeSqlCompletion({
+        sql,
+        offset,
+        dialect: binding.key.dialect,
+      });
+      context.defaultNamespace = binding.key.database;
+      const start = model.getPositionAt(context.edit.start);
+      const end = model.getPositionAt(context.edit.end);
+      if (
+        start.lineNumber !== end.lineNumber ||
+        start.lineNumber !== position.lineNumber
+      )
+        return empty;
+      const index =
+        binding.index && sqlCompletionKeyId(binding.index.key) === keyId
+          ? binding.index
+          : buildSqlMetadataIndex(
+              { databases: [], tables: [], columns: [] },
+              binding.key
+            );
+      const kinds = monaco.languages.CompletionItemKind;
+      const kindMap = {
+        table: kinds.Class,
+        column: kinds.Field,
+        keyword: kinds.Keyword,
+        function: kinds.Function,
+        relation: kinds.Module,
       };
-
-      const resolvedOptions =
-        typeof options === "function" ? options() : options;
-
-      let schema: SqlSchema = { databases: [], tables: [], columns: [] };
-      try {
-        schema = await getSchema();
-      } catch {
-        // 无连接或加载失败时仅使用关键词
-      }
-
+      const opener = sql[context.edit.start];
+      const quoted = opener === '"' || opener === "`" || opener === "[";
       return {
-        suggestions: buildSqlSuggestions(
-          monaco,
-          word.word || "",
-          schema,
-          range,
-          resolvedOptions
+        incomplete: true,
+        suggestions: generateSqlCompletionCandidates(context, index).map(
+          (candidate) => ({
+            ...candidate,
+            kind: kindMap[candidate.kind],
+            // Monaco 匹配的是替换范围中的原文，开引号必须进入 filterText。
+            filterText: quoted
+              ? opener +
+                candidate.filterText
+                  .split(opener === "[" ? "]" : opener)
+                  .join((opener === "[" ? "]" : opener).repeat(2)) +
+                (opener === "[" ? "]" : opener)
+              : candidate.filterText,
+            range: {
+              startLineNumber: start.lineNumber,
+              startColumn: start.column,
+              endLineNumber: end.lineNumber,
+              endColumn: end.column,
+            },
+          })
         ),
       };
     },
   });
+  return {
+    dispose() {
+      disposed = true;
+      registration.dispose();
+    },
+  };
 }

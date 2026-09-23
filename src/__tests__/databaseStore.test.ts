@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useDatabaseStore, emptyConnState } from "../stores/databaseStore";
 import { useTableDataStore } from "../stores/tableDataStore";
 import { getDatabaseCapabilities } from "../utils/databaseCapabilities";
+import { subscribeSqlCompletionInvalidation } from "../utils/sqlCompletionInvalidation";
+import { createSqlCompletionCache } from "../utils/sqlCompletionCache";
+import type { SqlCompletionCacheKey } from "../utils/sqlCompletionTypes";
 
 // Mock Tauri API
 vi.mock("@tauri-apps/api/core", () => ({
@@ -49,6 +52,205 @@ describe("databaseStore", () => {
     useDatabaseStore.getState().reset();
     useDatabaseStore.getState().switchToConnection("conn-1");
     vi.clearAllMocks();
+  });
+
+  describe("SQL 补全元数据失效通知", () => {
+    it.each([
+      [
+        "创建",
+        () =>
+          useDatabaseStore.getState().createDatabase("conn-1", "new", "", ""),
+      ],
+      ["删除", () => useDatabaseStore.getState().dropDatabase("conn-1", "old")],
+      [
+        "重命名",
+        () =>
+          useDatabaseStore
+            .getState()
+            .renameDatabase("conn-1", "old", "new", "", ""),
+      ],
+    ])("数据库%s后清除连接下各命名空间缓存", async (_name, action) => {
+      const cache = createSqlCompletionCache(
+        async () => ({
+          databases: ["old", "other"],
+          tables: [],
+          columns: [],
+        }),
+        () => 0
+      );
+      const key = (
+        connId: string,
+        database: string | null
+      ): SqlCompletionCacheKey => ({
+        connId,
+        database,
+        dialect: "mysql",
+        connectionRevision: 0,
+      });
+      const keys = [
+        key("conn-1", null),
+        key("conn-1", "old"),
+        key("conn-1", "other"),
+        key("conn-1", "new"),
+      ];
+      const unrelated = key("conn-2", "other");
+      for (const current of [...keys, unrelated]) await cache.get(current);
+      const events: unknown[] = [];
+      const unsubscribe = subscribeSqlCompletionInvalidation((event) => {
+        events.push(event);
+        cache.invalidate(event);
+      });
+      try {
+        mockApi.createDatabase.mockResolvedValue(undefined);
+        mockApi.dropDatabase.mockResolvedValue(undefined);
+        mockApi.renameDatabase.mockResolvedValue(undefined);
+        mockApi.listDatabases.mockResolvedValue(["other", "new"]);
+        await action();
+        expect(events).toEqual([{ connId: "conn-1", reason: "schema-change" }]);
+        for (const current of keys) expect(cache.peek(current)).toBeUndefined();
+        expect(cache.peek(unrelated)).toBeDefined();
+      } finally {
+        unsubscribe();
+      }
+    });
+
+    it("刷新入口通知当前连接的所有命名空间", async () => {
+      const events: unknown[] = [];
+      const unsubscribe = subscribeSqlCompletionInvalidation((event) =>
+        events.push(event)
+      );
+      try {
+        mockApi.listDatabases.mockResolvedValue([]);
+        await useDatabaseStore.getState().refresh("conn-1");
+        expect(events).toContainEqual({ connId: "conn-1", reason: "refresh" });
+      } finally {
+        unsubscribe();
+      }
+    });
+
+    it("建表成功通知目标库，失败则不通知", async () => {
+      const events: unknown[] = [];
+      const unsubscribe = subscribeSqlCompletionInvalidation((event) =>
+        events.push(event)
+      );
+      try {
+        mockApi.createTable
+          .mockResolvedValueOnce(undefined)
+          .mockRejectedValueOnce(new Error("DDL failed"));
+        mockApi.listTables.mockResolvedValue([]);
+        await useDatabaseStore.getState().createTable("conn-1", "app", {
+          tableName: "users",
+          columns: [],
+        } as never);
+        expect(events).toEqual([
+          { connId: "conn-1", database: "app", reason: "schema-change" },
+        ]);
+        await expect(
+          useDatabaseStore.getState().createTable("conn-1", "app", {
+            tableName: "bad",
+            columns: [],
+          } as never)
+        ).rejects.toThrow("DDL failed");
+        expect(events).toHaveLength(1);
+      } finally {
+        unsubscribe();
+      }
+    });
+
+    it.each([
+      [
+        "重命名表",
+        () =>
+          useDatabaseStore
+            .getState()
+            .renameTable("conn-1", "app", "old", "new"),
+      ],
+      [
+        "修改表引擎",
+        () =>
+          useDatabaseStore
+            .getState()
+            .alterTableEngine("conn-1", "app", "users", "InnoDB"),
+      ],
+      [
+        "修改列",
+        () =>
+          useDatabaseStore
+            .getState()
+            .alterColumn("conn-1", "app", "users", {} as never),
+      ],
+      [
+        "新增列",
+        () =>
+          useDatabaseStore
+            .getState()
+            .addColumn("conn-1", "app", "users", {} as never),
+      ],
+      [
+        "删除列",
+        () =>
+          useDatabaseStore
+            .getState()
+            .dropColumn("conn-1", "app", "users", "id"),
+      ],
+      [
+        "删除表",
+        () => useDatabaseStore.getState().dropTable("conn-1", "app", "users"),
+      ],
+    ])("%s 成功后通知目标库", async (_name, action) => {
+      const events: unknown[] = [];
+      const unsubscribe = subscribeSqlCompletionInvalidation((event) =>
+        events.push(event)
+      );
+      try {
+        mockApi.renameTable.mockResolvedValue(undefined);
+        mockApi.alterTableEngine.mockResolvedValue(undefined);
+        mockApi.alterColumn.mockResolvedValue(undefined);
+        mockApi.addColumn.mockResolvedValue(undefined);
+        mockApi.dropColumn.mockResolvedValue(undefined);
+        mockApi.dropTable.mockResolvedValue(undefined);
+        mockApi.listTables.mockResolvedValue([]);
+        mockApi.getTableStructure.mockResolvedValue([]);
+        await action();
+        expect(events).toEqual([
+          { connId: "conn-1", database: "app", reason: "schema-change" },
+        ]);
+      } finally {
+        unsubscribe();
+      }
+    });
+
+    it("重命名数据库只发一次连接级失效通知", async () => {
+      const events: unknown[] = [];
+      const unsubscribe = subscribeSqlCompletionInvalidation((event) =>
+        events.push(event)
+      );
+      try {
+        mockApi.renameDatabase.mockResolvedValue(undefined);
+        mockApi.listDatabases.mockResolvedValue(["new"]);
+        await useDatabaseStore
+          .getState()
+          .renameDatabase("conn-1", "old", "new", "", "");
+        expect(events).toEqual([{ connId: "conn-1", reason: "schema-change" }]);
+      } finally {
+        unsubscribe();
+      }
+    });
+
+    it("删库只发一次连接级失效通知", async () => {
+      const events: unknown[] = [];
+      const unsubscribe = subscribeSqlCompletionInvalidation((event) =>
+        events.push(event)
+      );
+      try {
+        mockApi.dropDatabase.mockResolvedValue(undefined);
+        mockApi.listDatabases.mockResolvedValue([]);
+        await useDatabaseStore.getState().dropDatabase("conn-1", "old");
+        expect(events).toEqual([{ connId: "conn-1", reason: "schema-change" }]);
+      } finally {
+        unsubscribe();
+      }
+    });
   });
 
   describe("初始状态", () => {
@@ -222,14 +424,14 @@ describe("databaseStore", () => {
 
       // 切到表标签再切回 SQL 标签
       useDatabaseStore.getState().switchTab("conn-1", 1);
-      expect(
-        useDatabaseStore.getState().sqlTabExecutions[sqlTabId]
-      ).toEqual({ executionId: "exec-9" });
+      expect(useDatabaseStore.getState().sqlTabExecutions[sqlTabId]).toEqual({
+        executionId: "exec-9",
+      });
 
       useDatabaseStore.getState().switchTab("conn-1", 0);
-      expect(
-        useDatabaseStore.getState().sqlTabExecutions[sqlTabId]
-      ).toEqual({ executionId: "exec-9" });
+      expect(useDatabaseStore.getState().sqlTabExecutions[sqlTabId]).toEqual({
+        executionId: "exec-9",
+      });
     });
 
     it("对已关闭或不存在的标签不登记，避免残留", () => {
@@ -992,9 +1194,7 @@ describe("databaseStore", () => {
             databases: ["myapp"],
             tables: { myapp: [] },
             openTables: [{ database: "myapp", table: "users" }],
-            openTabs: [
-              { type: "table", database: "myapp", table: "users" },
-            ],
+            openTabs: [{ type: "table", database: "myapp", table: "users" }],
             activeTableTabIndex: 0,
             activeTabIndex: 0,
             tableStructures: {},

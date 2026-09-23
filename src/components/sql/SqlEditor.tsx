@@ -1,4 +1,11 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import {
+  useState,
+  useRef,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useCallback,
+} from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   Button,
@@ -46,12 +53,13 @@ import * as api from "../../services/tauriCommands";
 import type { SessionInfo, SqlExecuteResult } from "../../types";
 import { splitSqlStatements } from "../../utils/sqlUtils";
 import { setupMonacoEditor } from "../../utils/monacoSetup";
-import { registerSqlCompletionProvider } from "../../utils/sqlCompletion";
+import { registerSqlEditorCompletion } from "../../utils/sqlCompletionEditor";
+import { useSqlCompletionMetadata } from "../../hooks/useSqlCompletionMetadata";
+import { invalidateSqlCompletion } from "../../utils/sqlCompletionInvalidation";
+import { tokenizeSql } from "../../utils/sqlCompletionTokenizer";
 
 setupMonacoEditor();
-import type { SqlSchema, SqlDialect } from "../../utils/sqlCompletion";
 import { normalizeDatabaseType } from "../../utils/connectionConfig";
-import { loadSqlCompletionSchema } from "../../utils/sqlCompletionSchema";
 import {
   assertCsvRowWithinLimit,
   buildQueryResultWorkbookBase64,
@@ -251,60 +259,16 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     execParamsRef.current = { connId, currentDb };
   }, [connId, currentDb]);
 
-  // SQL 补全用的 schema 缓存 (数据库/表/列)
-  const schemaRef = useRef<SqlSchema>({
-    databases: [],
-    tables: [],
-    columns: [],
-  });
-
-  // SQL 补全方言（随连接类型动态更新，供 Monaco 回调读取最新值）
-  const dialectRef = useRef<SqlDialect>("mysql");
-  useEffect(() => {
-    dialectRef.current =
-      databaseType === "postgres"
-        ? "postgres"
-        : databaseType === "sqlite"
-          ? "sqlite"
-          : databaseType === "sqlserver"
-            ? "sqlserver"
-            : databaseType === "clickhouse"
-              ? "clickhouse"
-              : "mysql";
-  }, [databaseType]);
-
-  useEffect(() => {
-    if (!connId) {
-      schemaRef.current = { databases: [], tables: [], columns: [] };
-      return;
-    }
-
-    let cancelled = false;
-
-    const load = async () => {
-      try {
-        const schema = await loadSqlCompletionSchema(
-          api,
-          connId,
-          currentDb,
-          dialectRef.current
-        );
-        if (cancelled) return;
-        schemaRef.current = schema;
-      } catch {
-        schemaRef.current = {
-          databases: [],
-          tables: [],
-          columns: [],
-        };
-      }
-    };
-
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [connId, currentDb]);
+  // 无连接时保留最后已知方言；绑定在 render 时即切到当前 key。
+  const completionDialectRef = useRef(databaseType);
+  if (connId) completionDialectRef.current = databaseType;
+  const completionMetadata = useSqlCompletionMetadata(
+    connId,
+    currentDb,
+    completionDialectRef.current
+  );
+  const completionMetadataRef = useRef(completionMetadata);
+  completionMetadataRef.current = completionMetadata;
 
   // 结果区域容器 ref + 动态高度
   const resultContainerRef = useRef<HTMLDivElement>(null);
@@ -418,7 +382,9 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     }
 
     try {
-      const formatted = formatSql(sql, { dialect: dialectRef.current });
+      const formatted = formatSql(sql, {
+        dialect: completionDialectRef.current,
+      });
       const range = hasSelection ? selection! : model.getFullModelRange();
       ed.executeEdits("format-sql", [{ range, text: formatted }]);
       ed.focus();
@@ -559,6 +525,18 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
         error: execError,
       });
     } finally {
+      // 成功的 DDL 可能带跨库目标；保守使当前连接失效，不执行额外探测 SQL。
+      if (
+        successfulSql.some((sql) => {
+          const first = tokenizeSql(sql, completionDialectRef.current).find(
+            (token) => token.kind !== "comment"
+          );
+          return !!first && !first.quoted &&
+            ["CREATE", "ALTER", "DROP", "RENAME"].includes(first.text.toUpperCase());
+        })
+      ) {
+        invalidateSqlCompletion({ connId: cid, reason: "schema-change" });
+      }
       markExecution(cid, null);
       if (tabId && cid) {
         setSqlTabResult(
@@ -633,7 +611,12 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     }
   }, [tabExecuteNonce, tabId, connId, doExecute]);
 
-  const completionDisposableRef = useRef<{ dispose: () => void } | null>(null);
+  const completionDisposableRef = useRef<ReturnType<
+    typeof registerSqlEditorCompletion
+  > | null>(null);
+  useLayoutEffect(() => {
+    completionDisposableRef.current?.updateBinding();
+  }, [completionMetadata]);
   const doExecuteRef = useRef<() => void>(() => {});
 
   useEffect(() => {
@@ -655,12 +638,11 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
         },
       });
 
-      // 注册 SQL 补全 (按方言提供关键词 + 数据库/表/列，标识符按方言加引号)
       completionDisposableRef.current?.dispose();
-      completionDisposableRef.current = registerSqlCompletionProvider(
+      completionDisposableRef.current = registerSqlEditorCompletion(
         monaco,
-        async () => ({ ...schemaRef.current }),
-        () => ({ dialect: dialectRef.current })
+        ed,
+        () => completionMetadataRef.current
       );
     },
     []
@@ -1057,7 +1039,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
           <Select
             size="small"
             value={currentDb}
-            onChange={setCurrentDb}
+            onChange={(value: string | undefined) => setCurrentDb(value ?? null)}
             style={{ width: 180 }}
             allowClear
             placeholder="选择数据库"
@@ -1093,7 +1075,8 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
             automaticLayout: true,
             tabSize: 2,
             suggestOnTriggerCharacters: true,
-            quickSuggestions: true,
+            wordBasedSuggestions: "off",
+            quickSuggestions: { other: true, comments: false, strings: false },
             contextmenu: false,
           }}
         />

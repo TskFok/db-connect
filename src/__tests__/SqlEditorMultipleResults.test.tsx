@@ -13,6 +13,7 @@ import { useDatabaseStore } from "../stores/databaseStore";
 import * as api from "../services/tauriCommands";
 import * as excelExport from "../utils/excelExport";
 import type { SqlExecuteResult } from "../types";
+import { subscribeSqlCompletionInvalidation } from "../utils/sqlCompletionInvalidation";
 
 vi.mock("../services/tauriCommands");
 vi.mock("../utils/monacoSetup", () => ({ setupMonacoEditor: () => undefined }));
@@ -49,6 +50,10 @@ vi.mock("@monaco-editor/react", async () => {
           {
             getValue: () => textarea.current?.value ?? "",
             getSelection: () => null,
+            getModel: () => null,
+            trigger: () => undefined,
+            onDidChangeModel: () => ({ dispose: () => undefined }),
+            onDidFocusEditorText: () => ({ dispose: () => undefined }),
             addAction: () => ({ dispose: () => undefined }),
           } as unknown as Parameters<OnMount>[0],
           monaco
@@ -141,6 +146,42 @@ describe("SqlEditor 多语句结果标签", () => {
       database: null,
       connection_id: 1,
     });
+  });
+
+  it.each([
+    "CREATE TABLE t (id int)",
+    "/* ddl */ ALTER TABLE t ADD name text",
+    "DROP TABLE t",
+    "RENAME TABLE t TO t2",
+  ])("成功执行 %s 通知补全缓存失效", async (sql) => {
+    useConnectionStore.setState({
+      activeConnection: {
+        ...connection,
+        config: { ...connection.config, skip_dangerous_sql_confirm: true },
+      },
+    });
+    vi.mocked(api.executeSql).mockResolvedValue({
+      result_type: "execute",
+      message: "成功",
+      columns: [],
+      rows: [],
+      affected_rows: 0,
+      execution_time_ms: 1,
+    });
+    const listener = vi.fn();
+    const stop = subscribeSqlCompletionInvalidation(listener);
+    const tabId = openSqlTab(sql);
+    const mounted = render(<SqlEditor tabId={tabId} />);
+    try {
+      await execute();
+      expect(listener).toHaveBeenCalledWith({
+        connId: connection.connId,
+        reason: "schema-change",
+      });
+    } finally {
+      stop();
+      mounted.unmount();
+    }
   });
 
   it("每条 SELECT 都有结果标签，默认第一条并可切换表格", async () => {

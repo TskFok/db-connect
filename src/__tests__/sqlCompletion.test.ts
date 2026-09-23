@@ -5,30 +5,10 @@ import {
   POSTGRES_KEYWORDS,
   SQLSERVER_KEYWORDS,
   SQLITE_KEYWORDS,
-  buildSqlSuggestions,
   getSqlKeywords,
   quoteIdentifier,
   type SqlSchema,
 } from "../utils/sqlCompletion";
-
-// 仅需 CompletionItemKind 常量即可驱动 buildSqlSuggestions
-const fakeMonaco = {
-  languages: {
-    CompletionItemKind: {
-      Keyword: 1,
-      Module: 2,
-      Class: 3,
-      Field: 4,
-    },
-  },
-} as unknown as typeof import("monaco-editor");
-
-const fakeRange = {
-  startLineNumber: 1,
-  endLineNumber: 1,
-  startColumn: 1,
-  endColumn: 1,
-};
 
 describe("sqlCompletion", () => {
   describe("MYSQL_KEYWORDS", () => {
@@ -182,101 +162,4 @@ describe("sqlCompletion", () => {
     });
   });
 
-  describe("buildSqlSuggestions", () => {
-    const schema: SqlSchema = {
-      databases: ["app"],
-      tables: [{ name: "users" }],
-      columns: [{ name: "id", table: "users", type: "int" }],
-    };
-
-    it("PostgreSQL 方言下标识符使用双引号", () => {
-      const suggestions = buildSqlSuggestions(
-        fakeMonaco,
-        "",
-        schema,
-        fakeRange,
-        { dialect: "postgres" }
-      );
-      const db = suggestions.find((s) => s.label === "app");
-      const table = suggestions.find((s) => s.label === "users");
-      const col = suggestions.find((s) => s.label === "users.id");
-      expect(db?.insertText).toBe('"app"');
-      expect(table?.insertText).toBe('"users"');
-      expect(col?.insertText).toBe('"users"."id"');
-      // 关键词来自 PostgreSQL 集合
-      expect(suggestions.some((s) => s.label === "RETURNING")).toBe(true);
-    });
-
-    it("MySQL 方言下标识符使用反引号", () => {
-      const suggestions = buildSqlSuggestions(
-        fakeMonaco,
-        "",
-        schema,
-        fakeRange,
-        { dialect: "mysql" }
-      );
-      const db = suggestions.find((s) => s.label === "app");
-      const col = suggestions.find((s) => s.label === "users.id");
-      expect(db?.insertText).toBe("`app`");
-      expect(col?.insertText).toBe("`users`.`id`");
-    });
-
-    it("SQLite 方言下标识符使用双引号并提供 SQLite 关键词", () => {
-      const suggestions = buildSqlSuggestions(
-        fakeMonaco,
-        "",
-        schema,
-        fakeRange,
-        { dialect: "sqlite" }
-      );
-      const db = suggestions.find((s) => s.label === "app");
-      const col = suggestions.find((s) => s.label === "users.id");
-      expect(db?.insertText).toBe('"app"');
-      expect(col?.insertText).toBe('"users"."id"');
-      expect(suggestions.some((s) => s.label === "PRAGMA")).toBe(true);
-    });
-
-    it("SQL Server 方言下标识符使用方括号并提供 SQL Server 关键词", () => {
-      const suggestions = buildSqlSuggestions(
-        fakeMonaco,
-        "",
-        schema,
-        fakeRange,
-        { dialect: "sqlserver" }
-      );
-      const db = suggestions.find((s) => s.label === "app");
-      const col = suggestions.find((s) => s.label === "users.id");
-      expect(db?.insertText).toBe("[app]");
-      expect(col?.insertText).toBe("[users].[id]");
-      expect(suggestions.some((s) => s.label === "TOP")).toBe(true);
-    });
-
-    it("ClickHouse 方言下标识符使用反引号并提供 ClickHouse 关键词", () => {
-      const suggestions = buildSqlSuggestions(
-        fakeMonaco,
-        "",
-        schema,
-        fakeRange,
-        { dialect: "clickhouse" }
-      );
-      const db = suggestions.find((s) => s.label === "app");
-      const col = suggestions.find((s) => s.label === "users.id");
-      expect(db?.insertText).toBe("`app`");
-      expect(col?.insertText).toBe("`users`.`id`");
-      expect(suggestions.some((s) => s.label === "FORMAT")).toBe(true);
-    });
-
-    it("前缀过滤大小写不敏感地匹配表名", () => {
-      const suggestions = buildSqlSuggestions(
-        fakeMonaco,
-        "us",
-        schema,
-        fakeRange,
-        { dialect: "postgres" }
-      );
-      expect(suggestions.some((s) => s.label === "users")).toBe(true);
-      // 不匹配前缀的库名应被过滤
-      expect(suggestions.some((s) => s.label === "app")).toBe(false);
-    });
-  });
 });

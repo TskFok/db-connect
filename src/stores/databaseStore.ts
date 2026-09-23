@@ -20,6 +20,7 @@ import {
   type ViewMode,
 } from "./databaseStoreState";
 import { applyOpenTabDerivedState, syncCurrentView } from "./databaseStoreView";
+import { invalidateSqlCompletion } from "../utils/sqlCompletionInvalidation";
 
 // 状态形状与纯派生逻辑拆分到 ./databaseStoreState，便于维护并复用；此处重新导出以保持既有导入路径不变
 export { emptyConnState };
@@ -831,6 +832,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     newName: string
   ) => {
     await api.renameTable(connId, database, oldName, newName);
+    invalidateSqlCompletion({ connId, database, reason: "schema-change" });
     const tableList = await api.listTables(connId, database);
     const structure = await api.getTableStructure(connId, database, newName);
     const tableInfo = tableList.find((t) => t.name === newName) ?? null;
@@ -902,6 +904,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     engine: string
   ) => {
     await api.alterTableEngine(connId, database, table, engine);
+    invalidateSqlCompletion({ connId, database, reason: "schema-change" });
     const tableList = await api.listTables(connId, database);
     const tableInfo = tableList.find((t) => t.name === table) ?? null;
 
@@ -927,6 +930,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     request: AlterColumnRequest
   ) => {
     await api.alterColumn(connId, database, table, request);
+    invalidateSqlCompletion({ connId, database, reason: "schema-change" });
     const structure = await api.getTableStructure(connId, database, table);
 
     const { connectionStates, activeConnId } = get();
@@ -956,6 +960,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     request: AddColumnRequest
   ) => {
     await api.addColumn(connId, database, table, request);
+    invalidateSqlCompletion({ connId, database, reason: "schema-change" });
     const structure = await api.getTableStructure(connId, database, table);
 
     const { connectionStates, activeConnId } = get();
@@ -985,6 +990,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     columnName: string
   ) => {
     await api.dropColumn(connId, database, table, columnName);
+    invalidateSqlCompletion({ connId, database, reason: "schema-change" });
     const structure = await api.getTableStructure(connId, database, table);
 
     const { connectionStates, activeConnId } = get();
@@ -1013,6 +1019,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     request: CreateTableRequest
   ) => {
     await api.createTable(connId, database, request);
+    invalidateSqlCompletion({ connId, database, reason: "schema-change" });
     const tableList = await api.listTables(connId, database);
 
     const { connectionStates, activeConnId } = get();
@@ -1031,6 +1038,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
 
   dropTable: async (connId: string, database: string, table: string) => {
     await api.dropTable(connId, database, table);
+    invalidateSqlCompletion({ connId, database, reason: "schema-change" });
 
     const { connectionStates, activeConnId } = get();
     const state = connectionStates[connId] ?? emptyConnState();
@@ -1153,6 +1161,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   },
 
   refresh: async (connId: string) => {
+    invalidateSqlCompletion({ connId, reason: "refresh" });
     const { connectionStates, activeConnId } = get();
     const state = connectionStates[connId] ?? emptyConnState();
     const { selectedDatabase, selectedTable } = state;
@@ -1270,6 +1279,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     collation: string
   ) => {
     await api.createDatabase(connId, name, characterSet, collation);
+    invalidateSqlCompletion({ connId, reason: "schema-change" });
     const databases = await api.listDatabases(connId);
 
     const { connectionStates, activeConnId } = get();
@@ -1288,6 +1298,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
 
   dropDatabase: async (connId: string, database: string) => {
     await api.dropDatabase(connId, database);
+    invalidateSqlCompletion({ connId, reason: "schema-change" });
     const databases = await api.listDatabases(connId);
 
     const { connectionStates, activeConnId } = get();
@@ -1402,6 +1413,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     collation: string
   ) => {
     await api.alterDatabaseCharset(connId, database, characterSet, collation);
+    invalidateSqlCompletion({ connId, database, reason: "schema-change" });
   },
 
   renameDatabase: async (
@@ -1412,6 +1424,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     collation: string
   ) => {
     await api.renameDatabase(connId, oldName, newName, characterSet, collation);
+    invalidateSqlCompletion({ connId, reason: "schema-change" });
     const databases = await api.listDatabases(connId);
 
     const { connectionStates, activeConnId } = get();
