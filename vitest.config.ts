@@ -46,6 +46,8 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
+    // 限制 AntD/jsdom 测试并发，避免发布校验时资源争用导致超时。
+    maxWorkers: 2,
     globals: true,
     setupFiles: ["./src/__tests__/setup.ts"],
     testTimeout: 10_000,
