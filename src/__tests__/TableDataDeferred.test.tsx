@@ -309,6 +309,18 @@ describe("TableData 大字段按需加载", () => {
     await selectRows(container, 1);
 
     fireEvent.click(screen.getByRole("button", { name: "复制为 INSERT 语句" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "复制为 INSERT 语句",
+    });
+    expect(
+      screen.queryByRole("button", { name: "复制为 INSERT 语句（不含主键）" })
+    ).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("checkbox", { name: /id/ })).toBeChecked();
+    expect(within(dialog).getByText("主键")).toBeInTheDocument();
+    expect(
+      within(dialog).queryByPlaceholderText("搜索列名...")
+    ).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: /复\s*制/ }));
 
     await waitFor(() => expect(mockedWriteText).toHaveBeenCalledTimes(1));
     expect(mockApi.queryFullRows).toHaveBeenCalledTimes(1);
@@ -419,5 +431,44 @@ describe("TableData 大字段按需加载", () => {
     expect(JSON.parse(mockedWriteText.mock.calls[0]![0])).toEqual([
       { id: 1, body: deferredBody1, title: "标题一" },
     ]);
+  });
+
+  it("取消勾选主键后 INSERT 不含该列", async () => {
+    mockApi.queryFullRows.mockResolvedValue(fullRowsResult([[1, fullBody1]]));
+    const { container } = render(<TableData />);
+    await selectRows(container, 1);
+
+    fireEvent.click(screen.getByRole("button", { name: "复制为 INSERT 语句" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "复制为 INSERT 语句",
+    });
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /id/ }));
+    fireEvent.click(within(dialog).getByRole("button", { name: /复\s*制/ }));
+
+    await waitFor(() => expect(mockedWriteText).toHaveBeenCalledTimes(1));
+    const copied = mockedWriteText.mock.calls[0]?.[0] ?? "";
+    expect(copied).toContain("`body`");
+    expect(copied).toContain("`title`");
+    expect(copied).not.toContain("`id`");
+  });
+
+  it("全部取消勾选后不能复制，取消不写剪贴板", async () => {
+    const { container } = render(<TableData />);
+    await selectRows(container, 1);
+
+    fireEvent.click(screen.getByRole("button", { name: "复制为 INSERT 语句" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "复制为 INSERT 语句",
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "全不选" }));
+    expect(within(dialog).getByRole("button", { name: /复\s*制/ })).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole("button", { name: /取\s*消/ }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "复制为 INSERT 语句" })
+      ).not.toBeInTheDocument()
+    );
+    expect(mockedWriteText).not.toHaveBeenCalled();
   });
 });

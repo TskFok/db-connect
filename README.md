@@ -95,7 +95,7 @@ MySQL / MariaDB、PostgreSQL、SQL Server 支持查看和管理外键；SQLite �
 - **新增行**：通过表单插入；SQLite 需有主键，SQL Server 需有主键或可用于定位行的非过滤唯一索引；ClickHouse 支持插入
 - **编辑 / 删除行**：支持表格内编辑、批量提交修改和多选删除；MySQL / MariaDB、PostgreSQL、SQLite 需有主键，SQL Server 也可使用可定位行的非过滤唯一索引；ClickHouse 不支持这两项操作，只读连接会禁用写入口
 - **大字段按需加载**：MySQL / MariaDB 表浏览在可通过完整主键可靠定位行时，对超过 4 KiB 的文本、JSON、二进制字段先展示预览；打开单元格详情、编辑、复制或导出时读取所需完整值。SQL 编辑器结果不使用此预览机制
-- **复制为 SQL / JSON**：将选中行复制为 INSERT 语句（可排除主键列），或按当前可见列复制为 JSON 数组，包含未提交的单元格修改
+- **复制为 SQL / JSON**：将选中行复制为 INSERT 语句（可勾选字段），或按当前可见列复制为 JSON 数组，包含未提交的单元格修改
 - **导出 Excel**：表数据视图将**当前页**导出为 `.xlsx`（可见列、含未提交编辑）；SQL 编辑器导出当前保留的完整查询结果，不限于结果表格当前显示页。导出上限为 **10 万行**，查询结果另受 **32 MiB** 大小限制；表数据当前页最多 **1 万行**。工作簿由前端用 [write-excel-file](https://www.npmjs.com/package/write-excel-file) 生成，经 Tauri [`write_binary_file`](src-tauri/src/commands/file_io.rs) 写入用户选择的路径，实现见 [`src/utils/excelExport.ts`](src/utils/excelExport.ts)。
 
 ### 索引管理

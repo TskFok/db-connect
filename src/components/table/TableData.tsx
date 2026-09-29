@@ -37,7 +37,6 @@ import {
   ClockCircleOutlined,
   ConsoleSqlOutlined,
   ApiOutlined,
-  ScissorOutlined,
   CheckOutlined,
   UndoOutlined,
   SettingOutlined,
@@ -67,6 +66,7 @@ import { useClientReadOnly } from "../../hooks/useClientReadOnly";
 import {
   generateInsertStatements,
   generateUpdateStatements,
+  orderedSelectedColumns,
   rowsToJsonArrayString,
 } from "../../utils/sqlUtils";
 import {
@@ -503,6 +503,9 @@ export function TableData() {
   }, [allColumnNames, hiddenColumns]);
 
   const [columnSearchText, setColumnSearchText] = useState("");
+  const [copyInsertOpen, setCopyInsertOpen] = useState(false);
+  const [copyInsertSelected, setCopyInsertSelected] = useState<string[]>([]);
+  const [copyInsertSearch, setCopyInsertSearch] = useState("");
   const [showInvisibleChars, setShowInvisibleChars] = useState(false);
 
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
@@ -577,6 +580,10 @@ export function TableData() {
   // 当表切换时，重置列设置搜索框（列宽和列可见性由持久化 store 按表加载）
   useEffect(() => {
     setColumnSearchText("");
+  }, [connId, database, table]);
+
+  useEffect(() => {
+    setCopyInsertOpen(false);
   }, [connId, database, table]);
 
   useEffect(() => {
@@ -1590,81 +1597,92 @@ export function TableData() {
     return dataSource.filter((r) => keySet.has(String(r._selectionKey)));
   }, [selectedRowKeys, dataSource]);
 
-  // 复制为 INSERT 语句 (基于勾选的行)
-  // 当有隐藏列时，通过 queryFullRows 获取完整行数据以保证 INSERT 语句完整
-  const handleCopyAsInsert = useCallback(
-    async (excludePrimaryKeys: boolean) => {
-      const selectedRows = getSelectedRows();
-      if (selectedRows.length === 0) {
-        messageApi.warning("请先勾选要复制的行");
-        return;
-      }
+  const openCopyInsertModal = useCallback(() => {
+    if (getSelectedRows().length === 0) {
+      messageApi.warning("请先勾选要复制的行");
+      return;
+    }
+    setCopyInsertSelected(allColumnNames);
+    setCopyInsertSearch("");
+    setCopyInsertOpen(true);
+  }, [allColumnNames, getSelectedRows, messageApi]);
 
-      let insertColumns: string[];
-      let insertRows: Record<string, unknown>[];
+  const confirmCopyAsInsert = useCallback(async () => {
+    const selectedRows = getSelectedRows();
+    const selectedCols = orderedSelectedColumns(
+      allColumnNames,
+      new Set(copyInsertSelected)
+    );
+    if (selectedRows.length === 0) {
+      messageApi.warning("请先勾选要复制的行");
+      return;
+    }
+    if (selectedCols.length === 0) {
+      messageApi.warning("请至少选择一列");
+      return;
+    }
 
-      try {
-        const complete = await loadCompleteRowsForPage(
-          selectedRows,
-          columns,
-          hiddenColumns.size > 0 && primaryKeyColumns.length > 0
-        );
-        insertColumns = complete.columns;
-        insertRows = complete.rows.map((row) => {
-          const merged = { ...row };
-          const pks = getRecordPrimaryKeys(row, primaryKeyColumns);
-          for (const col of insertColumns) {
-            const pending = pendingChanges.get(buildPendingChangeKey(pks, col));
-            if (pending) merged[col] = pending.newValue;
-          }
-          return merged;
-        });
-      } catch (e) {
-        messageApi.error(`获取完整行数据失败: ${e}`);
-        return;
-      }
-
-      const excludeCols = excludePrimaryKeys ? primaryKeyColumns : [];
-      const sql = generateInsertStatements(
-        table,
-        insertColumns,
-        insertRows,
-        excludeCols,
-        currentDatabaseType
+    let insertRows: Record<string, unknown>[];
+    try {
+      const needsFullRows =
+        selectedCols.some((col) => hiddenColumns.has(col)) &&
+        primaryKeyColumns.length > 0;
+      const complete = await loadCompleteRowsForPage(
+        selectedRows,
+        selectedCols,
+        needsFullRows
       );
+      insertRows = complete.rows.map((row) => {
+        const merged = { ...row };
+        const pks = getRecordPrimaryKeys(row, primaryKeyColumns);
+        for (const col of selectedCols) {
+          const pending = pendingChanges.get(buildPendingChangeKey(pks, col));
+          if (pending) merged[col] = pending.newValue;
+        }
+        return merged;
+      });
+    } catch (e) {
+      messageApi.error(`获取完整行数据失败: ${e}`);
+      return;
+    }
 
-      if (!sql) {
-        messageApi.warning("无法生成 INSERT 语句");
-        return;
-      }
-
-      try {
-        await copyTextWithBreadcrumb(sql, "table-data-copy-insert", {
-          database,
-          table,
-          row_count: insertRows.length,
-          exclude_primary_keys: excludePrimaryKeys,
-        });
-        messageApi.success(
-          `已复制 INSERT 语句${excludePrimaryKeys ? " (不含主键)" : ""}`
-        );
-      } catch {
-        messageApi.error("复制到剪贴板失败");
-      }
-    },
-    [
-      getSelectedRows,
-      loadCompleteRowsForPage,
-      pendingChanges,
+    const sql = generateInsertStatements(
       table,
-      columns,
-      primaryKeyColumns,
-      hiddenColumns,
-      database,
-      currentDatabaseType,
-      messageApi,
-    ]
-  );
+      selectedCols,
+      insertRows,
+      [],
+      currentDatabaseType
+    );
+    if (!sql) {
+      messageApi.warning("无法生成 INSERT 语句");
+      return;
+    }
+
+    try {
+      await copyTextWithBreadcrumb(sql, "table-data-copy-insert", {
+        database,
+        table,
+        row_count: insertRows.length,
+        column_count: selectedCols.length,
+      });
+      messageApi.success("已复制 INSERT 语句");
+      setCopyInsertOpen(false);
+    } catch {
+      messageApi.error("复制到剪贴板失败");
+    }
+  }, [
+    allColumnNames,
+    copyInsertSelected,
+    currentDatabaseType,
+    database,
+    getSelectedRows,
+    hiddenColumns,
+    loadCompleteRowsForPage,
+    messageApi,
+    pendingChanges,
+    primaryKeyColumns,
+    table,
+  ]);
 
   // 复制为 JSON 数组：仅包含当前在列设置中显示的列（与表格可见列一致），值含未提交的单元格编辑
   const handleCopyAsJson = useCallback(async () => {
@@ -2090,7 +2108,7 @@ export function TableData() {
                   icon={<ConsoleSqlOutlined />}
                   size="small"
                   aria-label="复制为 INSERT 语句"
-                  onClick={() => handleCopyAsInsert(false)}
+                  onClick={() => openCopyInsertModal()}
                 />
               </Tooltip>
               <Tooltip title="将勾选的行按当前可见列导出为 JSON 数组并复制">
@@ -2100,15 +2118,6 @@ export function TableData() {
                   size="small"
                   aria-label="复制为 JSON 数组"
                   onClick={() => void handleCopyAsJson()}
-                />
-              </Tooltip>
-              <Tooltip title="将勾选的行复制为 INSERT 语句 (不含主键列)">
-                <Button
-                  type="text"
-                  icon={<ScissorOutlined />}
-                  size="small"
-                  aria-label="复制为 INSERT 语句（不含主键）"
-                  onClick={() => handleCopyAsInsert(true)}
                 />
               </Tooltip>
             </>
@@ -2217,6 +2226,88 @@ export function TableData() {
             setFilterModalOpen(false);
           }}
         />
+      </Modal>
+
+      <Modal
+        title="复制为 INSERT 语句"
+        open={copyInsertOpen}
+        centered
+        width={420}
+        destroyOnHidden
+        onCancel={() => setCopyInsertOpen(false)}
+        footer={
+          <Space>
+            <Button onClick={() => setCopyInsertOpen(false)}>取消</Button>
+            <Button
+              type="primary"
+              disabled={copyInsertSelected.length === 0}
+              onClick={() => void confirmCopyAsInsert()}
+            >
+              复制
+            </Button>
+          </Space>
+        }
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            marginBottom: 8,
+          }}
+        >
+          <Space size={4}>
+            <Button
+              type="link"
+              size="small"
+              onClick={() => setCopyInsertSelected(allColumnNames)}
+            >
+              全选
+            </Button>
+            <Button
+              type="link"
+              size="small"
+              onClick={() => setCopyInsertSelected([])}
+            >
+              全不选
+            </Button>
+          </Space>
+        </div>
+        {allColumnNames.length > 10 && (
+          <SafeInput
+            size="small"
+            placeholder="搜索列名..."
+            value={copyInsertSearch}
+            onChange={(e) => setCopyInsertSearch(e.target.value)}
+            style={{ marginBottom: 8 }}
+            allowClear
+          />
+        )}
+        <div style={{ maxHeight: 360, overflowY: "auto" }}>
+          {searchColumns(allColumnNames, copyInsertSearch).map((col) => (
+            <div key={col} style={{ padding: "2px 0" }}>
+              <Checkbox
+                checked={copyInsertSelected.includes(col)}
+                onChange={() =>
+                  setCopyInsertSelected((prev) =>
+                    prev.includes(col)
+                      ? prev.filter((name) => name !== col)
+                      : [...prev, col]
+                  )
+                }
+              >
+                <Text style={{ fontSize: 12 }}>{col}</Text>
+                {primaryKeyColumns.includes(col) && (
+                  <Tag
+                    color="gold"
+                    style={{ marginInlineStart: 6, fontSize: 10, lineHeight: "16px" }}
+                  >
+                    主键
+                  </Tag>
+                )}
+              </Checkbox>
+            </div>
+          ))}
+        </div>
       </Modal>
 
       <Modal
