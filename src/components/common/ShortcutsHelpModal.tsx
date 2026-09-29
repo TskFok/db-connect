@@ -8,7 +8,8 @@ interface ShortcutsHelpModalProps {
 }
 
 /** 判断当前是否 macOS */
-const isMac = typeof navigator !== "undefined" && navigator.platform.includes("Mac");
+const isMac =
+  typeof navigator !== "undefined" && navigator.platform.includes("Mac");
 const modKey = isMac ? "⌘" : "Ctrl";
 
 interface ShortcutItem {
@@ -21,7 +22,10 @@ const shortcuts: ShortcutItem[] = [
   { keys: [modKey, "R"], description: "刷新数据" },
   { keys: [modKey, "Shift", "R"], description: "刷新分页（重新统计总行数）" },
   { keys: [modKey, "D"], description: "断开连接" },
-  { keys: [modKey, "F"], description: "搜索表" },
+  {
+    keys: [modKey, "F"],
+    description: "搜索表并选中已有内容（详情页返回列表）",
+  },
   { keys: [modKey, "L"], description: "切换深色/浅色主题" },
   { keys: [modKey, "Enter"], description: "执行 SQL (在 SQL 编辑器中)" },
   { keys: [modKey, "/"], description: "显示/隐藏快捷键帮助" },

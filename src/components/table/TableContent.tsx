@@ -23,6 +23,7 @@ import { TableData } from "./TableData";
 import { SqlEditor } from "../sql/SqlEditorLazy";
 import { getDatabaseCapabilities } from "../../utils/databaseCapabilities";
 import { normalizeDatabaseType } from "../../utils/connectionConfig";
+import { requestTableListSearchFocus } from "../../utils/tableListSearchFocus";
 
 const IndexList = lazy(() =>
   import("../index/IndexList").then((m) => ({ default: m.IndexList }))
@@ -60,6 +61,8 @@ export function TableContent() {
     tableContentActiveTab,
     setTableContentActiveTab,
     ensureTableMetadata,
+    selectDatabase,
+    setTableSearch,
   } = useDatabaseStore(
     useShallow((s) => ({
       selectedDatabase: s.selectedDatabase,
@@ -69,6 +72,8 @@ export function TableContent() {
       tableContentActiveTab: s.tableContentActiveTab,
       setTableContentActiveTab: s.setTableContentActiveTab,
       ensureTableMetadata: s.ensureTableMetadata,
+      selectDatabase: s.selectDatabase,
+      setTableSearch: s.setTableSearch,
     }))
   );
   const activeConnection = useConnectionStore((s) => s.activeConnection);
@@ -84,6 +89,21 @@ export function TableContent() {
   } | null>(null);
   const [metadataRetry, setMetadataRetry] = useState(0);
   const metadataReady = selectedTableInfo !== null && tableStructure !== null;
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isMod = e.metaKey || e.ctrlKey;
+      if (!isMod || e.key.toLowerCase() !== "f") return;
+      if (!connId || !selectedDatabase) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setTableSearch(connId, selectedDatabase, { visible: true });
+      requestTableListSearchFocus();
+      void selectDatabase(connId, selectedDatabase);
+    };
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [connId, selectedDatabase, selectDatabase, setTableSearch]);
 
   useEffect(() => {
     if (!connId || !selectedDatabase || !selectedTable || metadataReady) return;

@@ -151,6 +151,20 @@ describe("数据库表搜索状态", () => {
     expect(screen.queryByText("orders")).not.toBeInTheDocument();
   });
 
+  it("已有搜索内容时再次 Cmd/Ctrl+F 选中全部文本", () => {
+    render(<DatabaseOverview />);
+    searchTables("用户");
+    const input = screen.getByPlaceholderText(
+      "搜索表名或注释..."
+    ) as HTMLInputElement;
+    input.setSelectionRange(1, 1);
+
+    fireEvent.keyDown(window, { key: "f", metaKey: true });
+
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe("用户".length);
+  });
+
   it("主动关闭搜索后不再恢复旧关键词", () => {
     const overview = render(<DatabaseOverview />);
     searchTables("users");

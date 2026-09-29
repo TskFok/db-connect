@@ -147,7 +147,7 @@ MySQL / MariaDB、PostgreSQL、SQL Server 支持查看和管理外键；SQLite �
 | `Cmd/Ctrl + R`     | 刷新（在「数据」页签且已选表时刷新当前表数据，否则刷新左侧数据库树） |
 | `Cmd/Ctrl + Shift + R` | 刷新分页（在「数据」页签重新统计总行数）                         |
 | `Cmd/Ctrl + D`     | 断开连接                                                             |
-| `Cmd/Ctrl + F`     | 在数据库概览中搜索表                                                 |
+| `Cmd/Ctrl + F`     | 搜索表并选中已有内容；在表详情中返回表列表                           |
 | `Cmd/Ctrl + L`     | 切换深色/浅色主题                                                    |
 | `Cmd/Ctrl + Enter` | 执行 SQL（在 SQL 编辑器中）                                          |
 | `Cmd/Ctrl + /`     | 显示/隐藏快捷键帮助                                                  |

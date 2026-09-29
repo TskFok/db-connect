@@ -66,6 +66,10 @@ import {
 } from "../../utils/listTableColumns";
 import { createListColumnAutoFit } from "../../utils/columnAutoFitWidth";
 import { favoriteConnectionKey } from "../../utils/favoriteConnection";
+import {
+  registerTableListSearchFocus,
+  requestTableListSearchFocus,
+} from "../../utils/tableListSearchFocus";
 
 const { Title, Text } = Typography;
 
@@ -221,14 +225,27 @@ export function DatabaseOverview() {
   const { containerRef: tableListContainerRef, scrollY: tableListScrollY } =
     useAntTableScrollY({ remeasureKey: overviewListRemeasureKey });
 
-  // Cmd/Ctrl+F 打开搜索, Escape 关闭
+  useEffect(() => {
+    return registerTableListSearchFocus(() => {
+      const selectSearch = () => {
+        searchInputRef.current?.focus({ cursor: "all" });
+      };
+      if (searchInputRef.current) {
+        selectSearch();
+      } else {
+        setTimeout(selectSearch, 50);
+      }
+    });
+  }, []);
+
+  // Cmd/Ctrl+F 打开搜索并选中已有内容, Escape 关闭
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const isMod = e.metaKey || e.ctrlKey;
       if (isMod && e.key.toLowerCase() === "f") {
         e.preventDefault();
         setSearchVisible(true);
-        setTimeout(() => searchInputRef.current?.focus(), 50);
+        requestTableListSearchFocus();
       }
       if (e.key === "Escape" && searchVisible) {
         setSearchVisible(false);
