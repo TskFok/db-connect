@@ -186,7 +186,7 @@ describe("copyAsInsert 剪贴板集成", () => {
 });
 
 describe("columnsMissingInsertValues", () => {
-  it("某行缺少 email 时返回 [\"email\"]", () => {
+  it('某行缺少 email 时返回 ["email"]', () => {
     expect(
       columnsMissingInsertValues(
         ["id", "name", "email"],
@@ -197,11 +197,17 @@ describe("columnsMissingInsertValues", () => {
 
   it("值为 null 不算缺失", () => {
     expect(
-      columnsMissingInsertValues(
-        ["id", "email"],
-        [{ id: 1, email: null }]
-      )
+      columnsMissingInsertValues(["id", "email"], [{ id: 1, email: null }])
     ).toEqual([]);
+  });
+
+  it("键存在但值为 undefined 时视为缺失", () => {
+    expect(
+      columnsMissingInsertValues(
+        ["id", "secret"],
+        [{ id: 1, secret: undefined }]
+      )
+    ).toEqual(["secret"]);
   });
 
   it("每行都有所选列时返回空数组", () => {
@@ -220,10 +226,7 @@ describe("columnsMissingInsertValues", () => {
 describe("orderedSelectedColumns", () => {
   it("按表结构顺序保留勾选列", () => {
     expect(
-      orderedSelectedColumns(
-        ["id", "name", "email"],
-        new Set(["email", "id"])
-      )
+      orderedSelectedColumns(["id", "name", "email"], new Set(["email", "id"]))
     ).toEqual(["id", "email"]);
   });
 

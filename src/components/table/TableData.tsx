@@ -488,6 +488,11 @@ export function TableData() {
     () => tableStructure?.map((c) => c.name) ?? [],
     [tableStructure]
   );
+  // 复制 INSERT 对话框：结构未到时退回当前页已加载列，避免空白且无法解释
+  const copyInsertColumnNames = useMemo(
+    () => tableStructure?.map((c) => c.name) ?? columns,
+    [tableStructure, columns]
+  );
 
   const hiddenColumns = useMemo(() => {
     if (!storedSettings || !allColumnNames.length) return new Set<string>();
@@ -507,6 +512,13 @@ export function TableData() {
   const [copyInsertOpen, setCopyInsertOpen] = useState(false);
   const [copyInsertSelected, setCopyInsertSelected] = useState<string[]>([]);
   const [copyInsertSearch, setCopyInsertSearch] = useState("");
+  const [copyInsertLoading, setCopyInsertLoading] = useState(false);
+  const copyInsertRequestRef = useRef(0);
+  const dismissCopyInsertModal = useCallback(() => {
+    copyInsertRequestRef.current += 1;
+    setCopyInsertLoading(false);
+    setCopyInsertOpen(false);
+  }, []);
   const [showInvisibleChars, setShowInvisibleChars] = useState(false);
 
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
@@ -584,8 +596,8 @@ export function TableData() {
   }, [connId, database, table]);
 
   useEffect(() => {
-    setCopyInsertOpen(false);
-  }, [connId, database, table]);
+    dismissCopyInsertModal();
+  }, [connId, database, table, dismissCopyInsertModal]);
 
   useEffect(() => {
     if (clientReadOnly) {
@@ -1117,7 +1129,7 @@ export function TableData() {
     async (
       records: Record<string, unknown>[],
       selectedColumns: string[],
-      allColumns = false
+      missingColumns: string[] = []
     ) => {
       const initial = useTableDataStore.getState();
       const isCurrent = (state: typeof initial) =>
@@ -1144,15 +1156,27 @@ export function TableData() {
           primaryKeyColumns,
           databaseType: currentDatabaseType,
         };
-        const complete = allColumns
-          ? await fetchCompleteRows(context, records)
-          : {
-              columns: selectedColumns,
-              rows:
-                currentDatabaseType === "mysql"
-                  ? await hydrateDeferredRows(context, records, selectedColumns)
-                  : records,
-            };
+        // 页数据里没有的列必须按列名回查；不带列名的 SELECT * 不会返回普通 INVISIBLE 列。
+        let loadedRecords = records;
+        if (missingColumns.length > 0 && primaryKeyColumns.length > 0) {
+          const fetched = await fetchCompleteRows(
+            context,
+            loadedRecords,
+            missingColumns
+          );
+          loadedRecords = fetched.rows;
+        }
+        const complete = {
+          columns: selectedColumns,
+          rows:
+            currentDatabaseType === "mysql"
+              ? await hydrateDeferredRows(
+                  context,
+                  loadedRecords,
+                  selectedColumns
+                )
+              : loadedRecords,
+        };
         if (stale || !fullValueMountedRef.current)
           throw new Error("页面已变化，已取消完整值读取");
         return complete;
@@ -1603,15 +1627,15 @@ export function TableData() {
       messageApi.warning("请先勾选要复制的行");
       return;
     }
-    setCopyInsertSelected(allColumnNames);
+    setCopyInsertSelected(copyInsertColumnNames);
     setCopyInsertSearch("");
     setCopyInsertOpen(true);
-  }, [allColumnNames, getSelectedRows, messageApi]);
+  }, [copyInsertColumnNames, getSelectedRows, messageApi]);
 
   const confirmCopyAsInsert = useCallback(async () => {
     const selectedRows = getSelectedRows();
     const selectedCols = orderedSelectedColumns(
-      allColumnNames,
+      copyInsertColumnNames,
       new Set(copyInsertSelected)
     );
     if (selectedRows.length === 0) {
@@ -1623,17 +1647,22 @@ export function TableData() {
       return;
     }
 
-    let insertRows: Record<string, unknown>[];
+    const requestId = ++copyInsertRequestRef.current;
+    setCopyInsertLoading(true);
+    const stillCurrent = () => copyInsertRequestRef.current === requestId;
+
     try {
-      const needsFullRows =
-        selectedCols.some((col) => hiddenColumns.has(col)) &&
-        primaryKeyColumns.length > 0;
+      const absentColumns =
+        primaryKeyColumns.length > 0
+          ? columnsMissingInsertValues(selectedCols, selectedRows)
+          : [];
       const complete = await loadCompleteRowsForPage(
         selectedRows,
         selectedCols,
-        needsFullRows
+        absentColumns
       );
-      insertRows = complete.rows.map((row) => {
+      if (!stillCurrent()) return;
+      const insertRows = complete.rows.map((row) => {
         const merged = { ...row };
         const pks = getRecordPrimaryKeys(row, primaryKeyColumns);
         for (const col of selectedCols) {
@@ -1642,50 +1671,57 @@ export function TableData() {
         }
         return merged;
       });
-    } catch (e) {
-      messageApi.error(`获取完整行数据失败: ${e}`);
-      return;
-    }
-
-    const missingColumns = columnsMissingInsertValues(selectedCols, insertRows);
-    if (missingColumns.length > 0) {
-      messageApi.error(
-        `字段 ${missingColumns.join("、")} 未加载，无法生成 INSERT 语句`
+      const missingColumns = columnsMissingInsertValues(
+        selectedCols,
+        insertRows
       );
-      return;
-    }
+      if (missingColumns.length > 0) {
+        messageApi.error(
+          `字段 ${missingColumns.join("、")} 未加载，无法生成 INSERT 语句，可取消勾选这些列`
+        );
+        return;
+      }
 
-    const sql = generateInsertStatements(
-      table,
-      selectedCols,
-      insertRows,
-      [],
-      currentDatabaseType
-    );
-    if (!sql) {
-      messageApi.warning("无法生成 INSERT 语句");
-      return;
-    }
-
-    try {
-      await copyTextWithBreadcrumb(sql, "table-data-copy-insert", {
-        database,
+      const sql = generateInsertStatements(
         table,
-        row_count: insertRows.length,
-        column_count: selectedCols.length,
-      });
+        selectedCols,
+        insertRows,
+        [],
+        currentDatabaseType
+      );
+      if (!sql) {
+        messageApi.warning("无法生成 INSERT 语句");
+        return;
+      }
+      if (!stillCurrent()) return;
+
+      try {
+        await copyTextWithBreadcrumb(sql, "table-data-copy-insert", {
+          database,
+          table,
+          row_count: insertRows.length,
+          column_count: selectedCols.length,
+        });
+      } catch {
+        if (!stillCurrent()) return;
+        messageApi.error("复制到剪贴板失败");
+        return;
+      }
+      if (!stillCurrent()) return;
       messageApi.success("已复制 INSERT 语句");
       setCopyInsertOpen(false);
-    } catch {
-      messageApi.error("复制到剪贴板失败");
+    } catch (e) {
+      if (!stillCurrent()) return;
+      messageApi.error(`获取完整行数据失败: ${e}`);
+    } finally {
+      if (stillCurrent()) setCopyInsertLoading(false);
     }
   }, [
-    allColumnNames,
+    copyInsertColumnNames,
     copyInsertSelected,
     currentDatabaseType,
     database,
     getSelectedRows,
-    hiddenColumns,
     loadCompleteRowsForPage,
     messageApi,
     pendingChanges,
@@ -2243,13 +2279,14 @@ export function TableData() {
         centered
         width={420}
         destroyOnHidden
-        onCancel={() => setCopyInsertOpen(false)}
+        onCancel={dismissCopyInsertModal}
         footer={
           <Space>
-            <Button onClick={() => setCopyInsertOpen(false)}>取消</Button>
+            <Button onClick={dismissCopyInsertModal}>取消</Button>
             <Button
               type="primary"
-              disabled={copyInsertSelected.length === 0}
+              loading={copyInsertLoading}
+              disabled={copyInsertSelected.length === 0 || copyInsertLoading}
               onClick={() => void confirmCopyAsInsert()}
             >
               复制
@@ -2268,7 +2305,7 @@ export function TableData() {
             <Button
               type="link"
               size="small"
-              onClick={() => setCopyInsertSelected(allColumnNames)}
+              onClick={() => setCopyInsertSelected(copyInsertColumnNames)}
             >
               全选
             </Button>
@@ -2281,7 +2318,7 @@ export function TableData() {
             </Button>
           </Space>
         </div>
-        {allColumnNames.length > 10 && (
+        {copyInsertColumnNames.length > 10 && (
           <SafeInput
             size="small"
             placeholder="搜索列名..."
@@ -2291,8 +2328,13 @@ export function TableData() {
             allowClear
           />
         )}
+        {copyInsertColumnNames.length === 0 ? (
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            没有可选择的列
+          </Text>
+        ) : null}
         <div style={{ maxHeight: 360, overflowY: "auto" }}>
-          {searchColumns(allColumnNames, copyInsertSearch).map((col) => (
+          {searchColumns(copyInsertColumnNames, copyInsertSearch).map((col) => (
             <div key={col} style={{ padding: "2px 0" }}>
               <Checkbox
                 checked={copyInsertSelected.includes(col)}
@@ -2308,7 +2350,11 @@ export function TableData() {
                 {primaryKeyColumns.includes(col) && (
                   <Tag
                     color="gold"
-                    style={{ marginInlineStart: 6, fontSize: 10, lineHeight: "16px" }}
+                    style={{
+                      marginInlineStart: 6,
+                      fontSize: 10,
+                      lineHeight: "16px",
+                    }}
                   >
                     主键
                   </Tag>

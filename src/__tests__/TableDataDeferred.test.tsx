@@ -452,6 +452,63 @@ describe("TableData 大字段按需加载", () => {
     expect(copied).not.toContain("`id`");
   });
 
+  it("所选列不在当前页且无法补齐时提示未加载且不写剪贴板", async () => {
+    const pageColumns = ["id", "title"];
+    const pageRows = [[1, "标题一"]];
+    const pageSnapshot = {
+      ...snapshot,
+      columns: pageColumns,
+      rows: pageRows,
+      total: 1,
+    };
+    useDatabaseStore.setState({
+      tableStructure: [
+        { ...structure[0], key: "" },
+        structure[2],
+        {
+          name: "secret",
+          column_type: "varchar(255)",
+          nullable: true,
+          key: "",
+          default_value: null,
+          extra: "",
+          comment: "",
+        },
+      ],
+    });
+    useTableDataStore.setState({
+      ...pageSnapshot,
+      activeTableKey: tableKey,
+      tableDataCache: { [tableKey]: pageSnapshot },
+    });
+
+    const { container } = render(<TableData />);
+    await screen.findByText("标题一");
+    const checkbox = container.querySelector(
+      ".virtual-data-table-row .ant-checkbox-input"
+    ) as HTMLInputElement;
+    fireEvent.click(checkbox);
+
+    fireEvent.click(screen.getByRole("button", { name: "复制为 INSERT 语句" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "复制为 INSERT 语句",
+    });
+    expect(
+      within(dialog).getByRole("checkbox", { name: "secret" })
+    ).toBeChecked();
+    fireEvent.click(within(dialog).getByRole("button", { name: /复\s*制/ }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          /字段 secret 未加载，无法生成 INSERT 语句，可取消勾选这些列/
+        )
+      ).toBeInTheDocument();
+    });
+    expect(mockedWriteText).not.toHaveBeenCalled();
+    expect(mockApi.queryFullRows).not.toHaveBeenCalled();
+  });
+
   it("全部取消勾选后不能复制，取消不写剪贴板", async () => {
     const { container } = render(<TableData />);
     await selectRows(container, 1);
@@ -461,7 +518,9 @@ describe("TableData 大字段按需加载", () => {
       name: "复制为 INSERT 语句",
     });
     fireEvent.click(within(dialog).getByRole("button", { name: "全不选" }));
-    expect(within(dialog).getByRole("button", { name: /复\s*制/ })).toBeDisabled();
+    expect(
+      within(dialog).getByRole("button", { name: /复\s*制/ })
+    ).toBeDisabled();
     fireEvent.click(within(dialog).getByRole("button", { name: /取\s*消/ }));
 
     await waitFor(() =>
