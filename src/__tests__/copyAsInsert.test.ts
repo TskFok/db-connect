@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { generateInsertStatements } from "../utils/sqlUtils";
+import {
+  generateInsertStatements,
+  orderedSelectedColumns,
+} from "../utils/sqlUtils";
 
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
   writeText: vi.fn(),
@@ -178,5 +181,26 @@ describe("copyAsInsert 剪贴板集成", () => {
     await writeText(sql);
 
     expect(mockedWriteText).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("orderedSelectedColumns", () => {
+  it("按表结构顺序保留勾选列", () => {
+    expect(
+      orderedSelectedColumns(
+        ["id", "name", "email"],
+        new Set(["email", "id"])
+      )
+    ).toEqual(["id", "email"]);
+  });
+
+  it("忽略不在表结构中的列名", () => {
+    expect(
+      orderedSelectedColumns(["id", "name"], new Set(["name", "ghost"]))
+    ).toEqual(["name"]);
+  });
+
+  it("没有勾选列时返回空数组", () => {
+    expect(orderedSelectedColumns(["id", "name"], new Set())).toEqual([]);
   });
 });

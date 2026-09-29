@@ -189,6 +189,14 @@ export function formatSqlValue(
   return `'${escapeSqlStringForDialect(String(value), dialect)}'`;
 }
 
+/** 按表列顺序保留勾选列，忽略不在表结构中的名字。 */
+export function orderedSelectedColumns(
+  allColumns: readonly string[],
+  selectedColumns: ReadonlySet<string>
+): string[] {
+  return allColumns.filter((column) => selectedColumns.has(column));
+}
+
 /**
  * 生成 INSERT 语句
  * @param tableName 表名
