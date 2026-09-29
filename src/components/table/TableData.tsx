@@ -64,6 +64,7 @@ import {
 } from "../../stores/tableColumnSettingsStore";
 import { useClientReadOnly } from "../../hooks/useClientReadOnly";
 import {
+  columnsMissingInsertValues,
   generateInsertStatements,
   generateUpdateStatements,
   orderedSelectedColumns,
@@ -1643,6 +1644,14 @@ export function TableData() {
       });
     } catch (e) {
       messageApi.error(`获取完整行数据失败: ${e}`);
+      return;
+    }
+
+    const missingColumns = columnsMissingInsertValues(selectedCols, insertRows);
+    if (missingColumns.length > 0) {
+      messageApi.error(
+        `字段 ${missingColumns.join("、")} 未加载，无法生成 INSERT 语句`
+      );
       return;
     }
 

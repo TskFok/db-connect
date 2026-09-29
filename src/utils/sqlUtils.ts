@@ -197,6 +197,16 @@ export function orderedSelectedColumns(
   return allColumns.filter((column) => selectedColumns.has(column));
 }
 
+/** 所选列中，任意行缺少该字段（属性缺失或值为 undefined）的列名，按 columns 顺序。null 视为已加载。 */
+export function columnsMissingInsertValues(
+  columns: readonly string[],
+  rows: readonly Record<string, unknown>[]
+): string[] {
+  return columns.filter((column) =>
+    rows.some((row) => !(column in row) || row[column] === undefined)
+  );
+}
+
 /**
  * 生成 INSERT 语句
  * @param tableName 表名

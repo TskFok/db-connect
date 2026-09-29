@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
+  columnsMissingInsertValues,
   generateInsertStatements,
   orderedSelectedColumns,
 } from "../utils/sqlUtils";
@@ -181,6 +182,38 @@ describe("copyAsInsert 剪贴板集成", () => {
     await writeText(sql);
 
     expect(mockedWriteText).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("columnsMissingInsertValues", () => {
+  it("某行缺少 email 时返回 [\"email\"]", () => {
+    expect(
+      columnsMissingInsertValues(
+        ["id", "name", "email"],
+        [{ id: 1, name: "Alice" }]
+      )
+    ).toEqual(["email"]);
+  });
+
+  it("值为 null 不算缺失", () => {
+    expect(
+      columnsMissingInsertValues(
+        ["id", "email"],
+        [{ id: 1, email: null }]
+      )
+    ).toEqual([]);
+  });
+
+  it("每行都有所选列时返回空数组", () => {
+    expect(
+      columnsMissingInsertValues(
+        ["id", "name"],
+        [
+          { id: 1, name: "Alice" },
+          { id: 2, name: "Bob" },
+        ]
+      )
+    ).toEqual([]);
   });
 });
 
