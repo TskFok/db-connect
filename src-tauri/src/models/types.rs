@@ -393,6 +393,13 @@ pub struct DatabaseInfo {
     pub collation: String,
 }
 
+/// 一个请求数据库/schema 的表目录，空目录也保留条目。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatabaseTableList {
+    pub database: String,
+    pub tables: Vec<TableInfo>,
+}
+
 /// 表信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableInfo {

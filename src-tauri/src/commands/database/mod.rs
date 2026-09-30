@@ -1,17 +1,23 @@
+#[cfg(test)]
+mod batch_tests;
+
 pub mod column_ops;
+mod mysql_catalog_access;
 pub mod structure_preview;
 // 供本模块的 create_table 与单元测试复用列定义构建逻辑
 pub use column_ops::build_column_definition;
 
 use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
+use crate::db::metadata_batch::{group_tables, normalize_databases};
 use crate::db::sql_utils::{
     esc_id, esc_str, validate_column_extra, validate_column_type, validate_engine_name,
 };
+use crate::db::table_pagination::{invalidate_table_metadata, with_table_metadata_invalidation};
 use crate::db::{clickhouse, postgres, sqlite, sqlserver};
 use crate::db::{postgres_ddl, sqlserver_ddl};
 use crate::models::types::{
-    ColumnInfo, CreateTableColumnDef, CreateTableRequest, DatabaseInfo, SqlCompletionColumn,
-    SqlCompletionMetadata, SqlCompletionTable, TableInfo,
+    ColumnInfo, CreateTableColumnDef, CreateTableRequest, DatabaseInfo, DatabaseTableList,
+    SqlCompletionColumn, SqlCompletionMetadata, SqlCompletionTable, TableInfo,
 };
 use crate::AppState;
 use mysql_async::params;
@@ -52,7 +58,7 @@ pub async fn list_databases(
     Ok(databases)
 }
 
-/// 获取指定数据库的表列表
+/// 单库兼容入口与批量目录共享查询及字段映射。
 #[tauri::command]
 pub async fn list_tables(
     state: State<'_, AppState>,
@@ -63,63 +69,225 @@ pub async fn list_tables(
         let mut manager = state.connection_manager.lock().await;
         manager.get_database_pool_and_touch(&conn_id)?
     };
-
-    let pool = match pool_handle {
-        DatabasePoolHandle::MySql(pool) => pool,
+    match pool_handle {
+        DatabasePoolHandle::MySql(pool) => {
+            let mut groups = list_mysql_tables_batch(&pool, &[database]).await?;
+            Ok(groups.remove(0).tables)
+        }
         DatabasePoolHandle::Postgres(handle) => {
-            return postgres::list_tables(&handle.pool, &database).await;
+            postgres::list_tables(&handle.pool, &database).await
         }
-        DatabasePoolHandle::Sqlite(handle) => {
-            return sqlite::list_tables(&handle.pool, &database).await;
-        }
+        DatabasePoolHandle::Sqlite(handle) => sqlite::list_tables(&handle.pool, &database).await,
         DatabasePoolHandle::SqlServer(handle) => {
-            return sqlserver::list_tables(&handle.pool, &database).await;
+            sqlserver::list_tables(&handle.pool, &database).await
         }
         DatabasePoolHandle::ClickHouse(handle) => {
-            return clickhouse::list_tables(&handle.client, &database).await;
+            clickhouse::list_tables(&handle.client, &database).await
         }
+    }
+}
+
+/// 集合读取请求目录；空输入和超限在借出任何连接之前处理。
+#[tauri::command]
+pub async fn list_tables_batch(
+    state: State<'_, AppState>,
+    conn_id: String,
+    databases: Vec<String>,
+) -> Result<Vec<DatabaseTableList>, String> {
+    let databases = normalize_databases(&databases)?;
+    if databases.is_empty() {
+        return Ok(Vec::new());
+    }
+    let pool_handle = {
+        let mut manager = state.connection_manager.lock().await;
+        manager.get_database_pool_and_touch(&conn_id)?
     };
+    match pool_handle {
+        DatabasePoolHandle::MySql(pool) => list_mysql_tables_batch(&pool, &databases).await,
+        DatabasePoolHandle::Postgres(handle) => {
+            postgres::list_tables_batch(&handle.pool, &databases).await
+        }
+        DatabasePoolHandle::Sqlite(handle) => {
+            sqlite::list_tables_batch(&handle.pool, &databases).await
+        }
+        DatabasePoolHandle::SqlServer(handle) => {
+            sqlserver::list_tables_batch(&handle.pool, &databases).await
+        }
+        DatabasePoolHandle::ClickHouse(handle) => {
+            clickhouse::list_tables_batch(&handle.client, &databases).await
+        }
+    }
+}
 
-    let mut conn = get_conn_with_retry(&pool).await?;
+pub(crate) fn mysql_catalog_query(databases: &[String]) -> (String, Vec<mysql_async::Value>) {
+    mysql_catalog_query_with_access(databases, None)
+}
 
-    // 使用 SHOW TABLE STATUS 获取表的详细信息
-    let query = format!("SHOW TABLE STATUS FROM {}", esc_id(&database));
+fn mysql_catalog_query_with_access(
+    databases: &[String],
+    partial_revokes_available: Option<bool>,
+) -> (String, Vec<mysql_async::Value>) {
+    // MySQL 5.7 也支持派生请求集合；仅构造 SQL，不逐库执行。
+    let requested = databases
+        .iter()
+        .enumerate()
+        .map(|(index, _)| format!("SELECT {} AS request_order, CAST(? AS CHAR CHARACTER SET utf8mb4) AS database_name", index))
+        .collect::<Vec<_>>()
+        .join(" UNION ALL ");
+    let placeholders = vec!["?"; databases.len()].join(", ");
+    let access_fields = match partial_revokes_available {
+        Some(true) => "@@lower_case_table_names AS mysql_access_lowercase, @@GLOBAL.partial_revokes AS mysql_access_literal, ",
+        Some(false) => "@@lower_case_table_names AS mysql_access_lowercase, 0 AS mysql_access_literal, ",
+        None => "",
+    };
+    // MySQL 5.7 会将普通派生 IN 条件合并到外连接，从而扫描全部数据库。
+    // 最大 LIMIT 保持结果完整，同时禁止 TABLES 派生表合并，让目录扫描先受请求集合约束。
+    let sql = format!(
+        "SELECT {}r.request_order, s.SCHEMA_NAME AS visible_database, \
+                t.TABLE_NAME AS name, t.ENGINE AS engine, t.TABLE_ROWS AS rows_est, \
+                t.DATA_LENGTH AS data_length, t.INDEX_LENGTH AS index_length, \
+                t.TABLE_COMMENT AS comment \
+         FROM ({}) AS r \
+         LEFT JOIN (SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA \
+                    WHERE SCHEMA_NAME IN ({})) s ON \
+           ((@@lower_case_table_names = 0 AND BINARY s.SCHEMA_NAME = BINARY r.database_name) \
+            OR (@@lower_case_table_names <> 0 AND BINARY LOWER(s.SCHEMA_NAME) = BINARY LOWER(r.database_name))) \
+         LEFT JOIN (SELECT TABLE_SCHEMA, TABLE_NAME, ENGINE, TABLE_ROWS, DATA_LENGTH, INDEX_LENGTH, TABLE_COMMENT \
+                    FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA IN ({}) \
+                    LIMIT 18446744073709551615) t ON BINARY t.TABLE_SCHEMA = BINARY s.SCHEMA_NAME \
+         ORDER BY r.request_order, BINARY t.TABLE_NAME",
+        access_fields, requested, placeholders, placeholders
+    );
+    (
+        sql,
+        databases
+            .iter()
+            .chain(databases.iter())
+            .chain(databases.iter())
+            .map(|name| mysql_async::Value::from(name.as_str()))
+            .collect(),
+    )
+}
+
+struct MySqlCatalogRow {
+    request_order: usize,
+    visible_database: Option<String>,
+    name: Option<String>,
+    engine: Option<String>,
+    rows: Option<u64>,
+    data_length: Option<u64>,
+    index_length: Option<u64>,
+    comment: Option<String>,
+}
+
+fn map_mysql_catalog_rows(
+    databases: &[String],
+    rows: Vec<MySqlCatalogRow>,
+) -> Result<Vec<DatabaseTableList>, String> {
+    let mut mapped = Vec::new();
+    for row in rows {
+        let database = databases
+            .get(row.request_order)
+            .ok_or_else(|| "目录查询返回了无效的请求序号".to_string())?;
+        if row.visible_database.is_none() {
+            return Err(format!("数据库 {} 不存在或无权访问", database));
+        }
+        if let Some(name) = row.name {
+            mapped.push((
+                database.clone(),
+                TableInfo {
+                    name,
+                    table_type: if row.engine.is_some() {
+                        "TABLE"
+                    } else {
+                        "VIEW"
+                    }
+                    .to_string(),
+                    engine: row.engine,
+                    rows: row.rows,
+                    data_length: row.data_length,
+                    index_length: row.index_length,
+                    comment: row.comment.unwrap_or_default(),
+                },
+            ));
+        }
+    }
+    group_tables(databases, mapped)
+}
+
+/// INFORMATION_SCHEMA 与 SHOW TABLE STATUS 都按表权限过滤；SCHEMATA 不可见时整批失败。
+/// MySQL 8 的空目录还须核验库操作权限：整批至多补充一次有效授权读取。
+pub(crate) async fn list_mysql_tables_batch(
+    pool: &mysql_async::Pool,
+    databases: &[String],
+) -> Result<Vec<DatabaseTableList>, String> {
+    let databases = normalize_databases(databases)?;
+    if databases.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut conn = get_conn_with_retry(pool).await?;
+    // 来自握手，不增加探测 SQL；MariaDB 10/11 不引用 MySQL 专属变量。
+    let version = conn.server_version();
+    let verify_empty_access = matches!(version.0, 8 | 9);
+    let (sql, params) = if verify_empty_access {
+        mysql_catalog_query_with_access(&databases, Some(version >= (8, 0, 16)))
+    } else {
+        mysql_catalog_query(&databases)
+    };
     let rows: Vec<mysql_async::Row> = conn
-        .query(&query)
+        .exec(sql, params)
         .await
         .map_err(|e| format!("查询表列表失败: {}", e))?;
-
-    let tables: Vec<TableInfo> = rows
-        .iter()
-        .map(|row| {
-            // 注意: row.get::<String, _> 遇到 NULL 会 panic
-            // 必须使用 row.get::<Option<String>, _> 来安全处理 NULL 值
-            let engine: Option<String> = row.get("Engine").flatten();
-            let table_type = if engine.is_some() {
-                "TABLE".to_string()
-            } else {
-                "VIEW".to_string()
-            };
-
-            TableInfo {
-                name: row
-                    .get::<Option<String>, _>("Name")
-                    .flatten()
-                    .unwrap_or_default(),
-                table_type,
-                engine,
-                rows: row.get::<Option<u64>, _>("Rows").flatten(),
-                data_length: row.get::<Option<u64>, _>("Data_length").flatten(),
-                index_length: row.get::<Option<u64>, _>("Index_length").flatten(),
-                comment: row
-                    .get::<Option<String>, _>("Comment")
-                    .flatten()
-                    .unwrap_or_default(),
-            }
+    let access_modes = if verify_empty_access {
+        Some((
+            rows.first()
+                .and_then(|row| row.get::<u8, _>("mysql_access_lowercase"))
+                .ok_or("无法验证空目录访问权限：缺少大小写模式")?
+                != 0,
+            rows.first()
+                .and_then(|row| row.get::<u8, _>("mysql_access_literal"))
+                .ok_or("无法验证空目录访问权限：缺少授权匹配模式")?
+                != 0,
+        ))
+    } else {
+        None
+    };
+    let rows = rows
+        .into_iter()
+        .map(|row| MySqlCatalogRow {
+            request_order: row.get::<u64, _>("request_order").unwrap_or(u64::MAX) as usize,
+            visible_database: row.get("visible_database").flatten(),
+            name: row.get("name").flatten(),
+            engine: row.get("engine").flatten(),
+            rows: row.get("rows_est").flatten(),
+            data_length: row.get("data_length").flatten(),
+            index_length: row.get("index_length").flatten(),
+            comment: row.get("comment").flatten(),
         })
         .collect();
-
-    Ok(tables)
+    let groups = map_mysql_catalog_rows(&databases, rows)?;
+    if let Some((lowercase, literal)) = access_modes {
+        let empty_databases = groups
+            .iter()
+            .filter(|group| group.tables.is_empty())
+            .map(|group| group.database.as_str())
+            .collect::<Vec<_>>();
+        if !empty_databases.is_empty() {
+            // 裸 SHOW GRANTS 在同一连接聚合当前启用角色及 partial revoke。
+            // 不按库循环查询，不缓存权限；解析失败明确报错，不伪装空目录。
+            let grants: Vec<String> = conn
+                .query("SHOW GRANTS")
+                .await
+                .map_err(|_| "无法验证空目录访问权限：读取当前有效授权失败".to_string())?;
+            mysql_catalog_access::validate_empty_databases(
+                &grants,
+                &empty_databases,
+                lowercase,
+                literal,
+            )?;
+        }
+    }
+    Ok(groups)
 }
 
 /// 获取表结构 (列信息)
@@ -478,6 +646,27 @@ pub async fn get_database_info(
     })
 }
 
+/// 显式刷新先等待此命令，再加载目录；没有数据库网络操作。
+#[tauri::command]
+pub async fn invalidate_table_metadata_cache(
+    state: State<'_, AppState>,
+    conn_id: String,
+    database: Option<String>,
+    table: Option<String>,
+) -> Result<(), String> {
+    if table.is_some() && database.is_none() {
+        return Err("指定表时必须同时指定数据库/schema".to_string());
+    }
+    {
+        let manager = state.connection_manager.lock().await;
+        if !manager.has_connection(&conn_id) {
+            return Err("连接不存在".to_string());
+        }
+    }
+    invalidate_table_metadata(&conn_id, database.as_deref(), table.as_deref());
+    Ok(())
+}
+
 /// 修改数据库字符集和排序规则
 #[tauri::command]
 pub async fn alter_database_charset(
@@ -487,44 +676,47 @@ pub async fn alter_database_charset(
     character_set: String,
     collation: String,
 ) -> Result<(), String> {
-    let pool_handle = {
-        let mut manager = state.connection_manager.lock().await;
-        manager.get_database_pool_for_write(&conn_id)?
-    };
+    with_table_metadata_invalidation(&conn_id, &[(Some(&database), None)], async {
+        let pool_handle = {
+            let mut manager = state.connection_manager.lock().await;
+            manager.get_database_pool_for_write(&conn_id)?
+        };
 
-    let pool = match pool_handle {
-        DatabasePoolHandle::MySql(pool) => pool,
-        DatabasePoolHandle::Postgres(_handle) => {
-            return Err(
-                "PostgreSQL schema 不支持修改字符集/排序规则，请通过数据库（cluster）级别配置"
-                    .to_string(),
-            );
-        }
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
-        }
-        DatabasePoolHandle::SqlServer(_) => {
-            return Err("SQL Server 暂不支持修改数据库字符集/排序规则".to_string());
-        }
-        DatabasePoolHandle::ClickHouse(_) => {
-            return Err("ClickHouse 不支持修改数据库字符集/排序规则".to_string());
-        }
-    };
+        let pool = match pool_handle {
+            DatabasePoolHandle::MySql(pool) => pool,
+            DatabasePoolHandle::Postgres(_handle) => {
+                return Err(
+                    "PostgreSQL schema 不支持修改字符集/排序规则，请通过数据库（cluster）级别配置"
+                        .to_string(),
+                );
+            }
+            DatabasePoolHandle::Sqlite(_) => {
+                return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
+            }
+            DatabasePoolHandle::SqlServer(_) => {
+                return Err("SQL Server 暂不支持修改数据库字符集/排序规则".to_string());
+            }
+            DatabasePoolHandle::ClickHouse(_) => {
+                return Err("ClickHouse 不支持修改数据库字符集/排序规则".to_string());
+            }
+        };
 
-    let mut conn = get_conn_with_retry(&pool).await?;
+        let mut conn = get_conn_with_retry(&pool).await?;
 
-    let query = format!(
-        "ALTER DATABASE {} CHARACTER SET = {} COLLATE = {}",
-        esc_id(&database),
-        esc_str(&character_set),
-        esc_str(&collation)
-    );
+        let query = format!(
+            "ALTER DATABASE {} CHARACTER SET = {} COLLATE = {}",
+            esc_id(&database),
+            esc_str(&character_set),
+            esc_str(&collation)
+        );
 
-    conn.query_drop(&query)
-        .await
-        .map_err(|e| format!("修改数据库字符集失败: {}", e))?;
+        conn.query_drop(&query)
+            .await
+            .map_err(|e| format!("修改数据库字符集失败: {}", e))?;
 
-    Ok(())
+        Ok(())
+    })
+    .await
 }
 
 /// 校验是否允许删除该数据库（禁止系统库）
@@ -753,38 +945,41 @@ pub async fn drop_database(
     conn_id: String,
     database: String,
 ) -> Result<(), String> {
-    let pool_handle = {
-        let mut manager = state.connection_manager.lock().await;
-        manager.get_database_pool_for_write(&conn_id)?
-    };
+    with_table_metadata_invalidation(&conn_id, &[(Some(&database), None)], async {
+        let pool_handle = {
+            let mut manager = state.connection_manager.lock().await;
+            manager.get_database_pool_for_write(&conn_id)?
+        };
 
-    let pool = match pool_handle {
-        DatabasePoolHandle::MySql(pool) => pool,
-        DatabasePoolHandle::Postgres(handle) => {
-            return postgres_ddl::drop_schema(&handle.pool, &database).await;
-        }
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
-        }
-        DatabasePoolHandle::SqlServer(handle) => {
-            return sqlserver_ddl::drop_schema(&handle.pool, &database).await;
-        }
-        DatabasePoolHandle::ClickHouse(handle) => {
-            let sql = build_clickhouse_drop_database_sql(&database)?;
-            return execute_clickhouse_ddl(&handle.client, sql, "删除数据库失败").await;
-        }
-    };
+        let pool = match pool_handle {
+            DatabasePoolHandle::MySql(pool) => pool,
+            DatabasePoolHandle::Postgres(handle) => {
+                return postgres_ddl::drop_schema(&handle.pool, &database).await;
+            }
+            DatabasePoolHandle::Sqlite(_) => {
+                return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
+            }
+            DatabasePoolHandle::SqlServer(handle) => {
+                return sqlserver_ddl::drop_schema(&handle.pool, &database).await;
+            }
+            DatabasePoolHandle::ClickHouse(handle) => {
+                let sql = build_clickhouse_drop_database_sql(&database)?;
+                return execute_clickhouse_ddl(&handle.client, sql, "删除数据库失败").await;
+            }
+        };
 
-    validate_drop_database_name(&database)?;
-    let db = database.trim();
-    let mut conn = get_conn_with_retry(&pool).await?;
+        validate_drop_database_name(&database)?;
+        let db = database.trim();
+        let mut conn = get_conn_with_retry(&pool).await?;
 
-    let query = format!("DROP DATABASE {}", esc_id(db));
-    conn.query_drop(&query)
-        .await
-        .map_err(|e| format!("删除数据库失败: {}", e))?;
+        let query = format!("DROP DATABASE {}", esc_id(db));
+        conn.query_drop(&query)
+            .await
+            .map_err(|e| format!("删除数据库失败: {}", e))?;
 
-    Ok(())
+        Ok(())
+    })
+    .await
 }
 
 /// 创建数据库（指定字符集和排序规则）
@@ -796,43 +991,46 @@ pub async fn create_database(
     character_set: String,
     collation: String,
 ) -> Result<(), String> {
-    let pool_handle = {
-        let mut manager = state.connection_manager.lock().await;
-        manager.get_database_pool_for_write(&conn_id)?
-    };
+    with_table_metadata_invalidation(&conn_id, &[(Some(&name), None)], async {
+        let pool_handle = {
+            let mut manager = state.connection_manager.lock().await;
+            manager.get_database_pool_for_write(&conn_id)?
+        };
 
-    let pool = match pool_handle {
-        DatabasePoolHandle::MySql(pool) => pool,
-        DatabasePoolHandle::Postgres(handle) => {
-            // PostgreSQL 下 `name` 实际为 schema 名；忽略 charset/collation。
-            return postgres_ddl::create_schema(&handle.pool, &name).await;
-        }
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
-        }
-        DatabasePoolHandle::SqlServer(handle) => {
-            return sqlserver_ddl::create_schema(&handle.pool, &name).await;
-        }
-        DatabasePoolHandle::ClickHouse(handle) => {
-            let sql = build_clickhouse_create_database_sql(&name)?;
-            return execute_clickhouse_ddl(&handle.client, sql, "创建数据库失败").await;
-        }
-    };
+        let pool = match pool_handle {
+            DatabasePoolHandle::MySql(pool) => pool,
+            DatabasePoolHandle::Postgres(handle) => {
+                // PostgreSQL 下 `name` 实际为 schema 名；忽略 charset/collation。
+                return postgres_ddl::create_schema(&handle.pool, &name).await;
+            }
+            DatabasePoolHandle::Sqlite(_) => {
+                return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
+            }
+            DatabasePoolHandle::SqlServer(handle) => {
+                return sqlserver_ddl::create_schema(&handle.pool, &name).await;
+            }
+            DatabasePoolHandle::ClickHouse(handle) => {
+                let sql = build_clickhouse_create_database_sql(&name)?;
+                return execute_clickhouse_ddl(&handle.client, sql, "创建数据库失败").await;
+            }
+        };
 
-    let mut conn = get_conn_with_retry(&pool).await?;
+        let mut conn = get_conn_with_retry(&pool).await?;
 
-    let query = format!(
-        "CREATE DATABASE {} CHARACTER SET = {} COLLATE = {}",
-        esc_id(&name),
-        esc_str(&character_set),
-        esc_str(&collation),
-    );
+        let query = format!(
+            "CREATE DATABASE {} CHARACTER SET = {} COLLATE = {}",
+            esc_id(&name),
+            esc_str(&character_set),
+            esc_str(&collation),
+        );
 
-    conn.query_drop(&query)
-        .await
-        .map_err(|e| format!("创建数据库失败: {}", e))?;
+        conn.query_drop(&query)
+            .await
+            .map_err(|e| format!("创建数据库失败: {}", e))?;
 
-    Ok(())
+        Ok(())
+    })
+    .await
 }
 
 fn build_rename_database_tables_sql(
@@ -869,77 +1067,89 @@ pub async fn rename_database(
     character_set: String,
     collation: String,
 ) -> Result<(), String> {
-    let pool_handle = {
-        let mut manager = state.connection_manager.lock().await;
-        manager.get_database_pool_for_write(&conn_id)?
-    };
+    with_table_metadata_invalidation(
+        &conn_id,
+        &[(Some(&old_name), None), (Some(&new_name), None)],
+        async {
+            let pool_handle = {
+                let mut manager = state.connection_manager.lock().await;
+                manager.get_database_pool_for_write(&conn_id)?
+            };
 
-    let pool = match pool_handle {
-        DatabasePoolHandle::MySql(pool) => pool,
-        DatabasePoolHandle::Postgres(handle) => {
-            // PostgreSQL 重命名 schema 是原子 DDL，无需逐表迁移；忽略 charset/collation。
-            return postgres_ddl::rename_schema(&handle.pool, &old_name, &new_name).await;
-        }
-        DatabasePoolHandle::Sqlite(_) => {
-            return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
-        }
-        DatabasePoolHandle::SqlServer(handle) => {
-            return sqlserver_ddl::rename_schema(&handle.pool, &old_name, &new_name).await;
-        }
-        DatabasePoolHandle::ClickHouse(handle) => {
-            let sql = build_clickhouse_rename_database_sql(&old_name, &new_name)?;
-            return execute_clickhouse_ddl(
-                &handle.client,
-                sql,
-                "重命名数据库失败，当前 ClickHouse 版本可能不支持 RENAME DATABASE",
-            )
-            .await;
-        }
-    };
+            let pool = match pool_handle {
+                DatabasePoolHandle::MySql(pool) => pool,
+                DatabasePoolHandle::Postgres(handle) => {
+                    // PostgreSQL 重命名 schema 是原子 DDL，无需逐表迁移；忽略 charset/collation。
+                    return postgres_ddl::rename_schema(&handle.pool, &old_name, &new_name).await;
+                }
+                DatabasePoolHandle::Sqlite(_) => {
+                    return Err(DatabasePoolHandle::sqlite_write_unsupported_error());
+                }
+                DatabasePoolHandle::SqlServer(handle) => {
+                    return sqlserver_ddl::rename_schema(&handle.pool, &old_name, &new_name).await;
+                }
+                DatabasePoolHandle::ClickHouse(handle) => {
+                    let sql = build_clickhouse_rename_database_sql(&old_name, &new_name)?;
+                    return execute_clickhouse_ddl(
+                        &handle.client,
+                        sql,
+                        "重命名数据库失败，当前 ClickHouse 版本可能不支持 RENAME DATABASE",
+                    )
+                    .await;
+                }
+            };
 
-    let mut conn = get_conn_with_retry(&pool).await?;
+            let mut conn = get_conn_with_retry(&pool).await?;
 
-    // 1. 创建新数据库 (使用指定的字符集)
-    let create_query = format!(
-        "CREATE DATABASE {} CHARACTER SET = {} COLLATE = {}",
-        esc_id(&new_name),
-        esc_str(&character_set),
-        esc_str(&collation)
-    );
-    conn.query_drop(&create_query)
-        .await
-        .map_err(|e| format!("创建新数据库失败: {}", e))?;
+            // 1. 创建新数据库 (使用指定的字符集)
+            let create_query = format!(
+                "CREATE DATABASE {} CHARACTER SET = {} COLLATE = {}",
+                esc_id(&new_name),
+                esc_str(&character_set),
+                esc_str(&collation)
+            );
+            conn.query_drop(&create_query)
+                .await
+                .map_err(|e| format!("创建新数据库失败: {}", e))?;
+            invalidate_table_metadata(&conn_id, Some(&new_name), None);
 
-    // 2. 获取旧库中所有表名
-    let tables_query = format!(
-        "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = {}",
-        esc_str(&old_name)
-    );
-    let table_names: Vec<String> = conn
-        .query(&tables_query)
-        .await
-        .map_err(|e| format!("获取表列表失败: {}", e))?;
+            // 2. 获取旧库中所有表名
+            let tables_query = format!(
+                "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = {}",
+                esc_str(&old_name)
+            );
+            let table_names: Vec<String> = conn
+                .query(&tables_query)
+                .await
+                .map_err(|e| format!("获取表列表失败: {}", e))?;
 
-    // 3. 一次性迁移到新库，避免在循环中执行 SQL
-    if let Some(rename_query) = build_rename_database_tables_sql(&old_name, &new_name, &table_names)
-    {
-        conn.query_drop(&rename_query).await.map_err(|e| {
-            format!(
-                "迁移 {} 张表失败: {}。新数据库 '{}' 可能已部分迁移，请手动检查。",
-                table_names.len(),
-                e,
-                new_name
-            )
-        })?;
-    }
+            // 3. 一次性迁移到新库，避免在循环中执行 SQL
+            if let Some(rename_query) =
+                build_rename_database_tables_sql(&old_name, &new_name, &table_names)
+            {
+                conn.query_drop(&rename_query).await.map_err(|e| {
+                    format!(
+                        "迁移 {} 张表失败: {}。新数据库 '{}' 可能已部分迁移，请手动检查。",
+                        table_names.len(),
+                        e,
+                        new_name
+                    )
+                })?;
+                // MySQL DDL 不可回滚；后续 DROP DATABASE 失败也不能保留迁移前元数据。
+                invalidate_table_metadata(&conn_id, Some(&old_name), None);
+                invalidate_table_metadata(&conn_id, Some(&new_name), None);
+            }
 
-    // 4. 删除旧库
-    let drop_query = format!("DROP DATABASE {}", esc_id(&old_name));
-    conn.query_drop(&drop_query)
-        .await
-        .map_err(|e| format!("删除旧数据库失败: {}", e))?;
+            // 4. 删除旧库
+            let drop_query = format!("DROP DATABASE {}", esc_id(&old_name));
+            conn.query_drop(&drop_query)
+                .await
+                .map_err(|e| format!("删除旧数据库失败: {}", e))?;
 
-    Ok(())
+            Ok(())
+        },
+    )
+    .await
 }
 
 fn build_table_properties_sqls(
@@ -1000,49 +1210,71 @@ pub async fn rename_table(
     old_name: String,
     new_name: String,
 ) -> Result<(), String> {
-    let pool_handle = {
-        let mut manager = state.connection_manager.lock().await;
-        manager.get_database_pool_for_write(&conn_id)?
-    };
+    with_table_metadata_invalidation(
+        &conn_id,
+        &[
+            (Some(&database), Some(&old_name)),
+            (Some(&database), Some(&new_name)),
+        ],
+        async {
+            let pool_handle = {
+                let mut manager = state.connection_manager.lock().await;
+                manager.get_database_pool_for_write(&conn_id)?
+            };
 
-    let pool = match pool_handle {
-        DatabasePoolHandle::MySql(pool) => pool,
-        DatabasePoolHandle::Postgres(handle) => {
-            return postgres_ddl::rename_table(&handle.pool, &database, &old_name, &new_name).await;
-        }
-        DatabasePoolHandle::Sqlite(handle) => {
-            return sqlite::rename_table(&handle.pool, &database, &old_name, &new_name).await;
-        }
-        DatabasePoolHandle::SqlServer(handle) => {
-            return sqlserver_ddl::rename_table(&handle.pool, &database, &old_name, &new_name)
-                .await;
-        }
-        DatabasePoolHandle::ClickHouse(handle) => {
-            let sql = build_clickhouse_rename_table_sql(&database, &old_name, &new_name)?;
-            return execute_clickhouse_ddl(&handle.client, sql, "重命名表失败").await;
-        }
-    };
+            let pool = match pool_handle {
+                DatabasePoolHandle::MySql(pool) => pool,
+                DatabasePoolHandle::Postgres(handle) => {
+                    return postgres_ddl::rename_table(
+                        &handle.pool,
+                        &database,
+                        &old_name,
+                        &new_name,
+                    )
+                    .await;
+                }
+                DatabasePoolHandle::Sqlite(handle) => {
+                    return sqlite::rename_table(&handle.pool, &database, &old_name, &new_name)
+                        .await;
+                }
+                DatabasePoolHandle::SqlServer(handle) => {
+                    return sqlserver_ddl::rename_table(
+                        &handle.pool,
+                        &database,
+                        &old_name,
+                        &new_name,
+                    )
+                    .await;
+                }
+                DatabasePoolHandle::ClickHouse(handle) => {
+                    let sql = build_clickhouse_rename_table_sql(&database, &old_name, &new_name)?;
+                    return execute_clickhouse_ddl(&handle.client, sql, "重命名表失败").await;
+                }
+            };
 
-    let mut conn = get_conn_with_retry(&pool).await?;
+            let mut conn = get_conn_with_retry(&pool).await?;
 
-    let query = build_table_properties_sqls(
-        crate::models::types::DatabaseType::MySql,
-        &database,
-        &old_name,
-        &new_name,
-        None,
-    )?
-    .into_iter()
-    .next();
-    let Some(query) = query else {
-        return Ok(());
-    };
+            let query = build_table_properties_sqls(
+                crate::models::types::DatabaseType::MySql,
+                &database,
+                &old_name,
+                &new_name,
+                None,
+            )?
+            .into_iter()
+            .next();
+            let Some(query) = query else {
+                return Ok(());
+            };
 
-    conn.query_drop(&query)
-        .await
-        .map_err(|e| format!("重命名表失败: {}", e))?;
+            conn.query_drop(&query)
+                .await
+                .map_err(|e| format!("重命名表失败: {}", e))?;
 
-    Ok(())
+            Ok(())
+        },
+    )
+    .await
 }
 
 /// 修改表引擎
@@ -1054,6 +1286,7 @@ pub async fn alter_table_engine(
     table: String,
     engine: String,
 ) -> Result<(), String> {
+    with_table_metadata_invalidation(&conn_id, &[(Some(&database), Some(&table))], async {
     let pool_handle = {
         let mut manager = state.connection_manager.lock().await;
         manager.get_database_pool_for_write(&conn_id)?
@@ -1093,6 +1326,7 @@ pub async fn alter_table_engine(
         .map_err(|e| format!("修改表引擎失败: {}", e))?;
 
     Ok(())
+    }).await
 }
 
 /// 获取表的主键列信息
@@ -1150,37 +1384,40 @@ pub async fn drop_table(
     database: String,
     table: String,
 ) -> Result<(), String> {
-    let pool_handle = {
-        let mut manager = state.connection_manager.lock().await;
-        manager.get_database_pool_for_write(&conn_id)?
-    };
+    with_table_metadata_invalidation(&conn_id, &[(Some(&database), Some(&table))], async {
+        let pool_handle = {
+            let mut manager = state.connection_manager.lock().await;
+            manager.get_database_pool_for_write(&conn_id)?
+        };
 
-    let pool = match pool_handle {
-        DatabasePoolHandle::MySql(pool) => pool,
-        DatabasePoolHandle::Postgres(handle) => {
-            return postgres_ddl::drop_table(&handle.pool, &database, &table).await;
-        }
-        DatabasePoolHandle::Sqlite(handle) => {
-            return sqlite::drop_table(&handle.pool, &database, &table).await;
-        }
-        DatabasePoolHandle::SqlServer(handle) => {
-            return sqlserver_ddl::drop_table(&handle.pool, &database, &table).await;
-        }
-        DatabasePoolHandle::ClickHouse(handle) => {
-            let sql = build_clickhouse_drop_table_sql(&database, &table)?;
-            return execute_clickhouse_ddl(&handle.client, sql, "删除表失败").await;
-        }
-    };
+        let pool = match pool_handle {
+            DatabasePoolHandle::MySql(pool) => pool,
+            DatabasePoolHandle::Postgres(handle) => {
+                return postgres_ddl::drop_table(&handle.pool, &database, &table).await;
+            }
+            DatabasePoolHandle::Sqlite(handle) => {
+                return sqlite::drop_table(&handle.pool, &database, &table).await;
+            }
+            DatabasePoolHandle::SqlServer(handle) => {
+                return sqlserver_ddl::drop_table(&handle.pool, &database, &table).await;
+            }
+            DatabasePoolHandle::ClickHouse(handle) => {
+                let sql = build_clickhouse_drop_table_sql(&database, &table)?;
+                return execute_clickhouse_ddl(&handle.client, sql, "删除表失败").await;
+            }
+        };
 
-    let mut conn = get_conn_with_retry(&pool).await?;
+        let mut conn = get_conn_with_retry(&pool).await?;
 
-    let query = format!("DROP TABLE {}.{}", esc_id(&database), esc_id(&table));
+        let query = format!("DROP TABLE {}.{}", esc_id(&database), esc_id(&table));
 
-    conn.query_drop(&query)
-        .await
-        .map_err(|e| format!("删除表失败: {}", e))?;
+        conn.query_drop(&query)
+            .await
+            .map_err(|e| format!("删除表失败: {}", e))?;
 
-    Ok(())
+        Ok(())
+    })
+    .await
 }
 
 /// 清空表（TRUNCATE TABLE）
@@ -1191,37 +1428,40 @@ pub async fn truncate_table(
     database: String,
     table: String,
 ) -> Result<(), String> {
-    let pool_handle = {
-        let mut manager = state.connection_manager.lock().await;
-        manager.get_database_pool_for_write(&conn_id)?
-    };
+    with_table_metadata_invalidation(&conn_id, &[(Some(&database), Some(&table))], async {
+        let pool_handle = {
+            let mut manager = state.connection_manager.lock().await;
+            manager.get_database_pool_for_write(&conn_id)?
+        };
 
-    let pool = match pool_handle {
-        DatabasePoolHandle::MySql(pool) => pool,
-        DatabasePoolHandle::Postgres(handle) => {
-            return postgres_ddl::truncate_table(&handle.pool, &database, &table).await;
-        }
-        DatabasePoolHandle::Sqlite(handle) => {
-            return sqlite::truncate_table(&handle.pool, &database, &table).await;
-        }
-        DatabasePoolHandle::SqlServer(handle) => {
-            return sqlserver_ddl::truncate_table(&handle.pool, &database, &table).await;
-        }
-        DatabasePoolHandle::ClickHouse(handle) => {
-            let sql = build_clickhouse_truncate_table_sql(&database, &table)?;
-            return execute_clickhouse_ddl(&handle.client, sql, "清空表失败").await;
-        }
-    };
+        let pool = match pool_handle {
+            DatabasePoolHandle::MySql(pool) => pool,
+            DatabasePoolHandle::Postgres(handle) => {
+                return postgres_ddl::truncate_table(&handle.pool, &database, &table).await;
+            }
+            DatabasePoolHandle::Sqlite(handle) => {
+                return sqlite::truncate_table(&handle.pool, &database, &table).await;
+            }
+            DatabasePoolHandle::SqlServer(handle) => {
+                return sqlserver_ddl::truncate_table(&handle.pool, &database, &table).await;
+            }
+            DatabasePoolHandle::ClickHouse(handle) => {
+                let sql = build_clickhouse_truncate_table_sql(&database, &table)?;
+                return execute_clickhouse_ddl(&handle.client, sql, "清空表失败").await;
+            }
+        };
 
-    let mut conn = get_conn_with_retry(&pool).await?;
+        let mut conn = get_conn_with_retry(&pool).await?;
 
-    let query = format!("TRUNCATE TABLE {}.{}", esc_id(&database), esc_id(&table));
+        let query = format!("TRUNCATE TABLE {}.{}", esc_id(&database), esc_id(&table));
 
-    conn.query_drop(&query)
-        .await
-        .map_err(|e| format!("清空表失败: {}", e))?;
+        conn.query_drop(&query)
+            .await
+            .map_err(|e| format!("清空表失败: {}", e))?;
 
-    Ok(())
+        Ok(())
+    })
+    .await
 }
 
 fn build_mysql_create_table_sql(
@@ -1288,44 +1528,51 @@ pub async fn create_table(
     database: String,
     request: CreateTableRequest,
 ) -> Result<(), String> {
-    if request.columns.is_empty() {
-        return Err("至少需要定义一个列".to_string());
-    }
-    for col in &request.columns {
-        validate_column_type(&col.column_type)?;
-        validate_column_extra(&col.extra)?;
-    }
+    with_table_metadata_invalidation(
+        &conn_id,
+        &[(Some(&database), Some(&request.table_name))],
+        async {
+            if request.columns.is_empty() {
+                return Err("至少需要定义一个列".to_string());
+            }
+            for col in &request.columns {
+                validate_column_type(&col.column_type)?;
+                validate_column_extra(&col.extra)?;
+            }
 
-    let pool_handle = {
-        let mut manager = state.connection_manager.lock().await;
-        manager.get_database_pool_for_write(&conn_id)?
-    };
+            let pool_handle = {
+                let mut manager = state.connection_manager.lock().await;
+                manager.get_database_pool_for_write(&conn_id)?
+            };
 
-    let pool = match pool_handle {
-        DatabasePoolHandle::MySql(pool) => pool,
-        DatabasePoolHandle::Postgres(handle) => {
-            return postgres_ddl::create_table(&handle.pool, &database, &request).await;
-        }
-        DatabasePoolHandle::Sqlite(handle) => {
-            return sqlite::create_table(&handle.pool, &database, &request).await;
-        }
-        DatabasePoolHandle::SqlServer(handle) => {
-            return sqlserver_ddl::create_table(&handle.pool, &database, &request).await;
-        }
-        DatabasePoolHandle::ClickHouse(handle) => {
-            let sql = build_clickhouse_create_table_sql(&database, &request)?;
-            return execute_clickhouse_ddl(&handle.client, sql, "新建表失败").await;
-        }
-    };
+            let pool = match pool_handle {
+                DatabasePoolHandle::MySql(pool) => pool,
+                DatabasePoolHandle::Postgres(handle) => {
+                    return postgres_ddl::create_table(&handle.pool, &database, &request).await;
+                }
+                DatabasePoolHandle::Sqlite(handle) => {
+                    return sqlite::create_table(&handle.pool, &database, &request).await;
+                }
+                DatabasePoolHandle::SqlServer(handle) => {
+                    return sqlserver_ddl::create_table(&handle.pool, &database, &request).await;
+                }
+                DatabasePoolHandle::ClickHouse(handle) => {
+                    let sql = build_clickhouse_create_table_sql(&database, &request)?;
+                    return execute_clickhouse_ddl(&handle.client, sql, "新建表失败").await;
+                }
+            };
 
-    let query = build_mysql_create_table_sql(&database, &request)?;
-    let mut conn = get_conn_with_retry(&pool).await?;
+            let query = build_mysql_create_table_sql(&database, &request)?;
+            let mut conn = get_conn_with_retry(&pool).await?;
 
-    conn.query_drop(&query)
-        .await
-        .map_err(|e| format!("新建表失败: {}", e))?;
+            conn.query_drop(&query)
+                .await
+                .map_err(|e| format!("新建表失败: {}", e))?;
 
-    Ok(())
+            Ok(())
+        },
+    )
+    .await
 }
 
 #[cfg(test)]

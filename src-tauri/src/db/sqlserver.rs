@@ -1,6 +1,7 @@
 pub use crate::db::batch_update::RowUpdate as SqlServerRowUpdate;
 use crate::db::batch_update::{build_batch_update_statements, BatchDialect};
 use crate::db::dialect::SQLSERVER_DIALECT;
+use crate::db::metadata_batch::{group_tables, normalize_databases};
 use crate::db::result_budget::{collect_rows, ResultBudget};
 use crate::db::sql_utils::{
     sqlserver_count_query, sqlserver_id, sqlserver_paginated_select,
@@ -8,7 +9,7 @@ use crate::db::sql_utils::{
 };
 use crate::db::table_query::TableQueryCancellation;
 use crate::models::types::{
-    ColumnInfo, ConnectionConfig, QueryResult, SessionInfo, SqlCompletionColumn,
+    ColumnInfo, ConnectionConfig, DatabaseTableList, QueryResult, SessionInfo, SqlCompletionColumn,
     SqlCompletionMetadata, SqlCompletionTable, SqlExecuteResult, TableInfo,
 };
 use bb8::{ManageConnection, Pool, PooledConnection};
@@ -255,19 +256,30 @@ pub async fn list_schemas(pool: &SqlServerPool) -> Result<Vec<String>, String> {
         .collect())
 }
 
-fn list_tables_sql(schema: &str) -> String {
-    let schema = sqlserver_str(schema);
+pub(crate) fn list_tables_batch_sql(request_count: usize) -> String {
+    let requested = (0..request_count)
+        .map(|index| {
+            format!(
+                "SELECT {} AS request_order, @P{} AS database_name",
+                index,
+                index + 1
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" UNION ALL ");
     format!(
-        "WITH objects AS ( \
-           SELECT t.object_id, t.name, CAST('TABLE' AS varchar(5)) AS table_type \
+        "WITH requested AS ({}), objects AS ( \
+           SELECT r.request_order, t.object_id, t.name, CAST('TABLE' AS varchar(5)) AS table_type \
            FROM sys.tables t \
            JOIN sys.schemas s ON s.schema_id = t.schema_id \
-           WHERE s.name = N{} AND t.is_ms_shipped = 0 \
+           JOIN requested r ON r.database_name = s.name \
+           WHERE t.is_ms_shipped = 0 \
            UNION ALL \
-           SELECT v.object_id, v.name, CAST('VIEW' AS varchar(5)) AS table_type \
+           SELECT r.request_order, v.object_id, v.name, CAST('VIEW' AS varchar(5)) AS table_type \
            FROM sys.views v \
            JOIN sys.schemas s ON s.schema_id = v.schema_id \
-           WHERE s.name = N{} AND v.is_ms_shipped = 0 \
+           JOIN requested r ON r.database_name = s.name \
+           WHERE v.is_ms_shipped = 0 \
          ), stats AS ( \
            SELECT object_id, \
                   SUM(CASE WHEN index_id IN (0, 1) THEN row_count ELSE 0 END) AS rows_est, \
@@ -276,9 +288,10 @@ fn list_tables_sql(schema: &str) -> String {
                            THEN used_page_count - in_row_data_page_count - lob_used_page_count - row_overflow_used_page_count \
                            ELSE 0 END) * 8192 AS index_length \
            FROM sys.dm_db_partition_stats \
+           WHERE object_id IN (SELECT object_id FROM objects) \
            GROUP BY object_id \
          ) \
-         SELECT o.name, o.table_type, \
+         SELECT o.request_order, o.name, o.table_type, \
                 CASE WHEN o.table_type = 'TABLE' THEN 'SQL Server' ELSE NULL END AS engine, \
                 CASE WHEN o.table_type = 'TABLE' THEN CAST(COALESCE(st.rows_est, 0) AS bigint) ELSE NULL END AS rows_est, \
                 CASE WHEN o.table_type = 'TABLE' THEN CAST(COALESCE(st.data_length, 0) AS bigint) ELSE NULL END AS data_length, \
@@ -288,33 +301,59 @@ fn list_tables_sql(schema: &str) -> String {
          LEFT JOIN stats st ON st.object_id = o.object_id \
          LEFT JOIN sys.extended_properties ep \
            ON ep.class = 1 AND ep.major_id = o.object_id AND ep.minor_id = 0 AND ep.name = N'MS_Description' \
-         ORDER BY o.name",
-        schema, schema
+         ORDER BY o.request_order, o.name",
+        requested
     )
 }
 
 pub async fn list_tables(pool: &SqlServerPool, schema: &str) -> Result<Vec<TableInfo>, String> {
+    let mut groups = list_tables_batch(pool, &[schema.to_string()]).await?;
+    Ok(groups.remove(0).tables)
+}
+
+pub async fn list_tables_batch(
+    pool: &SqlServerPool,
+    databases: &[String],
+) -> Result<Vec<DatabaseTableList>, String> {
+    let databases = normalize_databases(databases)?;
+    if databases.is_empty() {
+        return Ok(Vec::new());
+    }
+    let sql = list_tables_batch_sql(databases.len());
+    let params: Vec<&dyn tiberius::ToSql> = databases
+        .iter()
+        .map(|database| database as &dyn tiberius::ToSql)
+        .collect();
     let mut client = get_client_with_retry(pool).await?;
     let rows = client
-        .simple_query(list_tables_sql(schema))
+        .query(sql, &params)
         .await
         .map_err(|e| normalize_sqlserver_error("查询表列表失败", e.to_string()))?
         .into_first_result()
         .await
         .map_err(|e| normalize_sqlserver_error("读取表列表失败", e.to_string()))?;
-
-    Ok(rows
+    let mapped = rows
         .iter()
-        .map(|row| TableInfo {
-            name: row_string(row, "name"),
-            table_type: row_string(row, "table_type"),
-            engine: row.get::<&str, _>("engine").map(str::to_string),
-            rows: i64_to_u64(row.get::<i64, _>("rows_est")),
-            data_length: i64_to_u64(row.get::<i64, _>("data_length")),
-            index_length: i64_to_u64(row.get::<i64, _>("index_length")),
-            comment: row_string(row, "comment"),
+        .map(|row| {
+            let request_order = row.get::<i32, _>("request_order").unwrap_or(-1);
+            let database = databases
+                .get(request_order as usize)
+                .ok_or_else(|| "目录查询返回了无效的请求序号".to_string())?;
+            Ok((
+                database.clone(),
+                TableInfo {
+                    name: row_string(row, "name"),
+                    table_type: row_string(row, "table_type"),
+                    engine: row.get::<&str, _>("engine").map(str::to_string),
+                    rows: i64_to_u64(row.get::<i64, _>("rows_est")),
+                    data_length: i64_to_u64(row.get::<i64, _>("data_length")),
+                    index_length: i64_to_u64(row.get::<i64, _>("index_length")),
+                    comment: row_string(row, "comment"),
+                },
+            ))
         })
-        .collect())
+        .collect::<Result<Vec<_>, String>>()?;
+    group_tables(&databases, mapped)
 }
 
 fn table_structure_sql(schema: &str, table: &str) -> String {
@@ -2472,5 +2511,20 @@ mod tests {
             .expect_err("missing locator should be rejected before BEGIN TRANSACTION");
 
         assert_eq!(err, "存在缺少主键信息的行");
+    }
+}
+
+#[cfg(test)]
+mod metadata_batch_tests {
+    #[test]
+    fn metadata_batch_sqlserver_uses_one_parameterized_schema_set() {
+        let sql = super::list_tables_batch_sql(2);
+        assert!(sql.contains("@P1"));
+        assert!(sql.contains("@P2"));
+        assert!(!sql.contains("@P3"));
+        assert!(sql.contains("FROM sys.tables"));
+        assert!(sql.contains("FROM sys.views"));
+        assert!(sql.contains("o.request_order"));
+        assert!(sql.contains("WHERE object_id IN (SELECT object_id FROM objects)"));
     }
 }

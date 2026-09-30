@@ -1,0 +1,183 @@
+{
+  "date": "2026-09-30",
+  "engine": {
+    "name": "MySQL Community Server",
+    "version": "8.4.10",
+    "image": "mysql:8.4",
+    "image_id": "sha256:5700b0892591a760c4caef7a0024c887afd46317d73dd420801706e661c4db56",
+    "os": "Linux",
+    "architecture": "arm64",
+    "lower_case_table_names": 0
+  },
+  "isolation": {
+    "temporary_container_only": true,
+    "loopback_random_port_only": true,
+    "business_config_or_credentials_read": false,
+    "fixtures_verified_by": [
+      "fixture_directory_uuid",
+      "container_label",
+      "server_uuid",
+      "marker_row",
+      "version",
+      "container_port"
+    ],
+    "cleanup_verified": true,
+    "verified_absent_owned_containers": 7
+  },
+  "production_calls": [
+    "commands::database::list_mysql_tables_batch"
+  ],
+  "counter": {
+    "source": "performance_schema.events_statements_summary_by_thread_by_event_name",
+    "scope": "target_pool_connection_thread_only",
+    "events": [
+      "statement/sql/select",
+      "statement/sql/show_table_status",
+      "statement/sql/show_keys",
+      "statement/sql/show_grants",
+      "statement/com/Execute"
+    ],
+    "nonempty_three_database_batch": 1,
+    "five_database_batch_including_empty_database": 2,
+    "empty_request": 0,
+    "permission_denial_bound": 2,
+    "excludes": [
+      "connection_initialization",
+      "prepare",
+      "observer_queries",
+      "fixture_setup"
+    ]
+  },
+  "catalog_assertions": [
+    "all_TableInfo_fields_equal_legacy_SHOW",
+    "binary_name_order_equal_legacy_SHOW",
+    "table_and_view_types",
+    "empty_database_preserved",
+    "special_quote_backtick_database_and_table_names",
+    "case_distinct_databases_and_tables",
+    "wrong_case_request_rejected",
+    "missing_database_fails_whole_batch",
+    "single_table_SELECT_filters_other_tables",
+    "hidden_database_fails_whole_batch"
+  ],
+  "permission_matrix": [
+    {
+      "case": "SHOW_DATABASES_only",
+      "legacy": "error_1044",
+      "batch": "error"
+    },
+    {
+      "case": "CREATE_on_empty_schema",
+      "legacy": "empty_success",
+      "batch": "empty_success",
+      "batch_sql_count": 2
+    },
+    {
+      "case": "enabled_nested_role_CREATE_on_empty_schema",
+      "legacy": "empty_success",
+      "batch": "empty_success",
+      "batch_sql_count": 2
+    },
+    {
+      "case": "column_SELECT_only",
+      "legacy": "one_table",
+      "batch": "same_one_table",
+      "batch_sql_count": 1
+    },
+    {
+      "case": "table_USAGE_WITH_GRANT_OPTION",
+      "legacy": "one_table",
+      "batch": "same_one_table",
+      "batch_sql_count": 1
+    },
+    {
+      "case": "procedure_EXECUTE_only_no_tables",
+      "legacy": "empty_success",
+      "batch": "empty_success",
+      "batch_sql_count": 2
+    },
+    {
+      "case": "empty_enabled_role_plus_SHOW_DATABASES",
+      "legacy": "error_1044",
+      "batch": "error"
+    },
+    {
+      "case": "database_wildcard_grant_partial_revokes_OFF",
+      "legacy": "empty_success",
+      "batch": "empty_success",
+      "batch_sql_count": 2
+    },
+    {
+      "case": "same_wildcard_grant_partial_revokes_ON",
+      "legacy": "error_1044",
+      "batch": "error"
+    },
+    {
+      "case": "global_SELECT_plus_SHOW_DATABASES_with_empty_schema_partial_revoke",
+      "legacy": "error_1044",
+      "batch": "error"
+    },
+    {
+      "case": "exact_schema_USAGE_WITH_GRANT_OPTION_overlapping_broader_wildcard_CREATE_no_roles",
+      "legacy": "error_1044",
+      "batch": "explicit_unverifiable_overlapping_schema_grants",
+      "before_fix": "incorrect_empty_success"
+    }
+  ],
+  "regression": {
+    "before_fix": "SHOW_DATABASES_only incorrectly returned empty success while legacy SHOW failed with 1044",
+    "red_log": "/private/tmp/db-connect-metadata-mysql8-red.log",
+    "green_log": "/private/tmp/db-connect-metadata-mysql8-green.log",
+    "green": {
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "elapsed_seconds": 0.22
+    },
+    "offline_permission_tests": {
+      "previous_verified_passed": 5,
+      "previous_verified_failed": 0,
+      "current_defined_tests": 6,
+      "final_suite_verification": "最终全量 Rust：771 通过、18 默认忽略，包含这 6 项授权解析回归。",
+      "final_verified_passed": 6,
+      "final_verified_failed": 0
+    },
+    "overlap": {
+      "red_log": "/private/tmp/db-connect-metadata-mysql8-exact-overlap-red.log",
+      "red_assertion": "legacy error 1044 confirmed at line 154; batch rejection assertion failed at line 159",
+      "red_elapsed_seconds": 0.26,
+      "green_log": "/private/tmp/db-connect-metadata-mysql8-exact-overlap-green.log",
+      "green": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "elapsed_seconds": 0.22
+      },
+      "excluded_wrong_assumption_logs": [
+        "/private/tmp/db-connect-metadata-mysql8-overlap-red.log",
+        "/private/tmp/db-connect-metadata-mysql8-overlap-green.log"
+      ],
+      "correction": "Earlier database name contained unescaped underscores and was itself a wildcard; final fixture uses metadata8probeexact and metadata8probe%."
+    }
+  },
+  "reproduction_command": "python3 scripts/performance/mysql8-metadata-validation.py",
+  "limitations": [
+    "This is compatibility and statement-count verification, not a latency benchmark.",
+    "Uses MySQL 8.4.10 on Linux arm64; other MySQL 8/9 versions and MariaDB are not covered by this evidence.",
+    "ANSI_QUOTES, partial-revoke plus explicit re-grant, and lower_case_table_names nonzero are parser unit cases, not part of this container matrix.",
+    "This fixture covers default enabled nested roles; mandatory roles, proxy accounts, and runtime SET ROLE changes are not separately exercised.",
+    "Unknown grant output formats fail with an explicit verification error.",
+    "Overlapping schema grants with conflicting database-operation access return an explicit unable-to-verify error unless independent effective global or object privileges prove access; some otherwise valid overlapping server configurations may also receive that explicit error."
+  ],
+  "sha256": {
+    "src-tauri/src/commands/database/mod.rs": "7df2863fe0d9375fd52954a96cb9a44618de36403963d05425d04c1bc3ebb50d",
+    "src-tauri/src/commands/database/mysql_catalog_access.rs": "72f4c5e1014823b74795fee24adcc6c9d598545c4351cb068fa3eedb00517646",
+    "src-tauri/src/db/metadata_mysql8_tests.rs": "272014ed28b556560f7443632ea006f66cc35e5cfa535e396eea27054d761f68",
+    "scripts/performance/mysql8-metadata-validation.py": "e5183c721a12badb380b3eb67eec4bdb24811329783e115a28b0d04b6f3a1435"
+  },
+  "reproduction_verified": {
+    "log": "/private/tmp/db-connect-metadata-mysql8-exact-overlap-green.log",
+    "passed": true,
+    "self_created_container_and_anonymous_volumes_removed": true
+  }
+}

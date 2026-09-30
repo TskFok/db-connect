@@ -2,7 +2,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useDatabaseStore, emptyConnState } from "../stores/databaseStore";
 import { useTableDataStore } from "../stores/tableDataStore";
 import { getDatabaseCapabilities } from "../utils/databaseCapabilities";
-import { subscribeSqlCompletionInvalidation } from "../utils/sqlCompletionInvalidation";
+import {
+  invalidateSqlCompletion,
+  subscribeSqlCompletionInvalidation,
+} from "../utils/sqlCompletionInvalidation";
 import { createSqlCompletionCache } from "../utils/sqlCompletionCache";
 import type { SqlCompletionCacheKey } from "../utils/sqlCompletionTypes";
 
@@ -15,6 +18,8 @@ vi.mock("@tauri-apps/api/core", () => ({
 vi.mock("../services/tauriCommands", () => ({
   listDatabases: vi.fn(),
   listTables: vi.fn(),
+  listTablesBatch: vi.fn(),
+  invalidateTableMetadataCache: vi.fn(),
   getTableStructure: vi.fn(),
   getDatabaseInfo: vi.fn(),
   executeSql: vi.fn(),
@@ -52,6 +57,19 @@ describe("databaseStore", () => {
     useDatabaseStore.getState().reset();
     useDatabaseStore.getState().switchToConnection("conn-1");
     vi.clearAllMocks();
+    mockApi.invalidateTableMetadataCache.mockResolvedValue(undefined);
+    mockApi.listTablesBatch.mockImplementation(async (connId, databases) =>
+      Promise.all(
+        databases.map(async (database) => ({
+          database,
+          tables:
+            (await mockApi.listTables.getMockImplementation()?.(
+              connId,
+              database
+            )) ?? [],
+        }))
+      )
+    );
   });
 
   describe("SQL 补全元数据失效通知", () => {
@@ -1350,7 +1368,7 @@ describe("databaseStore", () => {
 
       await useDatabaseStore.getState().refresh("conn-1");
 
-      expect(mockApi.listTables).toHaveBeenCalledWith("conn-1", "myapp");
+      expect(mockApi.listTablesBatch).toHaveBeenCalledWith("conn-1", ["myapp"]);
       expect(useDatabaseStore.getState().tables["myapp"]).toHaveLength(1);
     });
 
@@ -1516,8 +1534,8 @@ describe("databaseStore", () => {
 
       await useDatabaseStore.getState().refresh("conn-1");
 
-      expect(mockApi.listTables).toHaveBeenCalledTimes(1);
-      expect(mockApi.listTables).toHaveBeenCalledWith("conn-1", "myapp");
+      expect(mockApi.listTablesBatch).toHaveBeenCalledTimes(1);
+      expect(mockApi.listTablesBatch).toHaveBeenCalledWith("conn-1", ["myapp"]);
     });
 
     it("打开表后点击数据库再刷新，不应跳回已打开的表标签（保持数据库概览）", async () => {
@@ -3261,4 +3279,358 @@ it("进行中结果同键移交保留接收时估算并替换回收拥有方", a
     release();
     store.reset();
   }
+});
+
+function metadataDeferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+describe("metadata store races", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    useDatabaseStore.getState().reset();
+    useDatabaseStore.getState().switchToConnection("race");
+    mockApi.listDatabases.mockResolvedValue(["a", "b"]);
+    mockApi.listTablesBatch.mockResolvedValue([]);
+    mockApi.invalidateTableMetadataCache.mockResolvedValue(undefined);
+  });
+  it.each([1, 10, 100])(
+    "刷新 %i 个已加载目录只有一次批量调用",
+    async (count) => {
+      const databases = Array.from({ length: count }, (_, i) => `db${i}`);
+      useDatabaseStore.setState({
+        connectionStates: {
+          race: {
+            ...emptyConnState(),
+            tables: Object.fromEntries(databases.map((db) => [db, []])),
+          },
+        },
+      });
+      mockApi.listDatabases.mockResolvedValue(databases);
+      mockApi.listTablesBatch.mockResolvedValue(
+        databases.map((database) => ({ database, tables: [] }))
+      );
+      await useDatabaseStore.getState().refresh("race");
+      expect(mockApi.listTablesBatch).toHaveBeenCalledExactlyOnceWith(
+        "race",
+        databases
+      );
+      expect(mockApi.listTables).not.toHaveBeenCalled();
+    }
+  );
+  it("刷新等待后端失效才读目录，失败不局部覆盖旧状态", async () => {
+    const pending = metadataDeferred<void>();
+    mockApi.invalidateTableMetadataCache.mockReturnValue(pending.promise);
+    const old = { ...emptyConnState(), databases: ["old"], tables: { a: [] } };
+    useDatabaseStore.setState({ connectionStates: { race: old } });
+    const refresh = useDatabaseStore.getState().refresh("race");
+    expect(mockApi.listDatabases).not.toHaveBeenCalled();
+    pending.resolve();
+    mockApi.listTablesBatch.mockRejectedValue(new Error("权限不足"));
+    await refresh;
+    expect(useDatabaseStore.getState().connectionStates.race).toBe(old);
+  });
+  it("A 迟到响应不能盖掉 B 选择或其它连接的新状态", async () => {
+    const a = metadataDeferred<never[]>();
+    mockApi.listTables.mockImplementation((_conn, db) =>
+      db === "a" ? a.promise : Promise.resolve([])
+    );
+    const first = useDatabaseStore.getState().selectDatabase("race", "a");
+    await useDatabaseStore.getState().selectDatabase("race", "b");
+    const other = { ...emptyConnState(), databases: ["preserved"] };
+    useDatabaseStore.setState((s) => ({
+      connectionStates: { ...s.connectionStates, other },
+    }));
+    a.resolve([]);
+    await first;
+    expect(useDatabaseStore.getState().selectedDatabase).toBe("b");
+    expect(useDatabaseStore.getState().connectionStates.other).toBe(other);
+  });
+  it.each(["loadTables", "selectDatabase"] as const)(
+    "%s 断线后的旧响应不能重建连接",
+    async (action) => {
+      const pending = metadataDeferred<never[]>();
+      mockApi.listTables.mockReturnValue(pending.promise);
+      const request = useDatabaseStore.getState()[action]("race", "a");
+      useDatabaseStore.getState().removeConnectionState("race");
+      pending.resolve([]);
+      await request;
+      expect(useDatabaseStore.getState().connectionStates.race).toBeUndefined();
+    }
+  );
+  it("旧刷新不得覆盖后续选择、标签和其他连接", async () => {
+    const pending = metadataDeferred<{ database: string; tables: never[] }[]>();
+    mockApi.listTablesBatch.mockReturnValue(pending.promise);
+    useDatabaseStore.setState({
+      connectionStates: {
+        race: {
+          ...emptyConnState(),
+          tables: { a: [], b: [] },
+          selectedDatabase: "a",
+        },
+      },
+    });
+    const request = useDatabaseStore.getState().refresh("race");
+    await Promise.resolve();
+    await Promise.resolve();
+    await useDatabaseStore.getState().selectDatabase("race", "b");
+    const other = { ...emptyConnState(), databases: ["other"] };
+    useDatabaseStore.setState((s) => ({
+      connectionStates: { ...s.connectionStates, other },
+    }));
+    pending.resolve([{ database: "a", tables: [] }]);
+    await request;
+    expect(useDatabaseStore.getState().selectedDatabase).toBe("b");
+    expect(useDatabaseStore.getState().connectionStates.other).toBe(other);
+  });
+});
+
+describe("失效后的元数据响应", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    useDatabaseStore.getState().reset();
+    useDatabaseStore.getState().switchToConnection("stale");
+    mockApi.invalidateTableMetadataCache.mockResolvedValue(undefined);
+  });
+  it("失效前的目录响应不覆盖新一代目录", async () => {
+    const old = metadataDeferred<never[]>();
+    mockApi.listTables
+      .mockReturnValueOnce(old.promise)
+      .mockResolvedValueOnce([]);
+    const first = useDatabaseStore.getState().loadTables("stale", "a");
+    invalidateSqlCompletion({
+      connId: "stale",
+      database: "a",
+      reason: "schema-change",
+    });
+    await useDatabaseStore.getState().loadTables("stale", "a");
+    const current = useDatabaseStore.getState().connectionStates.stale.tables.a;
+    old.resolve([]);
+    await first;
+    expect(useDatabaseStore.getState().connectionStates.stale.tables.a).toBe(
+      current
+    );
+  });
+  it.each(["disconnect", "selection"])(
+    "结构读取遇到 %s 时丢弃旧响应",
+    async (action) => {
+      const pending = metadataDeferred<never[]>();
+      mockApi.getTableStructure.mockReturnValue(pending.promise);
+      const request = useDatabaseStore
+        .getState()
+        .selectTable("stale", "a", "old");
+      if (action === "disconnect")
+        useDatabaseStore.getState().removeConnectionState("stale");
+      else {
+        mockApi.listTables.mockResolvedValue([]);
+        await useDatabaseStore.getState().selectDatabase("stale", "b");
+      }
+      pending.resolve([]);
+      await request;
+      if (action === "disconnect")
+        expect(
+          useDatabaseStore.getState().connectionStates.stale
+        ).toBeUndefined();
+      else expect(useDatabaseStore.getState().selectedDatabase).toBe("b");
+    }
+  );
+  it("DDL 成功后读取目录期间断线不会重建连接", async () => {
+    const pending = metadataDeferred<never[]>();
+    mockApi.createTable.mockResolvedValue(undefined);
+    mockApi.listTables.mockReturnValue(pending.promise);
+    const request = useDatabaseStore
+      .getState()
+      .createTable("stale", "a", { tableName: "new", columns: [] } as never);
+    await Promise.resolve();
+    useDatabaseStore.getState().removeConnectionState("stale");
+    pending.resolve([]);
+    await request;
+    expect(useDatabaseStore.getState().connectionStates.stale).toBeUndefined();
+  });
+  it("列修改迟到结果不覆盖另一张表当前结构", async () => {
+    const pending = metadataDeferred<never[]>();
+    mockApi.alterColumn.mockResolvedValue(undefined);
+    mockApi.getTableStructure.mockReturnValue(pending.promise);
+    useDatabaseStore.setState({
+      connectionStates: {
+        stale: {
+          ...emptyConnState(),
+          selectedDatabase: "a",
+          selectedTable: "first",
+        },
+      },
+    });
+    const request = useDatabaseStore
+      .getState()
+      .alterColumn("stale", "a", "first", {} as never);
+    await Promise.resolve();
+    useDatabaseStore.setState((s) => ({
+      connectionStates: {
+        ...s.connectionStates,
+        stale: {
+          ...s.connectionStates.stale,
+          selectedTable: "second",
+          tableStructure: [{ name: "second" } as never],
+        },
+      },
+    }));
+    pending.resolve([]);
+    await request;
+    expect(
+      useDatabaseStore.getState().connectionStates.stale.tableStructure
+    ).toEqual([{ name: "second" }]);
+  });
+});
+
+describe("DDL 各入口生命周期", () => {
+  const actions = [
+    [
+      "createDatabase",
+      () => useDatabaseStore.getState().createDatabase("ddl", "db", "", ""),
+    ],
+    [
+      "dropDatabase",
+      () => useDatabaseStore.getState().dropDatabase("ddl", "db"),
+    ],
+    [
+      "renameDatabase",
+      () =>
+        useDatabaseStore.getState().renameDatabase("ddl", "db", "new", "", ""),
+    ],
+    [
+      "renameTable",
+      () => useDatabaseStore.getState().renameTable("ddl", "db", "old", "new"),
+    ],
+    [
+      "alterTableEngine",
+      () =>
+        useDatabaseStore
+          .getState()
+          .alterTableEngine("ddl", "db", "table", "InnoDB"),
+    ],
+    [
+      "alterColumn",
+      () =>
+        useDatabaseStore
+          .getState()
+          .alterColumn("ddl", "db", "table", {} as never),
+    ],
+    [
+      "addColumn",
+      () =>
+        useDatabaseStore
+          .getState()
+          .addColumn("ddl", "db", "table", {} as never),
+    ],
+    [
+      "dropColumn",
+      () => useDatabaseStore.getState().dropColumn("ddl", "db", "table", "col"),
+    ],
+    [
+      "createTable",
+      () => useDatabaseStore.getState().createTable("ddl", "db", {} as never),
+    ],
+    [
+      "dropTable",
+      () => useDatabaseStore.getState().dropTable("ddl", "db", "table"),
+    ],
+    [
+      "truncateTable",
+      () => useDatabaseStore.getState().truncateTable("ddl", "db", "table"),
+    ],
+  ] as const;
+  beforeEach(() => {
+    vi.resetAllMocks();
+    useDatabaseStore.getState().reset();
+    useDatabaseStore.getState().switchToConnection("ddl");
+  });
+  it.each(actions)("%s 的目录响应在断线后不能回填", async (name, action) => {
+    const pending = metadataDeferred<never[]>();
+    mockApi[name].mockResolvedValue(undefined);
+    mockApi.listDatabases.mockReturnValue(pending.promise);
+    mockApi.listTables.mockReturnValue(pending.promise);
+    mockApi.getTableStructure.mockReturnValue(pending.promise);
+    const request = action();
+    await Promise.resolve();
+    useDatabaseStore.getState().removeConnectionState("ddl");
+    pending.resolve([]);
+    await request;
+    expect(useDatabaseStore.getState().connectionStates.ddl).toBeUndefined();
+  });
+  it.each(actions)(
+    "%s 自身在断线后成功也不能发起目录回填",
+    async (name, action) => {
+      const pending = metadataDeferred<void>();
+      mockApi[name].mockReturnValue(pending.promise);
+      mockApi.listDatabases.mockResolvedValue([]);
+      mockApi.listTables.mockResolvedValue([]);
+      mockApi.getTableStructure.mockResolvedValue([]);
+      const request = action();
+      useDatabaseStore.getState().removeConnectionState("ddl");
+      pending.resolve();
+      await request;
+      expect(useDatabaseStore.getState().connectionStates.ddl).toBeUndefined();
+      expect(mockApi.listTables).not.toHaveBeenCalled();
+      expect(mockApi.listDatabases).not.toHaveBeenCalled();
+      expect(mockApi.getTableStructure).not.toHaveBeenCalled();
+    }
+  );
+});
+
+describe("表元数据补齐的过期失败", () => {
+  it("失效前的结构失败不覆盖新请求，也不删除新进行中任务", async () => {
+    vi.resetAllMocks();
+    useDatabaseStore.getState().reset();
+    useDatabaseStore.getState().switchToConnection("hydrate");
+    useDatabaseStore
+      .getState()
+      .openTableTabs("hydrate", [{ database: "app", table: "users" }]);
+    const table = {
+      name: "users",
+      table_type: "TABLE",
+      engine: null,
+      rows: null,
+      data_length: null,
+      index_length: null,
+      comment: "",
+    };
+    mockApi.listTables.mockResolvedValue([table]);
+    let fail!: (error: Error) => void;
+    const old = new Promise<never[]>((_resolve, reject) => {
+      fail = reject;
+    });
+    const fresh = metadataDeferred<never[]>();
+    mockApi.getTableStructure
+      .mockReturnValueOnce(old)
+      .mockReturnValueOnce(fresh.promise);
+    const a = useDatabaseStore
+      .getState()
+      .ensureTableMetadata("hydrate", "app", "users");
+    await Promise.resolve();
+    invalidateSqlCompletion({
+      connId: "hydrate",
+      database: "app",
+      reason: "schema-change",
+    });
+    const b = useDatabaseStore
+      .getState()
+      .ensureTableMetadata("hydrate", "app", "users");
+    await Promise.resolve();
+    fail(new Error("旧权限错误"));
+    await expect(a).resolves.toBeUndefined();
+    const c = useDatabaseStore
+      .getState()
+      .ensureTableMetadata("hydrate", "app", "users");
+    expect(mockApi.getTableStructure).toHaveBeenCalledTimes(2);
+    fresh.resolve([]);
+    await Promise.all([b, c]);
+    expect(
+      useDatabaseStore.getState().connectionStates.hydrate.tableStructures[
+        "app|users"
+      ]
+    ).toEqual([]);
+  });
 });

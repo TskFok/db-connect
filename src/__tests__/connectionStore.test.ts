@@ -187,6 +187,38 @@ describe("connectionStore", () => {
     await useConnectionStore.getState().deleteSavedConnection("saved");
     expect(getSqlCompletionConnectionRevision(connId)).toBe(before + 1);
   });
+  it.each(["disconnect", "forceCleanupConnection"] as const)(
+    "%s 在后端等待期间已发出断线失效",
+    async (action) => {
+      const connId = "disconnect-pending";
+      const conn = {
+        connId,
+        config: {
+          id: "saved",
+          name: "Test",
+          host: "localhost",
+          port: 3306,
+          username: "root",
+        },
+      };
+      useConnectionStore.setState({
+        activeConnections: { [connId]: conn },
+        activeConnId: connId,
+        activeConnection: conn,
+      });
+      let finish!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      mockApi.disconnect.mockReturnValue(pending);
+      mockApi.forceDisconnect.mockReturnValue(pending);
+      const before = getSqlCompletionConnectionRevision(connId);
+      const request = useConnectionStore.getState()[action](connId);
+      expect(getSqlCompletionConnectionRevision(connId)).toBe(before + 1);
+      finish();
+      await request;
+    }
+  );
   beforeEach(() => {
     mockApi.getSessionInfo.mockResolvedValue({ ...mockSessionInfo });
     mockApi.getSessionInfoCached.mockResolvedValue({ ...mockSessionInfo });

@@ -22,6 +22,8 @@ vi.mock("../services/tauriCommands", () => ({
   disconnect: vi.fn(),
   listDatabases: vi.fn(),
   listTables: vi.fn(),
+  listTablesBatch: vi.fn().mockResolvedValue([]),
+  invalidateTableMetadataCache: vi.fn().mockResolvedValue(undefined),
   getTableStructure: vi.fn(),
   queryTableData: vi.fn(),
   queryTableCount: vi.fn().mockResolvedValue(0),

@@ -1,0 +1,46 @@
+{
+  "date": "2026-09-30",
+  "node": "v25.5.0",
+  "platform": "Darwin",
+  "architecture": "arm64",
+  "scope": "生产store/service，空目录及立即resolve的invoke替身；不包含真实Tauri、数据库、网络或渲染；无前后端到端延迟对照",
+  "percentile": "nearest-rank",
+  "records": [
+    {
+      "fixture": "empty-catalog-immediate-ipc-double",
+      "databases": 1,
+      "samples": 30,
+      "warmup": 5,
+      "catalogIpc": 1,
+      "totalRefreshIpc": 3,
+      "p95Ms": 0.1047919999999749
+    },
+    {
+      "fixture": "empty-catalog-immediate-ipc-double",
+      "databases": 10,
+      "samples": 30,
+      "warmup": 5,
+      "catalogIpc": 1,
+      "totalRefreshIpc": 3,
+      "p95Ms": 0.15787499999999
+    },
+    {
+      "fixture": "empty-catalog-immediate-ipc-double",
+      "databases": 100,
+      "samples": 30,
+      "warmup": 5,
+      "catalogIpc": 1,
+      "totalRefreshIpc": 3,
+      "p95Ms": 0.26166699999998855
+    },
+    {
+      "fixture": "same-key-immediate-ipc-double",
+      "concurrency": 20,
+      "samples": 30,
+      "warmup": 5,
+      "catalogIpc": 1,
+      "coalescedRequests": 19,
+      "p95Ms": 0.029999999999972715
+    }
+  ]
+}

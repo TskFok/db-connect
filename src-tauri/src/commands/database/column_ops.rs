@@ -2,6 +2,7 @@
 
 use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
 use crate::db::sql_utils::{esc_id, esc_str, validate_column_extra, validate_column_type};
+use crate::db::table_pagination::with_table_metadata_invalidation;
 use crate::db::{postgres_ddl, sqlite, sqlserver_ddl};
 use crate::models::types::{AddColumnRequest, AlterColumnPlacement, AlterColumnRequest};
 use crate::AppState;
@@ -190,6 +191,7 @@ pub async fn alter_column(
     table: String,
     request: AlterColumnRequest,
 ) -> Result<(), String> {
+    with_table_metadata_invalidation(&conn_id, &[(Some(&database), Some(&table))], async {
     let pool_handle = {
         let mut manager = state.connection_manager.lock().await;
         manager.get_database_pool_for_write(&conn_id)?
@@ -244,6 +246,7 @@ pub async fn alter_column(
     conn.query_drop(&sqls[0])
         .await
         .map_err(|e| format!("修改列失败: {}", e))?;
+    crate::db::table_pagination::invalidate_table_metadata(&conn_id, Some(&database), Some(&table));
     if let Some(pk_sql) = sqls.get(1) {
         conn.query_drop(pk_sql)
             .await
@@ -251,6 +254,7 @@ pub async fn alter_column(
     }
 
     Ok(())
+    }).await
 }
 
 /// 新增列
@@ -262,48 +266,51 @@ pub async fn add_column(
     table: String,
     request: AddColumnRequest,
 ) -> Result<(), String> {
-    let pool_handle = {
-        let mut manager = state.connection_manager.lock().await;
-        manager.get_database_pool_for_write(&conn_id)?
-    };
+    with_table_metadata_invalidation(&conn_id, &[(Some(&database), Some(&table))], async {
+        let pool_handle = {
+            let mut manager = state.connection_manager.lock().await;
+            manager.get_database_pool_for_write(&conn_id)?
+        };
 
-    let pool = match pool_handle {
-        DatabasePoolHandle::MySql(pool) => {
-            validate_column_type(&request.column_type)?;
-            validate_column_extra(&request.extra)?;
-            pool
-        }
-        DatabasePoolHandle::Postgres(handle) => {
-            validate_column_type(&request.column_type)?;
-            validate_column_extra(&request.extra)?;
-            // PostgreSQL 总是末尾添加列；`after_column` 在 PG 下不生效，提前丢弃避免误导。
-            return postgres_ddl::add_column(&handle.pool, &database, &table, &request).await;
-        }
-        DatabasePoolHandle::Sqlite(handle) => {
-            validate_column_type(&request.column_type)?;
-            return sqlite::add_column(&handle.pool, &database, &table, &request).await;
-        }
-        DatabasePoolHandle::SqlServer(handle) => {
-            validate_column_type(&request.column_type)?;
-            return sqlserver_ddl::add_column(&handle.pool, &database, &table, &request).await;
-        }
-        DatabasePoolHandle::ClickHouse(_) => {
-            return Err(
+        let pool = match pool_handle {
+            DatabasePoolHandle::MySql(pool) => {
+                validate_column_type(&request.column_type)?;
+                validate_column_extra(&request.extra)?;
+                pool
+            }
+            DatabasePoolHandle::Postgres(handle) => {
+                validate_column_type(&request.column_type)?;
+                validate_column_extra(&request.extra)?;
+                // PostgreSQL 总是末尾添加列；`after_column` 在 PG 下不生效，提前丢弃避免误导。
+                return postgres_ddl::add_column(&handle.pool, &database, &table, &request).await;
+            }
+            DatabasePoolHandle::Sqlite(handle) => {
+                validate_column_type(&request.column_type)?;
+                return sqlite::add_column(&handle.pool, &database, &table, &request).await;
+            }
+            DatabasePoolHandle::SqlServer(handle) => {
+                validate_column_type(&request.column_type)?;
+                return sqlserver_ddl::add_column(&handle.pool, &database, &table, &request).await;
+            }
+            DatabasePoolHandle::ClickHouse(_) => {
+                return Err(
                 "ClickHouse 暂不支持通过表结构面板新增列，请使用 SQL 编辑器执行明确的 ALTER TABLE"
                     .to_string(),
             );
-        }
-    };
+            }
+        };
 
-    let mut conn = get_conn_with_retry(&pool).await?;
+        let mut conn = get_conn_with_retry(&pool).await?;
 
-    let query = build_mysql_add_column_sql(&database, &table, &request);
+        let query = build_mysql_add_column_sql(&database, &table, &request);
 
-    conn.query_drop(&query)
-        .await
-        .map_err(|e| format!("新增列失败: {}", e))?;
+        conn.query_drop(&query)
+            .await
+            .map_err(|e| format!("新增列失败: {}", e))?;
 
-    Ok(())
+        Ok(())
+    })
+    .await
 }
 
 /// 删除列
@@ -315,44 +322,49 @@ pub async fn drop_column(
     table: String,
     column_name: String,
 ) -> Result<(), String> {
-    let pool_handle = {
-        let mut manager = state.connection_manager.lock().await;
-        manager.get_database_pool_for_write(&conn_id)?
-    };
+    with_table_metadata_invalidation(&conn_id, &[(Some(&database), Some(&table))], async {
+        let pool_handle = {
+            let mut manager = state.connection_manager.lock().await;
+            manager.get_database_pool_for_write(&conn_id)?
+        };
 
-    let pool = match pool_handle {
-        DatabasePoolHandle::MySql(pool) => pool,
-        DatabasePoolHandle::Postgres(handle) => {
-            return postgres_ddl::drop_column(&handle.pool, &database, &table, &column_name).await;
-        }
-        DatabasePoolHandle::Sqlite(handle) => {
-            return sqlite::drop_column(&handle.pool, &database, &table, &column_name).await;
-        }
-        DatabasePoolHandle::SqlServer(handle) => {
-            return sqlserver_ddl::drop_column(&handle.pool, &database, &table, &column_name).await;
-        }
-        DatabasePoolHandle::ClickHouse(_) => {
-            return Err(
+        let pool = match pool_handle {
+            DatabasePoolHandle::MySql(pool) => pool,
+            DatabasePoolHandle::Postgres(handle) => {
+                return postgres_ddl::drop_column(&handle.pool, &database, &table, &column_name)
+                    .await;
+            }
+            DatabasePoolHandle::Sqlite(handle) => {
+                return sqlite::drop_column(&handle.pool, &database, &table, &column_name).await;
+            }
+            DatabasePoolHandle::SqlServer(handle) => {
+                return sqlserver_ddl::drop_column(&handle.pool, &database, &table, &column_name)
+                    .await;
+            }
+            DatabasePoolHandle::ClickHouse(_) => {
+                return Err(
                 "ClickHouse 暂不支持通过表结构面板删除列，请使用 SQL 编辑器执行明确的 ALTER TABLE"
                     .to_string(),
             );
-        }
-    };
+            }
+        };
 
-    let mut conn = get_conn_with_retry(&pool).await?;
+        let mut conn = get_conn_with_retry(&pool).await?;
 
-    let query = format!(
-        "ALTER TABLE {}.{} DROP COLUMN {}",
-        esc_id(&database),
-        esc_id(&table),
-        esc_id(&column_name)
-    );
+        let query = format!(
+            "ALTER TABLE {}.{} DROP COLUMN {}",
+            esc_id(&database),
+            esc_id(&table),
+            esc_id(&column_name)
+        );
 
-    conn.query_drop(&query)
-        .await
-        .map_err(|e| format!("删除列失败: {}", e))?;
+        conn.query_drop(&query)
+            .await
+            .map_err(|e| format!("删除列失败: {}", e))?;
 
-    Ok(())
+        Ok(())
+    })
+    .await
 }
 
 #[cfg(test)]

@@ -9,7 +9,7 @@ use crate::db::sql_utils::{
     validate_where_clause,
 };
 use crate::db::table_pagination::{
-    cached_metadata_for_navigation, remember_metadata, ColumnMetadata, Engine, IntegerKind,
+    invalidate_metadata_after_sql_result, load_table_metadata, ColumnMetadata, Engine, IntegerKind,
     IntegerValue, PageContext, PagePlan, TableMetadata,
 };
 use crate::db::table_query::TableQueryCancellation;
@@ -476,7 +476,7 @@ async fn fetch_primary_keys(
 }
 
 /// 一次集合查询同时获取真实主键、整数类型和空页列名；不信任视图传播的 COLUMN_KEY。
-async fn fetch_table_page_metadata(
+pub(crate) async fn fetch_table_page_metadata(
     conn: &mut mysql_async::Conn,
     database: &str,
     table: &str,
@@ -911,14 +911,14 @@ pub async fn query_table_data(
                     .collect(),
                 page_size,
             };
-            let metadata = match cached_metadata_for_navigation(&context, page, navigation.as_ref())
-            {
-                Some(metadata) => metadata,
-                None => remember_metadata(
-                    &context,
-                    fetch_table_page_metadata(&mut conn, &database, &table).await?,
-                ),
-            };
+            let metadata = load_table_metadata(&context, &mut conn, |conn, context| {
+                Box::pin(fetch_table_page_metadata(
+                    conn,
+                    &context.database,
+                    &context.table,
+                ))
+            })
+            .await?;
 
             // 1) 查询总数（skip_count 为 true 时跳过，用于大数据量表加快首屏显示）
             let total: u64 = if skip_count == Some(true) {
@@ -1638,7 +1638,7 @@ pub async fn execute_sql(
         manager.get_database_pool_touch_and_read_only(&conn_id)?
     };
 
-    match pool_handle {
+    let result = match pool_handle {
         DatabasePoolHandle::MySql(pool) => {
             if read_only && !sql_editor_allowed_on_read_only_connection(&sql) {
                 return Err(
@@ -1735,7 +1735,9 @@ pub async fn execute_sql(
 
             result
         }
-    }
+    };
+    invalidate_metadata_after_sql_result(&conn_id, &result);
+    result
 }
 
 /// 取消（KILL QUERY）由 `execute_sql` 以相同 `execution_id` 登记的运行中查询。

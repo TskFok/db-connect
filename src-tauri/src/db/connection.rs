@@ -601,6 +601,7 @@ impl ConnectionManager {
 
     /// 注册一个已建立好的连接（仅写入 HashMap，调用方只需短暂持锁）。
     pub fn register(&mut self, conn_id: String, active: ActiveConnection) {
+        crate::db::table_pagination::activate_table_metadata_connection(&conn_id);
         self.connections.insert(conn_id, active);
     }
 
@@ -615,7 +616,11 @@ impl ConnectionManager {
                 return None;
             }
         }
-        self.connections.remove(conn_id)
+        let active = self.connections.remove(conn_id);
+        if active.is_some() {
+            crate::db::table_pagination::close_table_metadata_connection(conn_id);
+        }
+        active
     }
 
     /// 锁内原子取走连接，锁外等待资源关闭；返回是否移除了连接。
@@ -933,6 +938,15 @@ impl ConnectionManager {
         Ok(start.elapsed().as_millis() as u64)
     }
 
+    /// 保存配置可对应多个运行时连接；这里只扫描内存，不发起数据库 I/O。
+    pub fn connection_ids_for_saved(&self, saved_id: &str) -> Vec<String> {
+        self.connections
+            .iter()
+            .filter(|(_, connection)| connection.config.id.as_deref() == Some(saved_id))
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
     /// 获取所有活跃连接的 ID 列表
     pub fn active_connection_ids(&self) -> Vec<String> {
         self.connections.keys().cloned().collect()
@@ -981,6 +995,65 @@ mod tests {
             config,
             last_activity,
         }
+    }
+
+    #[tokio::test]
+    async fn metadata_cache_disconnect_invalidates_before_close_without_holding_manager() {
+        use crate::db::table_pagination::{
+            cached_table_metadata, remember_metadata, Engine, PageContext, TableMetadata,
+        };
+        let ctx = PageContext {
+            engine: Engine::MySql,
+            connection: uuid::Uuid::new_v4().to_string(),
+            database: "app".into(),
+            table: "items".into(),
+            filter: String::new(),
+            sort: vec![],
+            page_size: 2,
+        };
+        let manager = tokio::sync::Mutex::new(ConnectionManager::new());
+        manager
+            .lock()
+            .await
+            .register(ctx.connection.clone(), lazy_active(Instant::now()));
+        remember_metadata(&ctx, TableMetadata::new(vec![], false));
+        let removed = disconnect_managed_with(
+            &manager,
+            &ctx.connection,
+            DisconnectMode::Idle(30),
+            |_| async { panic!("尚未空闲不能关闭") },
+        )
+        .await
+        .unwrap();
+        assert!(!removed);
+        assert!(cached_table_metadata(&ctx).is_some());
+        disconnect_managed_with(
+            &manager,
+            &ctx.connection,
+            DisconnectMode::Normal,
+            |database| async {
+                assert!(manager.try_lock().is_ok());
+                assert!(cached_table_metadata(&ctx).is_none());
+                database.disconnect().await
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    #[test]
+    fn metadata_cache_saved_connection_mapping_does_not_include_other_connections() {
+        let mut manager = ConnectionManager::new();
+        let mut first = lazy_active(Instant::now());
+        first.config.id = Some("saved-target".into());
+        let mut second = lazy_active(Instant::now());
+        second.config.id = Some("saved-source".into());
+        manager.register("target-runtime".into(), first);
+        manager.register("source-runtime".into(), second);
+        assert_eq!(
+            manager.connection_ids_for_saved("saved-target"),
+            vec!["target-runtime"]
+        );
     }
 
     async fn assert_slow_close_releases_manager(mode: DisconnectMode) {

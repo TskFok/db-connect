@@ -617,6 +617,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
       }
       const successfulSql: string[] = [];
       const executionResults: SqlStatementResult[] = [];
+      let successfulModification = false;
       let lastResult: SqlExecuteResult | null = null;
       let execError: string | null = null;
       let executionId: string | null = null;
@@ -652,6 +653,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
           markExecution(cid, { executionId });
           const res = await api.executeSql(cid, db, stmt, executionId);
           successfulSql.push(stmt);
+          successfulModification ||= res.result_type === "modify";
           // 快捷键或重挂载可能已开始另一轮执行，旧脚本不得继续或覆盖新结果。
           if (!isCurrentExecution(cid, executionId)) return;
           lastResult = res;
@@ -699,8 +701,9 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
         if (localExecutionCleanupRef.current === discardExecution)
           localExecutionCleanupRef.current = null;
         try {
-          // 成功的 DDL 可能带跨库目标；保守使当前连接失效，不执行额外探测 SQL。
+          // 后端已失效分页缓存；成功的修改结果保守失效连接目录请求，覆盖任意 DDL/DML。
           if (
+            successfulModification ||
             successfulSql.some((sql) => {
               const first = tokenizeSql(sql, completionDialectRef.current).find(
                 (token) => token.kind !== "comment"

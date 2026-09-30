@@ -3,6 +3,7 @@ use crate::db::postgres_objects;
 use crate::db::sql_utils::{esc_id, esc_str};
 use crate::db::sqlite;
 use crate::db::sqlserver_objects;
+use crate::db::table_pagination::with_table_metadata_invalidation;
 use crate::models::types::{CreateIndexRequest, IndexColumnInfo, IndexInfo};
 use crate::AppState;
 use mysql_async::prelude::*;
@@ -124,36 +125,58 @@ pub async fn create_index(
         return Err("至少需要选择一列".to_string());
     }
 
-    let pool = {
+    let pool_handle = {
         let mut manager = state.connection_manager.lock().await;
-        match manager.get_database_pool_for_write(&conn_id)? {
+        manager.get_database_pool_for_write(&conn_id)?
+    };
+    create_index_with_pool(&conn_id, pool_handle, &database, &table, &request).await
+}
+
+async fn create_index_with_pool(
+    conn_id: &str,
+    pool_handle: DatabasePoolHandle,
+    database: &str,
+    table: &str,
+    request: &CreateIndexRequest,
+) -> Result<(), String> {
+    with_table_metadata_invalidation(conn_id, &[(Some(database), Some(table))], async {
+        // 验证参数
+        if request.index_name.is_empty() {
+            return Err("索引名称不能为空".to_string());
+        }
+        if request.columns.is_empty() {
+            return Err("至少需要选择一列".to_string());
+        }
+
+        let pool = match pool_handle {
             DatabasePoolHandle::MySql(pool) => pool,
             DatabasePoolHandle::Postgres(handle) => {
-                return postgres_objects::create_index(&handle.pool, &database, &table, &request)
+                return postgres_objects::create_index(&handle.pool, database, table, request)
                     .await;
             }
             DatabasePoolHandle::Sqlite(handle) => {
-                return sqlite::create_index(&handle.pool, &database, &table, &request).await;
+                return sqlite::create_index(&handle.pool, database, table, request).await;
             }
             DatabasePoolHandle::SqlServer(handle) => {
-                return sqlserver_objects::create_index(&handle.pool, &database, &table, &request)
+                return sqlserver_objects::create_index(&handle.pool, database, table, request)
                     .await;
             }
             DatabasePoolHandle::ClickHouse(_) => {
                 return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
             }
-        }
-    };
+        };
 
-    let mut conn = get_conn_with_retry(&pool).await?;
+        let mut conn = get_conn_with_retry(&pool).await?;
 
-    let sql = build_mysql_create_index_sql(&database, &table, &request)?;
+        let sql = build_mysql_create_index_sql(database, table, request)?;
 
-    conn.query_drop(&sql)
-        .await
-        .map_err(|e| format!("创建索引失败: {}", e))?;
+        conn.query_drop(&sql)
+            .await
+            .map_err(|e| format!("创建索引失败: {}", e))?;
 
-    Ok(())
+        Ok(())
+    })
+    .await
 }
 
 /// 删除索引
@@ -169,36 +192,54 @@ pub async fn delete_index(
         return Err("索引名称不能为空".to_string());
     }
 
-    let pool = {
+    let pool_handle = {
         let mut manager = state.connection_manager.lock().await;
-        match manager.get_database_pool_for_write(&conn_id)? {
+        manager.get_database_pool_for_write(&conn_id)?
+    };
+    delete_index_with_pool(&conn_id, pool_handle, &database, &table, &index_name).await
+}
+
+async fn delete_index_with_pool(
+    conn_id: &str,
+    pool_handle: DatabasePoolHandle,
+    database: &str,
+    table: &str,
+    index_name: &str,
+) -> Result<(), String> {
+    with_table_metadata_invalidation(conn_id, &[(Some(database), Some(table))], async {
+        if index_name.is_empty() {
+            return Err("索引名称不能为空".to_string());
+        }
+
+        let pool = match pool_handle {
             DatabasePoolHandle::MySql(pool) => pool,
             DatabasePoolHandle::Postgres(handle) => {
-                return postgres_objects::drop_index(&handle.pool, &database, &table, &index_name)
+                return postgres_objects::drop_index(&handle.pool, database, table, index_name)
                     .await;
             }
             DatabasePoolHandle::Sqlite(handle) => {
-                return sqlite::delete_index(&handle.pool, &database, &index_name).await;
+                return sqlite::delete_index(&handle.pool, database, index_name).await;
             }
             DatabasePoolHandle::SqlServer(handle) => {
-                return sqlserver_objects::drop_index(&handle.pool, &database, &table, &index_name)
+                return sqlserver_objects::drop_index(&handle.pool, database, table, index_name)
                     .await;
             }
             DatabasePoolHandle::ClickHouse(_) => {
                 return Err(DatabasePoolHandle::clickhouse_write_unsupported_error());
             }
-        }
-    };
+        };
 
-    let mut conn = get_conn_with_retry(&pool).await?;
+        let mut conn = get_conn_with_retry(&pool).await?;
 
-    let sql = build_mysql_drop_index_sql(&database, &table, &index_name)?;
+        let sql = build_mysql_drop_index_sql(database, table, index_name)?;
 
-    conn.query_drop(&sql)
-        .await
-        .map_err(|e| format!("删除索引失败: {}", e))?;
+        conn.query_drop(&sql)
+            .await
+            .map_err(|e| format!("删除索引失败: {}", e))?;
 
-    Ok(())
+        Ok(())
+    })
+    .await
 }
 
 /// MySQL 创建索引 SQL，供预览和执行共用。
@@ -380,6 +421,71 @@ pub fn build_columns_sql(columns: &[crate::models::types::CreateIndexColumn]) ->
 mod tests {
     use super::*;
     use crate::models::types::{CreateIndexColumn, CreateIndexRequest, IndexColumnInfo, IndexInfo};
+
+    #[tokio::test]
+    async fn metadata_cache_index_ddl_invalidates_on_success_and_preserves_on_failure() {
+        use crate::db::table_pagination::{
+            cached_table_metadata, remember_metadata, Engine, PageContext, TableMetadata,
+        };
+        let pool = deadpool_sqlite::Config::new(":memory:")
+            .create_pool(deadpool_sqlite::Runtime::Tokio1)
+            .unwrap();
+        let conn = pool.get().await.unwrap();
+        conn.interact(|conn| {
+            conn.execute_batch("CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT);")
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        drop(conn);
+        let handle = || DatabasePoolHandle::Sqlite(sqlite::SqlitePoolHandle { pool: pool.clone() });
+        let ctx = PageContext {
+            engine: Engine::MySql,
+            connection: uuid::Uuid::new_v4().to_string(),
+            database: "main".into(),
+            table: "items".into(),
+            filter: String::new(),
+            sort: vec![],
+            page_size: 2,
+        };
+        let request = CreateIndexRequest {
+            index_name: "idx_value".into(),
+            index_type: "INDEX".into(),
+            index_method: None,
+            columns: vec![CreateIndexColumn {
+                column_name: "value".into(),
+                length: None,
+                order: None,
+            }],
+            comment: None,
+        };
+        remember_metadata(&ctx, TableMetadata::new(vec![], false));
+        create_index_with_pool(&ctx.connection, handle(), "main", "items", &request)
+            .await
+            .unwrap();
+        assert!(
+            cached_table_metadata(&ctx).is_none(),
+            "成功创建索引后必须废弃旧主键证据"
+        );
+        remember_metadata(&ctx, TableMetadata::new(vec![], false));
+        assert!(
+            create_index_with_pool(&ctx.connection, handle(), "main", "items", &request)
+                .await
+                .is_err()
+        );
+        assert!(cached_table_metadata(&ctx).is_some());
+        delete_index_with_pool(&ctx.connection, handle(), "main", "items", "idx_value")
+            .await
+            .unwrap();
+        assert!(cached_table_metadata(&ctx).is_none());
+        remember_metadata(&ctx, TableMetadata::new(vec![], false));
+        assert!(
+            delete_index_with_pool(&ctx.connection, handle(), "main", "items", "idx_value")
+                .await
+                .is_err()
+        );
+        assert!(cached_table_metadata(&ctx).is_some());
+    }
 
     #[test]
     fn mysql_index_preview_preserves_prefix_order_method_comment_and_escaping() {

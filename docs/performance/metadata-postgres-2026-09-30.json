@@ -1,0 +1,13 @@
+{
+  "admin_catalog_sql_count": 1,
+  "empty_and_missing_schema": "empty groups, same as legacy",
+  "legacy_fields_match": true,
+  "limited_catalog_sql_count": 1,
+  "limited_permissions": "schema a USAGE plus same SELECT only; schema b data denied, catalog visibility matches legacy",
+  "passed": true,
+  "requested_schemas": 6,
+  "server_version": "17.10",
+  "unique_schemas": 5,
+  "fixture_marker": "db-connect-metadata-pg-3c866661411040b38bfe06cb0b5c942b",
+  "image": "postgres:17-alpine"
+}

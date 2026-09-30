@@ -88,6 +88,8 @@ pub fn run() {
             preferences::delete_table_column_settings,
             database::list_databases,
             database::list_tables,
+            database::list_tables_batch,
+            database::invalidate_table_metadata_cache,
             database::get_table_structure,
             database::get_sql_completion_metadata,
             database::get_table_definition,

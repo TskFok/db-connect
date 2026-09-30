@@ -24,7 +24,12 @@ import {
   type ViewMode,
 } from "./databaseStoreState";
 import { applyOpenTabDerivedState, syncCurrentView } from "./databaseStoreView";
-import { invalidateSqlCompletion } from "../utils/sqlCompletionInvalidation";
+import {
+  getMetadataRequestGeneration,
+  getSqlCompletionConnectionRevision,
+  invalidateMetadataRequestScope,
+  invalidateSqlCompletion,
+} from "../utils/sqlCompletionInvalidation";
 
 // 状态形状与纯派生逻辑拆分到 ./databaseStoreState，便于维护并复用；此处重新导出以保持既有导入路径不变
 export { emptyConnState };
@@ -237,7 +242,207 @@ interface DatabaseState {
 
 // 标签对象同时作为请求身份：关闭后重开同名表不会接收旧请求的结果。
 let sqlResultGeneration = 0;
-const tableMetadataRequests = new WeakMap<OpenTabEntry, Promise<void>>();
+const tableMetadataRequests = new WeakMap<
+  OpenTabEntry,
+  { generation: string; promise: Promise<void> }
+>();
+
+const selectionRequests = new Map<string, object>();
+function beginSelection(connId: string): object {
+  const request = {};
+  selectionRequests.set(connId, request);
+  return request;
+}
+
+// 断线生命周期独立于结构代次：并发成功 DDL 仍须负责新一代读取。
+const connectionLifetimes = new Map<string, object>();
+function connectionLifetime(connId: string): object {
+  let lifetime = connectionLifetimes.get(connId);
+  if (!lifetime) {
+    lifetime = {};
+    connectionLifetimes.set(connId, lifetime);
+  }
+  return lifetime;
+}
+
+type MetadataLoading = "treeLoading" | "structureLoading";
+const loadingRequests: Record<MetadataLoading, Map<string, object>> = {
+  treeLoading: new Map(),
+  structureLoading: new Map(),
+};
+function beginMetadataLoading(connId: string, kind: MetadataLoading): object {
+  const request = {};
+  loadingRequests[kind].set(connId, request);
+  return request;
+}
+function finishMetadataLoading(
+  connId: string,
+  kind: MetadataLoading,
+  request: object
+): void {
+  if (loadingRequests[kind].get(connId) !== request) return;
+  loadingRequests[kind].delete(connId);
+  if (useDatabaseStore.getState().activeConnId === connId) {
+    useDatabaseStore.setState(
+      kind === "treeLoading"
+        ? { treeLoading: false }
+        : { structureLoading: false }
+    );
+  }
+}
+
+type MetadataResource =
+  | readonly ["databases"]
+  | readonly ["tables", string]
+  | readonly ["structure", string, string];
+const metadataReadOwners = new Map<string, Map<string, object>>();
+
+/** 一个资源只允许最后登记的读取回填；不同表结构彼此不接管。 */
+function ownMetadataRead(
+  connId: string,
+  resources: readonly MetadataResource[]
+): () => boolean {
+  const owners = metadataReadOwners.get(connId) ?? new Map<string, object>();
+  metadataReadOwners.set(connId, owners);
+  const request = {};
+  const keys = resources.map((resource) => JSON.stringify(resource));
+  for (const key of keys) owners.set(key, request);
+  return () =>
+    keys.every((key) => metadataReadOwners.get(connId)?.get(key) === request);
+}
+
+function discardMetadataResources(
+  connId: string,
+  resources: readonly MetadataResource[]
+): void {
+  useDatabaseStore.setState((current) => {
+    const state = current.connectionStates[connId];
+    if (!state) return current;
+    const updated = {
+      ...state,
+      tables: { ...state.tables },
+      tableStructures: { ...state.tableStructures },
+    };
+    for (const resource of resources) {
+      if (resource[0] === "databases") updated.databases = [];
+      if (resource[0] === "tables") delete updated.tables[resource[1]];
+      if (resource[0] === "structure") {
+        delete updated.tableStructures[`${resource[1]}|${resource[2]}`];
+        if (
+          state.selectedDatabase === resource[1] &&
+          state.selectedTable === resource[2]
+        )
+          updated.tableStructure = null;
+      }
+    }
+    return {
+      connectionStates: { ...current.connectionStates, [connId]: updated },
+      ...(current.activeConnId === connId ? syncCurrentView(updated) : {}),
+    };
+  });
+}
+
+type ResourceOwnership = (resource: MetadataResource) => boolean;
+type SchemaMutation = {
+  read: <T>(
+    resources: readonly MetadataResource[],
+    loader: (owns: ResourceOwnership) => Promise<T>,
+    apply: (value: T, owns: ResourceOwnership) => void
+  ) => Promise<void>;
+};
+
+class MetadataRefreshRequiredError extends Error {}
+
+/** 接管资源也接管更新责任：同一读取最多补读一次，提交与校验同步进行。 */
+function createMetadataRead(
+  connId: string,
+  scope: readonly string[] | undefined,
+  resources: readonly MetadataResource[],
+  relevant: ResourceOwnership = () => true,
+  changedMessage = "元数据在读取期间再次变化，请刷新后重试"
+) {
+  const lifetime = connectionLifetime(connId);
+  const revision = getSqlCompletionConnectionRevision(connId);
+  const owners = new Map(
+    resources.map((resource) => [
+      JSON.stringify(resource),
+      ownMetadataRead(connId, [resource]),
+    ])
+  );
+  const owns: ResourceOwnership = (resource) =>
+    lifetime === connectionLifetimes.get(connId) &&
+    revision === getSqlCompletionConnectionRevision(connId) &&
+    relevant(resource) &&
+    (owners.get(JSON.stringify(resource))?.() ?? false);
+  const ownsAny = () => resources.some(owns);
+  return {
+    owns,
+    ownsAny,
+    async read<T>(
+      loader: (owns: ResourceOwnership) => Promise<T>,
+      apply: (value: T, owns: ResourceOwnership) => void
+    ) {
+      if (!ownsAny()) return;
+      let generation = getMetadataRequestGeneration(connId, scope);
+      const current = () =>
+        generation === getMetadataRequestGeneration(connId, scope);
+      const readOnce = async () => {
+        try {
+          return { ok: true as const, value: await loader(owns) };
+        } catch (error) {
+          return { ok: false as const, error };
+        }
+      };
+      let result = await readOnce();
+      if (!ownsAny()) return;
+      if (!current()) {
+        generation = getMetadataRequestGeneration(connId, scope);
+        // 明确的单次补读，不递归、不排队、不在循环中执行查询。
+        result = await readOnce();
+        if (!ownsAny()) return;
+        if (!current()) {
+          discardMetadataResources(connId, resources.filter(owns));
+          throw new MetadataRefreshRequiredError(changedMessage);
+        }
+      }
+      if (!result.ok) throw result.error;
+      apply(result.value, owns);
+    },
+  };
+}
+
+/** DDL 仅执行一次，随后将需要回填的资源交给共享读取上下文。 */
+async function mutateSchema(
+  connId: string,
+  database: string | undefined,
+  operation: () => Promise<void>
+): Promise<SchemaMutation | undefined> {
+  const scope = database === undefined ? undefined : [database];
+  const lifetime = connectionLifetime(connId);
+  const revision = getSqlCompletionConnectionRevision(connId);
+  const sameConnection = () =>
+    lifetime === connectionLifetimes.get(connId) &&
+    revision === getSqlCompletionConnectionRevision(connId);
+  await operation();
+  invalidateSqlCompletion({
+    connId,
+    ...(database === undefined ? {} : { database }),
+    reason: "schema-change",
+  });
+  if (!sameConnection()) return;
+  return {
+    async read(resources, loader, apply) {
+      if (!sameConnection()) return;
+      await createMetadataRead(
+        connId,
+        scope,
+        resources,
+        () => true,
+        "操作已成功，元数据在读取期间再次变化，请刷新；无需重复执行操作"
+      ).read(loader, apply);
+    },
+  };
+}
 
 export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   activeConnId: null,
@@ -269,66 +474,78 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   databaseInfoLoading: false,
 
   loadDatabases: async (connId: string, defaultDatabase?: string | null) => {
+    const read = createMetadataRead(connId, undefined, [["databases"]]);
+    const loading = beginMetadataLoading(connId, "treeLoading");
+    let selectDefault = false;
     try {
       set({ treeLoading: true });
-      const databases = await api.listDatabases(connId);
-
-      set((s) => {
-        const state = s.connectionStates[connId] ?? emptyConnState();
-        const updated = { ...state, databases };
-        const newStates = { ...s.connectionStates, [connId]: updated };
-        const res: Partial<DatabaseState> = {
-          connectionStates: newStates,
-          treeLoading: false,
-        };
-        if (s.activeConnId === connId) {
-          Object.assign(res, syncCurrentView(updated));
+      await read.read(
+        () => api.listDatabases(connId),
+        (databases) => {
+          set((s) => {
+            const state = s.connectionStates[connId] ?? emptyConnState();
+            const updated = { ...state, databases };
+            return {
+              connectionStates: { ...s.connectionStates, [connId]: updated },
+              ...(s.activeConnId === connId ? syncCurrentView(updated) : {}),
+            };
+          });
+          selectDefault =
+            !!defaultDatabase && databases.includes(defaultDatabase);
         }
-        return res;
-      });
-
-      if (defaultDatabase && databases.includes(defaultDatabase)) {
+      );
+      if (selectDefault && defaultDatabase && read.ownsAny()) {
         await get().selectDatabase(connId, defaultDatabase);
       }
-    } catch (e) {
-      console.error("加载数据库列表失败:", e);
-      set({ treeLoading: false });
+    } catch (error) {
+      if (!read.ownsAny()) return;
+      if (error instanceof MetadataRefreshRequiredError) throw error;
+      console.error("加载数据库列表失败:", error);
+    } finally {
+      finishMetadataLoading(connId, "treeLoading", loading);
     }
   },
 
   loadTables: async (connId: string, database: string) => {
+    const read = createMetadataRead(connId, [database], [["tables", database]]);
+    const loading = beginMetadataLoading(connId, "treeLoading");
     try {
-      set({ treeLoading: true });
-      const tableList = await api.listTables(connId, database);
-
-      set((s) => {
-        const state = s.connectionStates[connId] ?? emptyConnState();
-        const updated = {
-          ...state,
-          tables: { ...state.tables, [database]: tableList },
-        };
-        const newStates = { ...s.connectionStates, [connId]: updated };
-        const res: Partial<DatabaseState> = {
-          connectionStates: newStates,
-          treeLoading: false,
-        };
-        if (s.activeConnId === connId) {
-          Object.assign(res, syncCurrentView(updated));
+      if (get().activeConnId === connId) set({ treeLoading: true });
+      await read.read(
+        () => api.listTables(connId, database),
+        (tableList) => {
+          set((current) => {
+            const state = current.connectionStates[connId] ?? emptyConnState();
+            const updated = {
+              ...state,
+              tables: { ...state.tables, [database]: tableList },
+            };
+            return {
+              connectionStates: {
+                ...current.connectionStates,
+                [connId]: updated,
+              },
+              ...(current.activeConnId === connId
+                ? syncCurrentView(updated)
+                : {}),
+            };
+          });
         }
-        return res;
-      });
-    } catch (e) {
-      console.error("加载表列表失败:", e);
-      set({ treeLoading: false });
+      );
+    } catch (error) {
+      if (!read.ownsAny()) return;
+      if (error instanceof MetadataRefreshRequiredError) throw error;
+      console.error("加载表列表失败:", error);
+    } finally {
+      finishMetadataLoading(connId, "treeLoading", loading);
     }
   },
 
   selectDatabase: async (connId: string, database: string) => {
-    try {
-      const { connectionStates, activeConnId } = get();
-      const state = connectionStates[connId] ?? emptyConnState();
-
-      // 仅更新树上的选中数据库与展开状态，不关闭已打开的表标签页；进入 overview 模式
+    beginSelection(connId);
+    // 先同步选择，再等待目录；迟到响应只补充目录，不回放选择快照。
+    set((current) => {
+      const state = current.connectionStates[connId] ?? emptyConnState();
       const updated: ConnectionDatabaseState = {
         ...state,
         selectedDatabase: database,
@@ -336,29 +553,15 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         tableStructure: null,
         selectedTableInfo: null,
         viewMode: "overview",
-        expandedKeys: state.expandedKeys.includes(`db:${database}`)
-          ? state.expandedKeys
-          : [...state.expandedKeys, `db:${database}`],
+        expandedKeys: [...new Set([...state.expandedKeys, `db:${database}`])],
       };
-
-      if (!state.tables[database]) {
-        set({ treeLoading: true });
-        const tableList = await api.listTables(connId, database);
-        updated.tables = { ...updated.tables, [database]: tableList };
-      }
-
-      const newStates = { ...connectionStates, [connId]: updated };
-      const res: Partial<DatabaseState> = {
-        connectionStates: newStates,
-        treeLoading: false,
+      return {
+        connectionStates: { ...current.connectionStates, [connId]: updated },
+        ...(current.activeConnId === connId ? syncCurrentView(updated) : {}),
       };
-      if (activeConnId === connId) {
-        Object.assign(res, syncCurrentView(updated));
-      }
-      set(res);
-    } catch (e) {
-      console.error("选中数据库失败:", e);
-      set({ treeLoading: false });
+    });
+    if (!get().connectionStates[connId]?.tables[database]) {
+      await get().loadTables(connId, database);
     }
   },
 
@@ -367,6 +570,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   },
 
   openTableTabs: (connId, entries) => {
+    beginSelection(connId);
     if (entries.length === 0) return;
     set((current) => {
       const state = current.connectionStates[connId] ?? emptyConnState();
@@ -425,91 +629,122 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       entry?.type !== "table" ||
       entry.database !== database ||
       entry.table !== table
-    ) {
+    )
       return;
-    }
     const key = `${database}|${table}`;
     if (state.tableStructures[key] && state.tableInfos[key]) return;
+    const generation = getMetadataRequestGeneration(connId, [database]);
     const pending = tableMetadataRequests.get(entry);
-    if (pending) return pending;
-
+    if (pending?.generation === generation) return pending.promise;
+    const needsTables =
+      !state.tableInfos[key] &&
+      !state.tables[database]?.some((item) => item.name === table);
+    const read = createMetadataRead(
+      connId,
+      [database],
+      [
+        ["structure", database, table],
+        ...(needsTables ? [["tables", database] as const] : []),
+      ],
+      () => !!get().connectionStates[connId]?.openTabs.includes(entry)
+    );
     const isStillActive = () => {
       const latest = get();
       const connection = latest.connectionStates[connId];
       return (
+        read.owns(["structure", database, table]) &&
         latest.activeConnId === connId &&
         connection?.viewMode === "tab" &&
         connection.openTabs[connection.activeTabIndex] === entry
       );
     };
-    const request = (async () => {
-      let tableList = state.tables[database];
-      let loadedTableList: TableInfo[] | undefined;
-      let tableInfo: TableInfo | undefined =
-        state.tableInfos[key] ?? tableList?.find((item) => item.name === table);
-      if (!tableInfo) {
-        tableList = await api.listTables(connId, database);
-        loadedTableList = tableList;
-        if (!isStillActive()) return;
-        tableInfo = tableList.find((item) => item.name === table);
-      }
-      if (!tableInfo)
-        throw new Error(`找不到表或视图 ${database}.${table}，请刷新后重试`);
-      const loadedTableInfo = tableInfo;
-      const structure =
-        state.tableStructures[key] ??
-        (await api.getTableStructure(connId, database, table));
-
-      set((latest) => {
-        const connection = latest.connectionStates[connId];
-        if (!connection?.openTabs.includes(entry)) return latest;
-        const listUnchanged =
-          connection.tables[database] === state.tables[database];
-        const currentTableList = listUnchanged
-          ? (loadedTableList ?? connection.tables[database])
-          : connection.tables[database];
-        const currentTableInfo = currentTableList?.find(
-          (item) => item.name === table
-        );
-        if (currentTableList && !currentTableInfo) {
-          throw new Error(`找不到表或视图 ${database}.${table}，请刷新后重试`);
+    let structureRequest: object | undefined;
+    const request = read.read(
+      async (owns) => {
+        let tableList = get().connectionStates[connId]?.tables[database];
+        let loadedTableList: TableInfo[] | undefined;
+        if (needsTables && owns(["tables", database])) {
+          tableList = await api.listTables(connId, database);
+          loadedTableList = tableList;
+          if (!isStillActive()) return;
         }
-        const updated: ConnectionDatabaseState = {
-          ...connection,
-          expandedKeys:
-            isStillActive() && tableList
-              ? [...new Set([...connection.expandedKeys, `db:${database}`])]
-              : connection.expandedKeys,
-          // 仅提交本次获取的列表，且不覆盖请求期间刷新/DDL 更新的缓存。
-          tables:
-            loadedTableList && listUnchanged
-              ? { ...connection.tables, [database]: loadedTableList }
-              : connection.tables,
-          tableStructures: {
-            ...connection.tableStructures,
-            [key]: connection.tableStructures[key] ?? structure,
-          },
-          tableInfos: {
-            ...connection.tableInfos,
-            [key]:
-              currentTableInfo ?? connection.tableInfos[key] ?? loadedTableInfo,
-          },
-        };
-        applyOpenTabDerivedState(updated);
-        return {
-          connectionStates: { ...latest.connectionStates, [connId]: updated },
-          ...(latest.activeConnId === connId ? syncCurrentView(updated) : {}),
-          ...(isStillActive()
-            ? { structureError: null, structureLoading: false }
-            : {}),
-        };
-      });
-    })();
-    tableMetadataRequests.set(entry, request);
+        if (!owns(["structure", database, table])) return;
+        const tableInfo =
+          tableList?.find((item) => item.name === table) ??
+          state.tableInfos[key];
+        if (!tableInfo)
+          throw new Error(`找不到表或视图 ${database}.${table}，请刷新后重试`);
+        // 补读不能沿用上一代已缓存结构；缺失元数据的普通首次加载仍可复用缓存。
+        let structure =
+          generation === getMetadataRequestGeneration(connId, [database])
+            ? state.tableStructures[key]
+            : undefined;
+        if (!structure) {
+          structureRequest = beginMetadataLoading(connId, "structureLoading");
+          structure = await api.getTableStructure(connId, database, table);
+        }
+        return { tableList, loadedTableList, tableInfo, structure };
+      },
+      (result, owns) => {
+        if (!result || !owns(["structure", database, table])) return;
+        const { tableList, loadedTableList, tableInfo, structure } = result;
+        set((latest) => {
+          const connection = latest.connectionStates[connId];
+          if (!connection?.openTabs.includes(entry)) return latest;
+          const listUnchanged =
+            connection.tables[database] === state.tables[database];
+          const mayApplyTables = owns(["tables", database]) && listUnchanged;
+          const currentTableList = mayApplyTables
+            ? (loadedTableList ?? connection.tables[database])
+            : connection.tables[database];
+          const currentTableInfo = currentTableList?.find(
+            (item) => item.name === table
+          );
+          if (currentTableList && !currentTableInfo)
+            throw new Error(
+              `找不到表或视图 ${database}.${table}，请刷新后重试`
+            );
+          const updated: ConnectionDatabaseState = {
+            ...connection,
+            expandedKeys:
+              isStillActive() && tableList
+                ? [...new Set([...connection.expandedKeys, `db:${database}`])]
+                : connection.expandedKeys,
+            tables:
+              loadedTableList && mayApplyTables
+                ? { ...connection.tables, [database]: loadedTableList }
+                : connection.tables,
+            tableStructures: {
+              ...connection.tableStructures,
+              [key]:
+                connection.tableStructures[key] !== state.tableStructures[key]
+                  ? (connection.tableStructures[key] ?? structure)
+                  : structure,
+            },
+            tableInfos: {
+              ...connection.tableInfos,
+              [key]:
+                currentTableInfo ?? connection.tableInfos[key] ?? tableInfo,
+            },
+          };
+          applyOpenTabDerivedState(updated);
+          return {
+            connectionStates: { ...latest.connectionStates, [connId]: updated },
+            ...(latest.activeConnId === connId ? syncCurrentView(updated) : {}),
+            ...(isStillActive() ? { structureError: null } : {}),
+          };
+        });
+      }
+    );
+    const pendingEntry = { generation, promise: request };
+    tableMetadataRequests.set(entry, pendingEntry);
     try {
       await request;
     } finally {
-      tableMetadataRequests.delete(entry);
+      if (structureRequest)
+        finishMetadataLoading(connId, "structureLoading", structureRequest);
+      if (tableMetadataRequests.get(entry) === pendingEntry)
+        tableMetadataRequests.delete(entry);
     }
   },
 
@@ -518,9 +753,13 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     database: string,
     table: string
   ) => {
+    const selection = beginSelection(connId);
+    let read: ReturnType<typeof createMetadataRead> | undefined;
+    const isCurrent = () => read?.ownsAny() ?? false;
+    let structureRequest: object | undefined;
     try {
-      const { connectionStates, activeConnId } = get();
-      const state = connectionStates[connId] ?? emptyConnState();
+      let { connectionStates, activeConnId } = get();
+      let state = connectionStates[connId] ?? emptyConnState();
       const key = `${database}|${table}`;
       const openTabs = state.openTabs ?? [];
 
@@ -552,73 +791,86 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         if (activeConnId === connId) {
           Object.assign(res, syncCurrentView(updated));
         }
-        set(res);
+        set(activeConnId === connId ? res : { connectionStates: newStates });
         return;
       }
 
+      read = createMetadataRead(
+        connId,
+        [database],
+        [["structure", database, table]],
+        () => selectionRequests.get(connId) === selection
+      );
+      structureRequest = beginMetadataLoading(connId, "structureLoading");
       set({ structureLoading: true, structureError: null });
 
       const tableInfo =
         state.tables[database]?.find((t) => t.name === table) ?? null;
-      const structure = await api.getTableStructure(connId, database, table);
+      await read.read(
+        () => api.getTableStructure(connId, database, table),
+        (structure) => {
+          ({ connectionStates, activeConnId } = get());
+          state = connectionStates[connId] ?? emptyConnState();
 
-      const newEntry: OpenTabEntry = { type: "table", database, table };
-      const newOpenTabs = [...(state.openTabs ?? []), newEntry];
-      const newIdx = newOpenTabs.length - 1;
-      const newTableStructures = {
-        ...(state.tableStructures ?? {}),
-        [key]: structure,
-      };
-      const newTableInfos = {
-        ...(state.tableInfos ?? {}),
-        [key]: tableInfo ?? {
-          name: table,
-          table_type: "TABLE",
-          engine: null,
-          rows: null,
-          data_length: null,
-          index_length: null,
-          comment: "",
-        },
-      };
-      const derivedOpenTables = newOpenTabs
-        .filter(
-          (t): t is { type: "table"; database: string; table: string } =>
-            t.type === "table"
-        )
-        .map((t) => ({ database: t.database, table: t.table }));
+          const newEntry: OpenTabEntry = { type: "table", database, table };
+          const newOpenTabs = [...(state.openTabs ?? []), newEntry];
+          const newIdx = newOpenTabs.length - 1;
+          const newTableStructures = {
+            ...(state.tableStructures ?? {}),
+            [key]: structure,
+          };
+          const newTableInfos = {
+            ...(state.tableInfos ?? {}),
+            [key]: tableInfo ?? {
+              name: table,
+              table_type: "TABLE",
+              engine: null,
+              rows: null,
+              data_length: null,
+              index_length: null,
+              comment: "",
+            },
+          };
+          const derivedOpenTables = newOpenTabs
+            .filter(
+              (t): t is { type: "table"; database: string; table: string } =>
+                t.type === "table"
+            )
+            .map((t) => ({ database: t.database, table: t.table }));
 
-      const updated: ConnectionDatabaseState = {
-        ...state,
-        openTabs: newOpenTabs,
-        activeTabIndex: newIdx,
-        openTables: derivedOpenTables,
-        activeTableTabIndex: derivedOpenTables.length - 1,
-        tableStructures: newTableStructures,
-        tableInfos: newTableInfos,
-        selectedDatabase: database,
-        selectedTable: table,
-        tableStructure: structure,
-        selectedTableInfo: tableInfo,
-        viewMode: "tab",
-      };
-      const derived = applyOpenTabDerivedState(updated);
+          const updated: ConnectionDatabaseState = {
+            ...state,
+            openTabs: newOpenTabs,
+            activeTabIndex: newIdx,
+            openTables: derivedOpenTables,
+            activeTableTabIndex: derivedOpenTables.length - 1,
+            tableStructures: newTableStructures,
+            tableInfos: newTableInfos,
+            selectedDatabase: database,
+            selectedTable: table,
+            tableStructure: structure,
+            selectedTableInfo: tableInfo,
+            viewMode: "tab",
+          };
+          const derived = applyOpenTabDerivedState(updated);
 
-      const newStates = { ...connectionStates, [connId]: updated };
-      const res: Partial<DatabaseState> = {
-        connectionStates: newStates,
-        structureLoading: false,
-        openTabs: newOpenTabs,
-        activeTabIndex: newIdx,
-        openTables: derived.openTables ?? updated.openTables,
-        activeTableTabIndex: derived.activeTableTabIndex ?? newIdx,
-        viewMode: "tab",
-      };
-      if (activeConnId === connId) {
-        Object.assign(res, syncCurrentView(updated));
-      }
-      set(res);
+          const newStates = { ...connectionStates, [connId]: updated };
+          const res: Partial<DatabaseState> = {
+            connectionStates: newStates,
+            openTabs: newOpenTabs,
+            activeTabIndex: newIdx,
+            openTables: derived.openTables ?? updated.openTables,
+            activeTableTabIndex: derived.activeTableTabIndex ?? newIdx,
+            viewMode: "tab",
+          };
+          if (activeConnId === connId) {
+            Object.assign(res, syncCurrentView(updated));
+          }
+          set(activeConnId === connId ? res : { connectionStates: newStates });
+        }
+      );
     } catch (e) {
+      if (!isCurrent()) return;
       const msg = String(e);
       console.error("加载表结构失败:", msg);
       const { connectionStates, activeConnId } = get();
@@ -663,7 +915,6 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       const newStates = { ...connectionStates, [connId]: updated };
       const res: Partial<DatabaseState> = {
         connectionStates: newStates,
-        structureLoading: false,
         structureError: msg,
         openTabs: newOpenTabs,
         activeTabIndex: newIdx,
@@ -672,11 +923,15 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       if (activeConnId === connId) {
         Object.assign(res, syncCurrentView(updated));
       }
-      set(res);
+      set(activeConnId === connId ? res : { connectionStates: newStates });
+    } finally {
+      if (structureRequest)
+        finishMetadataLoading(connId, "structureLoading", structureRequest);
     }
   },
 
   openSqlTab: (connId: string, initialContent?: string) => {
+    beginSelection(connId);
     const { connectionStates, activeConnId } = get();
     const state = connectionStates[connId] ?? emptyConnState();
     const tabId = `sql-${Date.now()}`;
@@ -936,6 +1191,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   },
 
   switchTab: (connId: string, index: number) => {
+    beginSelection(connId);
     const { connectionStates, activeConnId } = get();
     const state = connectionStates[connId];
     const openTabs = state?.openTabs ?? [];
@@ -1071,70 +1327,105 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     oldName: string,
     newName: string
   ) => {
-    await api.renameTable(connId, database, oldName, newName);
-    invalidateSqlCompletion({ connId, database, reason: "schema-change" });
-    const tableList = await api.listTables(connId, database);
-    const structure = await api.getTableStructure(connId, database, newName);
-    const tableInfo = tableList.find((t) => t.name === newName) ?? null;
-
-    const { connectionStates, activeConnId } = get();
-    const state = connectionStates[connId] ?? emptyConnState();
-    const oldKey = `${database}|${oldName}`;
-    const newKey = `${database}|${newName}`;
-
-    const newTableStructures = { ...(state.tableStructures ?? {}) };
-    const newTableInfos = { ...(state.tableInfos ?? {}) };
-    if (newTableStructures[oldKey]) {
-      delete newTableStructures[oldKey];
-    }
-    if (newTableInfos[oldKey]) {
-      delete newTableInfos[oldKey];
-    }
-    newTableStructures[newKey] = structure;
-    newTableInfos[newKey] = tableInfo ?? {
-      name: newName,
-      table_type: "TABLE",
-      engine: null,
-      rows: null,
-      data_length: null,
-      index_length: null,
-      comment: "",
-    };
-
-    const openTabs = state.openTabs ?? [];
-    const newOpenTabs = openTabs.map((e) =>
-      e.type === "table" && e.database === database && e.table === oldName
-        ? { type: "table" as const, database, table: newName }
-        : e
+    const mutation = await mutateSchema(connId, database, () =>
+      api.renameTable(connId, database, oldName, newName)
     );
-    const newOpenTables = newOpenTabs
-      .filter(
-        (t): t is { type: "table"; database: string; table: string } =>
-          t.type === "table"
-      )
-      .map((t) => ({ database: t.database, table: t.table }));
+    if (!mutation) return;
+    await mutation.read(
+      [
+        ["tables", database],
+        ["structure", database, newName],
+      ],
+      async (owns) => ({
+        tableList: owns(["tables", database])
+          ? await api.listTables(connId, database)
+          : undefined,
+        structure: owns(["structure", database, newName])
+          ? await api.getTableStructure(connId, database, newName)
+          : undefined,
+      }),
+      ({ tableList, structure }, owns) => {
+        const { connectionStates, activeConnId } = get();
+        const state = connectionStates[connId] ?? emptyConnState();
+        const ownsTables = owns(["tables", database]);
+        const ownsStructure = owns(["structure", database, newName]);
+        const tableInfo =
+          (ownsTables ? tableList : state.tables[database])?.find(
+            (item) => item.name === newName
+          ) ?? null;
+        const oldKey = `${database}|${oldName}`;
+        const newKey = `${database}|${newName}`;
 
-    const updated: ConnectionDatabaseState = {
-      ...state,
-      tables: { ...state.tables, [database]: tableList },
-      openTabs: newOpenTabs,
-      openTables: newOpenTables,
-      tableStructures: newTableStructures,
-      tableInfos: newTableInfos,
-      selectedTable:
-        state.selectedTable === oldName ? newName : state.selectedTable,
-      tableStructure:
-        state.selectedTable === oldName ? structure : state.tableStructure,
-      selectedTableInfo:
-        state.selectedTable === oldName ? tableInfo : state.selectedTableInfo,
-    };
-    applyOpenTabDerivedState(updated);
-    const newStates = { ...connectionStates, [connId]: updated };
-    const res: Partial<DatabaseState> = { connectionStates: newStates };
-    if (activeConnId === connId) {
-      Object.assign(res, syncCurrentView(updated));
-    }
-    set(res);
+        const newTableStructures = { ...(state.tableStructures ?? {}) };
+        const newTableInfos = { ...(state.tableInfos ?? {}) };
+        if (newTableStructures[oldKey]) {
+          delete newTableStructures[oldKey];
+        }
+        if (newTableInfos[oldKey]) {
+          delete newTableInfos[oldKey];
+        }
+        if (ownsStructure && structure) newTableStructures[newKey] = structure;
+        newTableInfos[newKey] = tableInfo ??
+          newTableInfos[newKey] ?? {
+            name: newName,
+            table_type: "TABLE",
+            engine: null,
+            rows: null,
+            data_length: null,
+            index_length: null,
+            comment: "",
+          };
+
+        const openTabs = state.openTabs ?? [];
+        const newOpenTabs = openTabs.map((e) =>
+          e.type === "table" && e.database === database && e.table === oldName
+            ? { type: "table" as const, database, table: newName }
+            : e
+        );
+        const newOpenTables = newOpenTabs
+          .filter(
+            (t): t is { type: "table"; database: string; table: string } =>
+              t.type === "table"
+          )
+          .map((t) => ({ database: t.database, table: t.table }));
+
+        const updated: ConnectionDatabaseState = {
+          ...state,
+          tables:
+            ownsTables && tableList
+              ? { ...state.tables, [database]: tableList }
+              : state.tables,
+          openTabs: newOpenTabs,
+          openTables: newOpenTables,
+          tableStructures: newTableStructures,
+          tableInfos: newTableInfos,
+          selectedTable:
+            state.selectedDatabase === database &&
+            state.selectedTable === oldName
+              ? newName
+              : state.selectedTable,
+          tableStructure:
+            state.selectedDatabase === database &&
+            state.selectedTable === oldName &&
+            ownsStructure &&
+            structure
+              ? structure
+              : state.tableStructure,
+          selectedTableInfo:
+            state.selectedDatabase === database &&
+            state.selectedTable === oldName
+              ? tableInfo
+              : state.selectedTableInfo,
+        };
+        applyOpenTabDerivedState(updated);
+        const newStates = { ...connectionStates, [connId]: updated };
+        const res: Partial<DatabaseState> = { connectionStates: newStates };
+        if (activeConnId === connId) {
+          Object.assign(res, syncCurrentView(updated));
+        }
+        set(res);
+      }
+    );
   },
 
   alterTableEngine: async (
@@ -1143,24 +1434,34 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     table: string,
     engine: string
   ) => {
-    await api.alterTableEngine(connId, database, table, engine);
-    invalidateSqlCompletion({ connId, database, reason: "schema-change" });
-    const tableList = await api.listTables(connId, database);
-    const tableInfo = tableList.find((t) => t.name === table) ?? null;
+    const mutation = await mutateSchema(connId, database, () =>
+      api.alterTableEngine(connId, database, table, engine)
+    );
+    if (!mutation) return;
+    await mutation.read(
+      [["tables", database]],
+      () => api.listTables(connId, database),
+      (tableList) => {
+        const tableInfo = tableList.find((t) => t.name === table) ?? null;
 
-    const { connectionStates, activeConnId } = get();
-    const state = connectionStates[connId] ?? emptyConnState();
-    const updated: ConnectionDatabaseState = {
-      ...state,
-      tables: { ...state.tables, [database]: tableList },
-      selectedTableInfo: tableInfo,
-    };
-    const newStates = { ...connectionStates, [connId]: updated };
-    const res: Partial<DatabaseState> = { connectionStates: newStates };
-    if (activeConnId === connId) {
-      Object.assign(res, syncCurrentView(updated));
-    }
-    set(res);
+        const { connectionStates, activeConnId } = get();
+        const state = connectionStates[connId] ?? emptyConnState();
+        const updated: ConnectionDatabaseState = {
+          ...state,
+          tables: { ...state.tables, [database]: tableList },
+          selectedTableInfo:
+            state.selectedDatabase === database && state.selectedTable === table
+              ? tableInfo
+              : state.selectedTableInfo,
+        };
+        const newStates = { ...connectionStates, [connId]: updated };
+        const res: Partial<DatabaseState> = { connectionStates: newStates };
+        if (activeConnId === connId) {
+          Object.assign(res, syncCurrentView(updated));
+        }
+        set(res);
+      }
+    );
   },
 
   alterColumn: async (
@@ -1169,28 +1470,37 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     table: string,
     request: AlterColumnRequest
   ) => {
-    await api.alterColumn(connId, database, table, request);
-    invalidateSqlCompletion({ connId, database, reason: "schema-change" });
-    const structure = await api.getTableStructure(connId, database, table);
-
-    const { connectionStates, activeConnId } = get();
-    const state = connectionStates[connId] ?? emptyConnState();
-    const key = `${database}|${table}`;
-    const newTableStructures = {
-      ...(state.tableStructures ?? {}),
-      [key]: structure,
-    };
-    const updated: ConnectionDatabaseState = {
-      ...state,
-      tableStructures: newTableStructures,
-      tableStructure: structure,
-    };
-    const newStates = { ...connectionStates, [connId]: updated };
-    const res: Partial<DatabaseState> = { connectionStates: newStates };
-    if (activeConnId === connId) {
-      Object.assign(res, syncCurrentView(updated));
-    }
-    set(res);
+    const mutation = await mutateSchema(connId, database, () =>
+      api.alterColumn(connId, database, table, request)
+    );
+    if (!mutation) return;
+    await mutation.read(
+      [["structure", database, table]],
+      () => api.getTableStructure(connId, database, table),
+      (structure) => {
+        const { connectionStates, activeConnId } = get();
+        const state = connectionStates[connId] ?? emptyConnState();
+        const key = `${database}|${table}`;
+        const newTableStructures = {
+          ...(state.tableStructures ?? {}),
+          [key]: structure,
+        };
+        const updated: ConnectionDatabaseState = {
+          ...state,
+          tableStructures: newTableStructures,
+          tableStructure:
+            state.selectedDatabase === database && state.selectedTable === table
+              ? structure
+              : state.tableStructure,
+        };
+        const newStates = { ...connectionStates, [connId]: updated };
+        const res: Partial<DatabaseState> = { connectionStates: newStates };
+        if (activeConnId === connId) {
+          Object.assign(res, syncCurrentView(updated));
+        }
+        set(res);
+      }
+    );
   },
 
   addColumn: async (
@@ -1199,28 +1509,37 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     table: string,
     request: AddColumnRequest
   ) => {
-    await api.addColumn(connId, database, table, request);
-    invalidateSqlCompletion({ connId, database, reason: "schema-change" });
-    const structure = await api.getTableStructure(connId, database, table);
-
-    const { connectionStates, activeConnId } = get();
-    const state = connectionStates[connId] ?? emptyConnState();
-    const key = `${database}|${table}`;
-    const newTableStructures = {
-      ...(state.tableStructures ?? {}),
-      [key]: structure,
-    };
-    const updated: ConnectionDatabaseState = {
-      ...state,
-      tableStructures: newTableStructures,
-      tableStructure: structure,
-    };
-    const newStates = { ...connectionStates, [connId]: updated };
-    const res: Partial<DatabaseState> = { connectionStates: newStates };
-    if (activeConnId === connId) {
-      Object.assign(res, syncCurrentView(updated));
-    }
-    set(res);
+    const mutation = await mutateSchema(connId, database, () =>
+      api.addColumn(connId, database, table, request)
+    );
+    if (!mutation) return;
+    await mutation.read(
+      [["structure", database, table]],
+      () => api.getTableStructure(connId, database, table),
+      (structure) => {
+        const { connectionStates, activeConnId } = get();
+        const state = connectionStates[connId] ?? emptyConnState();
+        const key = `${database}|${table}`;
+        const newTableStructures = {
+          ...(state.tableStructures ?? {}),
+          [key]: structure,
+        };
+        const updated: ConnectionDatabaseState = {
+          ...state,
+          tableStructures: newTableStructures,
+          tableStructure:
+            state.selectedDatabase === database && state.selectedTable === table
+              ? structure
+              : state.tableStructure,
+        };
+        const newStates = { ...connectionStates, [connId]: updated };
+        const res: Partial<DatabaseState> = { connectionStates: newStates };
+        if (activeConnId === connId) {
+          Object.assign(res, syncCurrentView(updated));
+        }
+        set(res);
+      }
+    );
   },
 
   dropColumn: async (
@@ -1229,28 +1548,37 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     table: string,
     columnName: string
   ) => {
-    await api.dropColumn(connId, database, table, columnName);
-    invalidateSqlCompletion({ connId, database, reason: "schema-change" });
-    const structure = await api.getTableStructure(connId, database, table);
-
-    const { connectionStates, activeConnId } = get();
-    const state = connectionStates[connId] ?? emptyConnState();
-    const key = `${database}|${table}`;
-    const newTableStructures = {
-      ...(state.tableStructures ?? {}),
-      [key]: structure,
-    };
-    const updated: ConnectionDatabaseState = {
-      ...state,
-      tableStructures: newTableStructures,
-      tableStructure: structure,
-    };
-    const newStates = { ...connectionStates, [connId]: updated };
-    const res: Partial<DatabaseState> = { connectionStates: newStates };
-    if (activeConnId === connId) {
-      Object.assign(res, syncCurrentView(updated));
-    }
-    set(res);
+    const mutation = await mutateSchema(connId, database, () =>
+      api.dropColumn(connId, database, table, columnName)
+    );
+    if (!mutation) return;
+    await mutation.read(
+      [["structure", database, table]],
+      () => api.getTableStructure(connId, database, table),
+      (structure) => {
+        const { connectionStates, activeConnId } = get();
+        const state = connectionStates[connId] ?? emptyConnState();
+        const key = `${database}|${table}`;
+        const newTableStructures = {
+          ...(state.tableStructures ?? {}),
+          [key]: structure,
+        };
+        const updated: ConnectionDatabaseState = {
+          ...state,
+          tableStructures: newTableStructures,
+          tableStructure:
+            state.selectedDatabase === database && state.selectedTable === table
+              ? structure
+              : state.tableStructure,
+        };
+        const newStates = { ...connectionStates, [connId]: updated };
+        const res: Partial<DatabaseState> = { connectionStates: newStates };
+        if (activeConnId === connId) {
+          Object.assign(res, syncCurrentView(updated));
+        }
+        set(res);
+      }
+    );
   },
 
   createTable: async (
@@ -1258,238 +1586,327 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     database: string,
     request: CreateTableRequest
   ) => {
-    await api.createTable(connId, database, request);
-    invalidateSqlCompletion({ connId, database, reason: "schema-change" });
-    const tableList = await api.listTables(connId, database);
-
-    const { connectionStates, activeConnId } = get();
-    const state = connectionStates[connId] ?? emptyConnState();
-    const updated: ConnectionDatabaseState = {
-      ...state,
-      tables: { ...state.tables, [database]: tableList },
-    };
-    const newStates = { ...connectionStates, [connId]: updated };
-    const res: Partial<DatabaseState> = { connectionStates: newStates };
-    if (activeConnId === connId) {
-      Object.assign(res, syncCurrentView(updated));
-    }
-    set(res);
+    const mutation = await mutateSchema(connId, database, () =>
+      api.createTable(connId, database, request)
+    );
+    if (!mutation) return;
+    await mutation.read(
+      [["tables", database]],
+      () => api.listTables(connId, database),
+      (tableList) => {
+        const { connectionStates, activeConnId } = get();
+        const state = connectionStates[connId] ?? emptyConnState();
+        const updated: ConnectionDatabaseState = {
+          ...state,
+          tables: { ...state.tables, [database]: tableList },
+        };
+        const newStates = { ...connectionStates, [connId]: updated };
+        const res: Partial<DatabaseState> = { connectionStates: newStates };
+        if (activeConnId === connId) {
+          Object.assign(res, syncCurrentView(updated));
+        }
+        set(res);
+      }
+    );
   },
 
   dropTable: async (connId: string, database: string, table: string) => {
-    await api.dropTable(connId, database, table);
-    invalidateSqlCompletion({ connId, database, reason: "schema-change" });
-
-    const { connectionStates, activeConnId } = get();
-    const state = connectionStates[connId] ?? emptyConnState();
-    const droppedKey = `${database}|${table}`;
-    const openTabs = state.openTabs ?? [];
-
-    const newOpenTabs = openTabs.filter(
-      (e) =>
-        !(e.type === "table" && e.database === database && e.table === table)
+    const mutation = await mutateSchema(connId, database, () =>
+      api.dropTable(connId, database, table)
     );
-    const newOpenTables = newOpenTabs
-      .filter(
-        (t): t is { type: "table"; database: string; table: string } =>
-          t.type === "table"
-      )
-      .map((t) => ({ database: t.database, table: t.table }));
-    const wasActive =
-      state.selectedDatabase === database && state.selectedTable === table;
-    const currentIdx = state.activeTabIndex ?? 0;
-    let newIdx = currentIdx;
-    const droppedIdx = openTabs.findIndex(
-      (e) => e.type === "table" && e.database === database && e.table === table
-    );
-    if (droppedIdx >= 0) {
-      if (droppedIdx < currentIdx) {
-        newIdx = currentIdx - 1;
-      } else if (droppedIdx === currentIdx) {
-        newIdx =
-          newOpenTabs.length > 0
-            ? Math.min(currentIdx, newOpenTabs.length - 1)
-            : 0;
+    if (!mutation) return;
+
+    await mutation.read(
+      [["tables", database]],
+      () => api.listTables(connId, database),
+      (tableList) => {
+        const { connectionStates, activeConnId } = get();
+        const state = connectionStates[connId] ?? emptyConnState();
+        const droppedKey = `${database}|${table}`;
+        const openTabs = state.openTabs ?? [];
+
+        const newOpenTabs = openTabs.filter(
+          (e) =>
+            !(
+              e.type === "table" &&
+              e.database === database &&
+              e.table === table
+            )
+        );
+        const newOpenTables = newOpenTabs
+          .filter(
+            (t): t is { type: "table"; database: string; table: string } =>
+              t.type === "table"
+          )
+          .map((t) => ({ database: t.database, table: t.table }));
+        const wasActive =
+          state.selectedDatabase === database && state.selectedTable === table;
+        const currentIdx = state.activeTabIndex ?? 0;
+        let newIdx = currentIdx;
+        const droppedIdx = openTabs.findIndex(
+          (e) =>
+            e.type === "table" && e.database === database && e.table === table
+        );
+        if (droppedIdx >= 0) {
+          if (droppedIdx < currentIdx) {
+            newIdx = currentIdx - 1;
+          } else if (droppedIdx === currentIdx) {
+            newIdx =
+              newOpenTabs.length > 0
+                ? Math.min(currentIdx, newOpenTabs.length - 1)
+                : 0;
+          }
+        }
+
+        const newTableStructures = { ...(state.tableStructures ?? {}) };
+        const newTableInfos = { ...(state.tableInfos ?? {}) };
+        delete newTableStructures[droppedKey];
+        delete newTableInfos[droppedKey];
+
+        const nextEntry = newOpenTabs[newIdx];
+        const updated: ConnectionDatabaseState = {
+          ...state,
+          tables: { ...state.tables, [database]: tableList },
+          openTabs: newOpenTabs,
+          openTables: newOpenTables,
+          activeTabIndex: newIdx,
+          activeTableTabIndex: newOpenTabs
+            .slice(0, newIdx)
+            .filter((t) => t.type === "table").length,
+          tableStructures: newTableStructures,
+          tableInfos: newTableInfos,
+          selectedDatabase:
+            nextEntry?.type === "table"
+              ? nextEntry.database
+              : wasActive
+                ? null
+                : state.selectedDatabase,
+          selectedTable:
+            nextEntry?.type === "table"
+              ? nextEntry.table
+              : wasActive
+                ? null
+                : state.selectedTable,
+          tableStructure:
+            nextEntry?.type === "table"
+              ? (newTableStructures[
+                  `${nextEntry.database}|${nextEntry.table}`
+                ] ?? null)
+              : wasActive
+                ? null
+                : state.tableStructure,
+          selectedTableInfo:
+            nextEntry?.type === "table"
+              ? (newTableInfos[`${nextEntry.database}|${nextEntry.table}`] ??
+                null)
+              : wasActive
+                ? null
+                : state.selectedTableInfo,
+        };
+
+        const newStates = { ...connectionStates, [connId]: updated };
+        const res: Partial<DatabaseState> = {
+          connectionStates: newStates,
+          openTabs: newOpenTabs,
+          openTables: newOpenTables,
+          activeTabIndex: newIdx,
+        };
+        if (activeConnId === connId) {
+          Object.assign(res, syncCurrentView(updated));
+        }
+        set(res);
       }
-    }
-
-    const newTableStructures = { ...(state.tableStructures ?? {}) };
-    const newTableInfos = { ...(state.tableInfos ?? {}) };
-    delete newTableStructures[droppedKey];
-    delete newTableInfos[droppedKey];
-
-    const tableList = await api.listTables(connId, database);
-    const nextEntry = newOpenTabs[newIdx];
-    const updated: ConnectionDatabaseState = {
-      ...state,
-      tables: { ...state.tables, [database]: tableList },
-      openTabs: newOpenTabs,
-      openTables: newOpenTables,
-      activeTabIndex: newIdx,
-      activeTableTabIndex: newOpenTabs
-        .slice(0, newIdx)
-        .filter((t) => t.type === "table").length,
-      tableStructures: newTableStructures,
-      tableInfos: newTableInfos,
-      selectedDatabase:
-        nextEntry?.type === "table"
-          ? nextEntry.database
-          : wasActive
-            ? null
-            : state.selectedDatabase,
-      selectedTable:
-        nextEntry?.type === "table"
-          ? nextEntry.table
-          : wasActive
-            ? null
-            : state.selectedTable,
-      tableStructure:
-        nextEntry?.type === "table"
-          ? (newTableStructures[`${nextEntry.database}|${nextEntry.table}`] ??
-            null)
-          : wasActive
-            ? null
-            : state.tableStructure,
-      selectedTableInfo:
-        nextEntry?.type === "table"
-          ? (newTableInfos[`${nextEntry.database}|${nextEntry.table}`] ?? null)
-          : wasActive
-            ? null
-            : state.selectedTableInfo,
-    };
-
-    const newStates = { ...connectionStates, [connId]: updated };
-    const res: Partial<DatabaseState> = {
-      connectionStates: newStates,
-      openTabs: newOpenTabs,
-      openTables: newOpenTables,
-      activeTabIndex: newIdx,
-    };
-    if (activeConnId === connId) {
-      Object.assign(res, syncCurrentView(updated));
-    }
-    set(res);
+    );
   },
 
   truncateTable: async (connId: string, database: string, table: string) => {
-    await api.truncateTable(connId, database, table);
-    const tableList = await api.listTables(connId, database);
+    const mutation = await mutateSchema(connId, database, () =>
+      api.truncateTable(connId, database, table)
+    );
+    if (!mutation) return;
+    await mutation.read(
+      [["tables", database]],
+      () => api.listTables(connId, database),
+      (tableList) => {
+        const { connectionStates, activeConnId } = get();
+        const state = connectionStates[connId] ?? emptyConnState();
+        const key = `${database}|${table}`;
+        const info = tableList.find((t) => t.name === table) ?? null;
+        const updated: ConnectionDatabaseState = {
+          ...state,
+          tables: { ...state.tables, [database]: tableList },
+          tableInfos: info
+            ? { ...(state.tableInfos ?? {}), [key]: info }
+            : { ...(state.tableInfos ?? {}) },
+          selectedTableInfo:
+            state.selectedDatabase === database && state.selectedTable === table
+              ? (info ?? state.selectedTableInfo)
+              : state.selectedTableInfo,
+        };
 
-    const { connectionStates, activeConnId } = get();
-    const state = connectionStates[connId] ?? emptyConnState();
-    const key = `${database}|${table}`;
-    const info = tableList.find((t) => t.name === table) ?? null;
-    const updated: ConnectionDatabaseState = {
-      ...state,
-      tables: { ...state.tables, [database]: tableList },
-      tableInfos: info
-        ? { ...(state.tableInfos ?? {}), [key]: info }
-        : { ...(state.tableInfos ?? {}) },
-      selectedTableInfo:
-        state.selectedDatabase === database && state.selectedTable === table
-          ? (info ?? state.selectedTableInfo)
-          : state.selectedTableInfo,
-    };
-
-    const newStates = { ...connectionStates, [connId]: updated };
-    const res: Partial<DatabaseState> = { connectionStates: newStates };
-    if (activeConnId === connId) {
-      Object.assign(res, syncCurrentView(updated));
-    }
-    set(res);
-    useTableDataStore.getState().afterTableDataCleared(connId, database, table);
+        const newStates = { ...connectionStates, [connId]: updated };
+        const res: Partial<DatabaseState> = { connectionStates: newStates };
+        if (activeConnId === connId) {
+          Object.assign(res, syncCurrentView(updated));
+        }
+        set(res);
+        useTableDataStore
+          .getState()
+          .afterTableDataCleared(connId, database, table);
+      }
+    );
   },
 
   refresh: async (connId: string) => {
     invalidateSqlCompletion({ connId, reason: "refresh" });
-    const { connectionStates, activeConnId } = get();
-    const state = connectionStates[connId] ?? emptyConnState();
+    const state = get().connectionStates[connId] ?? emptyConnState();
     const { selectedDatabase, selectedTable } = state;
-    const openTabs = state.openTabs ?? [];
-    const tableEntries = openTabs.filter(
-      (t): t is { type: "table"; database: string; table: string } =>
-        t.type === "table"
-    );
-
-    set({ treeLoading: true });
-    try {
-      const databases = await api.listDatabases(connId);
-      let tables = state.tables;
-      let tableStructure = state.tableStructure;
-      let selectedTableInfo = state.selectedTableInfo;
-      let tableStructures = { ...(state.tableStructures ?? {}) };
-      let tableInfos = { ...(state.tableInfos ?? {}) };
-
-      const databasesToRefresh = new Set<string>();
-      for (const { database } of tableEntries) {
-        if (tables[database] !== undefined) {
-          databasesToRefresh.add(database);
-        }
-      }
-      if (selectedDatabase) {
-        databasesToRefresh.add(selectedDatabase);
-      }
-
-      const refreshedTableEntries = await Promise.all(
-        Array.from(databasesToRefresh).map(async (database) => {
-          const tableList = await api.listTables(connId, database);
-          return [database, tableList] as const;
-        })
+    const catalogDatabases = [
+      ...new Set([
+        ...Object.keys(state.tables),
+        ...(selectedDatabase ? [selectedDatabase] : []),
+      ]),
+    ];
+    const selectedEntry = state.openTabs[state.activeTabIndex];
+    const selection = selectionRequests.get(connId);
+    const sameSelection = () => {
+      const latest = get().connectionStates[connId];
+      return (
+        latest?.selectedDatabase === selectedDatabase &&
+        latest?.selectedTable === selectedTable &&
+        latest?.openTabs[latest.activeTabIndex] === selectedEntry &&
+        selectionRequests.get(connId) === selection
       );
-      if (refreshedTableEntries.length > 0) {
-        tables = { ...tables, ...Object.fromEntries(refreshedTableEntries) };
-      }
-
-      if (selectedDatabase) {
-        const tableList = tables[selectedDatabase] ?? [];
-        tables = { ...tables, [selectedDatabase]: tableList };
-        if (selectedTable) {
-          set({ structureLoading: true, structureError: null });
-          tableStructure = await api.getTableStructure(
-            connId,
-            selectedDatabase,
-            selectedTable
+    };
+    const resources: MetadataResource[] = [
+      ["databases"],
+      ...catalogDatabases.map(
+        (database): MetadataResource => ["tables", database]
+      ),
+      ...(selectedDatabase && selectedTable
+        ? [["structure", selectedDatabase, selectedTable] as const]
+        : []),
+    ];
+    const read = createMetadataRead(
+      connId,
+      undefined,
+      resources,
+      (resource) => resource[0] !== "structure" || sameSelection()
+    );
+    const treeRequest = beginMetadataLoading(connId, "treeLoading");
+    let structureRequest: object | undefined;
+    if (get().activeConnId === connId) set({ treeLoading: true });
+    try {
+      // 等后端缓存失效后开始读取；后续 DDL 只触发有限补读，不重复失效或执行 DDL。
+      await api.invalidateTableMetadataCache(connId);
+      await read.read(
+        async (owns) => {
+          const databases = owns(["databases"])
+            ? await api.listDatabases(connId)
+            : (get().connectionStates[connId]?.databases ?? []);
+          if (!read.ownsAny()) return;
+          const available = new Set(databases);
+          const databasesToRefresh = catalogDatabases.filter(
+            (database) => available.has(database) && owns(["tables", database])
           );
-          selectedTableInfo =
-            tableList.find((t) => t.name === selectedTable) ?? null;
-          const key = `${selectedDatabase}|${selectedTable}`;
-          tableStructures = { ...tableStructures, [key]: tableStructure };
-          tableInfos = {
-            ...tableInfos,
-            [key]: selectedTableInfo ?? tableInfos[key]!,
-          };
+          const entries = await api.listTablesBatch(connId, databasesToRefresh);
+          if (!read.ownsAny()) return;
+          let structure: ColumnInfo[] | undefined;
+          if (
+            selectedDatabase &&
+            selectedTable &&
+            available.has(selectedDatabase) &&
+            owns(["structure", selectedDatabase, selectedTable])
+          ) {
+            structureRequest = beginMetadataLoading(connId, "structureLoading");
+            if (get().activeConnId === connId)
+              set({ structureLoading: true, structureError: null });
+            structure = await api.getTableStructure(
+              connId,
+              selectedDatabase,
+              selectedTable
+            );
+          }
+          return { databases, entries, structure, available };
+        },
+        (result, owns) => {
+          if (!result) return;
+          const { databases, entries, structure, available } = result;
+          set((current) => {
+            const latest = current.connectionStates[connId] ?? emptyConnState();
+            const tables = Object.fromEntries(
+              Object.entries(latest.tables).filter(
+                ([database]) =>
+                  !owns(["tables", database]) || available.has(database)
+              )
+            );
+            for (const entry of entries) {
+              if (
+                owns(["tables", entry.database]) &&
+                latest.tables[entry.database] === state.tables[entry.database]
+              ) {
+                tables[entry.database] = entry.tables;
+              }
+            }
+            const updated = {
+              ...latest,
+              databases: owns(["databases"]) ? databases : latest.databases,
+              tables,
+            };
+            if (
+              structure &&
+              selectedDatabase &&
+              selectedTable &&
+              owns(["structure", selectedDatabase, selectedTable]) &&
+              loadingRequests.structureLoading.get(connId) === structureRequest
+            ) {
+              const info =
+                tables[selectedDatabase]?.find(
+                  (table) => table.name === selectedTable
+                ) ?? null;
+              const key = `${selectedDatabase}|${selectedTable}`;
+              updated.tableStructure = structure;
+              updated.selectedTableInfo = info;
+              updated.tableStructures = {
+                ...latest.tableStructures,
+                [key]: structure,
+              };
+              updated.tableInfos = {
+                ...latest.tableInfos,
+                ...(info ? { [key]: info } : {}),
+              };
+            }
+            return {
+              connectionStates: {
+                ...current.connectionStates,
+                [connId]: updated,
+              },
+              ...(current.activeConnId === connId
+                ? syncCurrentView(updated)
+                : {}),
+            };
+          });
         }
-      }
-
-      const updated: ConnectionDatabaseState = {
-        ...state,
-        databases,
-        tables,
-        tableStructure: tableStructure ?? null,
-        selectedTableInfo,
-        tableStructures,
-        tableInfos,
-      };
-      const newStates = { ...connectionStates, [connId]: updated };
-      const res: Partial<DatabaseState> = {
-        connectionStates: newStates,
-        treeLoading: false,
-        structureLoading: false,
-      };
-      if (activeConnId === connId) {
-        Object.assign(res, syncCurrentView(updated));
-      }
-      set(res);
-    } catch (e) {
-      console.error("刷新失败:", e);
-      set({ treeLoading: false, structureLoading: false });
+      );
+    } catch (error) {
+      if (!read.ownsAny()) return;
+      if (error instanceof MetadataRefreshRequiredError) throw error;
+      console.error("刷新失败:", error);
+    } finally {
+      finishMetadataLoading(connId, "treeLoading", treeRequest);
+      if (structureRequest)
+        finishMetadataLoading(connId, "structureLoading", structureRequest);
     }
   },
 
   loadDatabaseInfo: async (connId: string, database: string) => {
+    const generation = getMetadataRequestGeneration(connId, [database]);
+    const isCurrent = () =>
+      generation === getMetadataRequestGeneration(connId, [database]);
     try {
       set({ databaseInfoLoading: true, databaseInfo: null });
       const info = await api.getDatabaseInfo(connId, database);
+      if (!isCurrent()) return;
 
       const { connectionStates, activeConnId } = get();
       const state = connectionStates[connId] ?? emptyConnState();
@@ -1507,6 +1924,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       }
       set(res);
     } catch (e) {
+      if (!isCurrent()) return;
       console.error("加载数据库信息失败:", e);
       set({ databaseInfoLoading: false });
     }
@@ -1518,132 +1936,149 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     characterSet: string,
     collation: string
   ) => {
-    await api.createDatabase(connId, name, characterSet, collation);
-    invalidateSqlCompletion({ connId, reason: "schema-change" });
-    const databases = await api.listDatabases(connId);
-
-    const { connectionStates, activeConnId } = get();
-    const state = connectionStates[connId] ?? emptyConnState();
-    const updated: ConnectionDatabaseState = {
-      ...state,
-      databases,
-    };
-    const newStates = { ...connectionStates, [connId]: updated };
-    const res: Partial<DatabaseState> = { connectionStates: newStates };
-    if (activeConnId === connId) {
-      Object.assign(res, syncCurrentView(updated));
-    }
-    set(res);
+    const mutation = await mutateSchema(connId, undefined, () =>
+      api.createDatabase(connId, name, characterSet, collation)
+    );
+    if (!mutation) return;
+    await mutation.read(
+      [["databases"]],
+      () => api.listDatabases(connId),
+      (databases) => {
+        const { connectionStates, activeConnId } = get();
+        const state = connectionStates[connId] ?? emptyConnState();
+        const updated: ConnectionDatabaseState = {
+          ...state,
+          databases,
+        };
+        const newStates = { ...connectionStates, [connId]: updated };
+        const res: Partial<DatabaseState> = { connectionStates: newStates };
+        if (activeConnId === connId) {
+          Object.assign(res, syncCurrentView(updated));
+        }
+        set(res);
+      }
+    );
   },
 
   dropDatabase: async (connId: string, database: string) => {
-    await api.dropDatabase(connId, database);
-    invalidateSqlCompletion({ connId, reason: "schema-change" });
-    const databases = await api.listDatabases(connId);
-
-    const { connectionStates, activeConnId } = get();
-    const state = connectionStates[connId] ?? emptyConnState();
-    const openTabs = state.openTabs ?? [];
-
-    const newOpenTabs = openTabs.filter(
-      (e) => !(e.type === "table" && e.database === database)
+    const mutation = await mutateSchema(connId, undefined, () =>
+      api.dropDatabase(connId, database)
     );
-    const newOpenTables = newOpenTabs
-      .filter(
-        (t): t is { type: "table"; database: string; table: string } =>
-          t.type === "table"
-      )
-      .map((t) => ({ database: t.database, table: t.table }));
+    if (!mutation) return;
+    await mutation.read(
+      [["databases"]],
+      () => api.listDatabases(connId),
+      (databases) => {
+        const { connectionStates, activeConnId } = get();
+        const state = connectionStates[connId] ?? emptyConnState();
+        const openTabs = state.openTabs ?? [];
 
-    const oldIdx = state.activeTabIndex ?? 0;
-    let removedBefore = 0;
-    let activeRemoved = false;
-    for (let i = 0; i < openTabs.length; i++) {
-      const e = openTabs[i];
-      const rm = e.type === "table" && e.database === database;
-      if (rm) {
-        if (i < oldIdx) removedBefore += 1;
-        if (i === oldIdx) activeRemoved = true;
+        const newOpenTabs = openTabs.filter(
+          (e) => !(e.type === "table" && e.database === database)
+        );
+        const newOpenTables = newOpenTabs
+          .filter(
+            (t): t is { type: "table"; database: string; table: string } =>
+              t.type === "table"
+          )
+          .map((t) => ({ database: t.database, table: t.table }));
+
+        const oldIdx = state.activeTabIndex ?? 0;
+        let removedBefore = 0;
+        let activeRemoved = false;
+        for (let i = 0; i < openTabs.length; i++) {
+          const e = openTabs[i];
+          const rm = e.type === "table" && e.database === database;
+          if (rm) {
+            if (i < oldIdx) removedBefore += 1;
+            if (i === oldIdx) activeRemoved = true;
+          }
+        }
+        let newIdx = oldIdx - removedBefore;
+        if (activeRemoved && newOpenTabs.length > 0) {
+          newIdx = Math.min(newIdx, newOpenTabs.length - 1);
+        }
+        newIdx = Math.max(
+          0,
+          Math.min(newIdx, Math.max(0, newOpenTabs.length - 1))
+        );
+
+        const prefix = `${database}|`;
+        const newTableStructures = { ...(state.tableStructures ?? {}) };
+        const newTableInfos = { ...(state.tableInfos ?? {}) };
+        for (const k of Object.keys(newTableStructures)) {
+          if (k.startsWith(prefix)) {
+            delete newTableStructures[k];
+          }
+        }
+        for (const k of Object.keys(newTableInfos)) {
+          if (k.startsWith(prefix)) {
+            delete newTableInfos[k];
+          }
+        }
+
+        const newTables = { ...state.tables };
+        delete newTables[database];
+
+        const newExpandedKeys = state.expandedKeys.filter(
+          (k) => k !== `db:${database}`
+        );
+
+        const nextEntry = newOpenTabs[newIdx];
+        const hadSelectionInDroppedDb = state.selectedDatabase === database;
+
+        const updated: ConnectionDatabaseState = {
+          ...state,
+          databases,
+          tables: newTables,
+          expandedKeys: newExpandedKeys,
+          openTabs: newOpenTabs,
+          openTables: newOpenTables,
+          activeTabIndex: newIdx,
+          activeTableTabIndex: newOpenTabs
+            .slice(0, newIdx)
+            .filter((t) => t.type === "table").length,
+          tableStructures: newTableStructures,
+          tableInfos: newTableInfos,
+          selectedDatabase: hadSelectionInDroppedDb
+            ? nextEntry?.type === "table"
+              ? nextEntry.database
+              : null
+            : state.selectedDatabase,
+          selectedTable: hadSelectionInDroppedDb
+            ? nextEntry?.type === "table"
+              ? nextEntry.table
+              : null
+            : state.selectedTable,
+          tableStructure: hadSelectionInDroppedDb
+            ? nextEntry?.type === "table"
+              ? (newTableStructures[
+                  `${nextEntry.database}|${nextEntry.table}`
+                ] ?? null)
+              : null
+            : state.tableStructure,
+          selectedTableInfo: hadSelectionInDroppedDb
+            ? nextEntry?.type === "table"
+              ? (newTableInfos[`${nextEntry.database}|${nextEntry.table}`] ??
+                null)
+              : null
+            : state.selectedTableInfo,
+          databaseInfo: hadSelectionInDroppedDb ? null : state.databaseInfo,
+        };
+
+        const newStates = { ...connectionStates, [connId]: updated };
+        const res: Partial<DatabaseState> = {
+          connectionStates: newStates,
+          openTabs: newOpenTabs,
+          openTables: newOpenTables,
+          activeTabIndex: newIdx,
+        };
+        if (activeConnId === connId) {
+          Object.assign(res, syncCurrentView(updated));
+        }
+        set(res);
       }
-    }
-    let newIdx = oldIdx - removedBefore;
-    if (activeRemoved && newOpenTabs.length > 0) {
-      newIdx = Math.min(newIdx, newOpenTabs.length - 1);
-    }
-    newIdx = Math.max(0, Math.min(newIdx, Math.max(0, newOpenTabs.length - 1)));
-
-    const prefix = `${database}|`;
-    const newTableStructures = { ...(state.tableStructures ?? {}) };
-    const newTableInfos = { ...(state.tableInfos ?? {}) };
-    for (const k of Object.keys(newTableStructures)) {
-      if (k.startsWith(prefix)) {
-        delete newTableStructures[k];
-      }
-    }
-    for (const k of Object.keys(newTableInfos)) {
-      if (k.startsWith(prefix)) {
-        delete newTableInfos[k];
-      }
-    }
-
-    const newTables = { ...state.tables };
-    delete newTables[database];
-
-    const newExpandedKeys = state.expandedKeys.filter(
-      (k) => k !== `db:${database}`
     );
-
-    const nextEntry = newOpenTabs[newIdx];
-    const hadSelectionInDroppedDb = state.selectedDatabase === database;
-
-    const updated: ConnectionDatabaseState = {
-      ...state,
-      databases,
-      tables: newTables,
-      expandedKeys: newExpandedKeys,
-      openTabs: newOpenTabs,
-      openTables: newOpenTables,
-      activeTabIndex: newIdx,
-      activeTableTabIndex: newOpenTabs
-        .slice(0, newIdx)
-        .filter((t) => t.type === "table").length,
-      tableStructures: newTableStructures,
-      tableInfos: newTableInfos,
-      selectedDatabase: hadSelectionInDroppedDb
-        ? nextEntry?.type === "table"
-          ? nextEntry.database
-          : null
-        : state.selectedDatabase,
-      selectedTable: hadSelectionInDroppedDb
-        ? nextEntry?.type === "table"
-          ? nextEntry.table
-          : null
-        : state.selectedTable,
-      tableStructure: hadSelectionInDroppedDb
-        ? nextEntry?.type === "table"
-          ? (newTableStructures[`${nextEntry.database}|${nextEntry.table}`] ??
-            null)
-          : null
-        : state.tableStructure,
-      selectedTableInfo: hadSelectionInDroppedDb
-        ? nextEntry?.type === "table"
-          ? (newTableInfos[`${nextEntry.database}|${nextEntry.table}`] ?? null)
-          : null
-        : state.selectedTableInfo,
-      databaseInfo: hadSelectionInDroppedDb ? null : state.databaseInfo,
-    };
-
-    const newStates = { ...connectionStates, [connId]: updated };
-    const res: Partial<DatabaseState> = {
-      connectionStates: newStates,
-      openTabs: newOpenTabs,
-      openTables: newOpenTables,
-      activeTabIndex: newIdx,
-    };
-    if (activeConnId === connId) {
-      Object.assign(res, syncCurrentView(updated));
-    }
-    set(res);
   },
 
   editDatabase: async (
@@ -1652,8 +2087,10 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     characterSet: string,
     collation: string
   ) => {
-    await api.alterDatabaseCharset(connId, database, characterSet, collation);
-    invalidateSqlCompletion({ connId, database, reason: "schema-change" });
+    const mutation = await mutateSchema(connId, database, () =>
+      api.alterDatabaseCharset(connId, database, characterSet, collation)
+    );
+    if (!mutation) return;
   },
 
   renameDatabase: async (
@@ -1663,34 +2100,42 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     characterSet: string,
     collation: string
   ) => {
-    await api.renameDatabase(connId, oldName, newName, characterSet, collation);
-    invalidateSqlCompletion({ connId, reason: "schema-change" });
-    const databases = await api.listDatabases(connId);
-
-    const { connectionStates, activeConnId } = get();
-    const state = connectionStates[connId] ?? emptyConnState();
-    const newTables = { ...state.tables };
-    if (newTables[oldName]) {
-      newTables[newName] = newTables[oldName];
-      delete newTables[oldName];
-    }
-    const newExpandedKeys = state.expandedKeys.map((k) =>
-      k === `db:${oldName}` ? `db:${newName}` : k
+    const mutation = await mutateSchema(connId, undefined, () =>
+      api.renameDatabase(connId, oldName, newName, characterSet, collation)
     );
-    const updated: ConnectionDatabaseState = {
-      ...state,
-      databases,
-      tables: newTables,
-      expandedKeys: newExpandedKeys,
-      selectedDatabase:
-        state.selectedDatabase === oldName ? newName : state.selectedDatabase,
-    };
-    const newStates = { ...connectionStates, [connId]: updated };
-    const res: Partial<DatabaseState> = { connectionStates: newStates };
-    if (activeConnId === connId) {
-      Object.assign(res, syncCurrentView(updated));
-    }
-    set(res);
+    if (!mutation) return;
+    await mutation.read(
+      [["databases"]],
+      () => api.listDatabases(connId),
+      (databases) => {
+        const { connectionStates, activeConnId } = get();
+        const state = connectionStates[connId] ?? emptyConnState();
+        const newTables = { ...state.tables };
+        if (newTables[oldName]) {
+          newTables[newName] = newTables[oldName];
+          delete newTables[oldName];
+        }
+        const newExpandedKeys = state.expandedKeys.map((k) =>
+          k === `db:${oldName}` ? `db:${newName}` : k
+        );
+        const updated: ConnectionDatabaseState = {
+          ...state,
+          databases,
+          tables: newTables,
+          expandedKeys: newExpandedKeys,
+          selectedDatabase:
+            state.selectedDatabase === oldName
+              ? newName
+              : state.selectedDatabase,
+        };
+        const newStates = { ...connectionStates, [connId]: updated };
+        const res: Partial<DatabaseState> = { connectionStates: newStates };
+        if (activeConnId === connId) {
+          Object.assign(res, syncCurrentView(updated));
+        }
+        set(res);
+      }
+    );
   },
 
   setExpandedKeys: (keys: string[]) => {
@@ -1762,6 +2207,8 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     const state = connectionStates[connId];
     set({
       activeConnId: connId,
+      treeLoading: loadingRequests.treeLoading.has(connId),
+      structureLoading: loadingRequests.structureLoading.has(connId),
       ...(state
         ? syncCurrentView(state)
         : {
@@ -1788,6 +2235,12 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   },
 
   removeConnectionState: (connId: string) => {
+    invalidateMetadataRequestScope(connId);
+    selectionRequests.delete(connId);
+    connectionLifetimes.delete(connId);
+    metadataReadOwners.delete(connId);
+    loadingRequests.treeLoading.delete(connId);
+    loadingRequests.structureLoading.delete(connId);
     const { connectionStates, activeConnId } = get();
     const newStates = { ...connectionStates };
     delete newStates[connId];
@@ -1795,6 +2248,8 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     if (activeConnId === connId) {
       set({
         activeConnId: null,
+        treeLoading: false,
+        structureLoading: false,
         databases: [],
         tables: {},
         selectedDatabase: null,
@@ -1819,6 +2274,13 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   },
 
   reset: () => {
+    selectionRequests.clear();
+    connectionLifetimes.clear();
+    metadataReadOwners.clear();
+    loadingRequests.treeLoading.clear();
+    loadingRequests.structureLoading.clear();
+    for (const connId of Object.keys(get().connectionStates))
+      invalidateMetadataRequestScope(connId);
     set({
       activeConnId: null,
       connectionStates: {},

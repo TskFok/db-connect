@@ -262,9 +262,9 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
         );
         if (connToDisconnect) {
           const [connId] = connToDisconnect;
+          invalidateSqlCompletion({ connId, reason: "disconnect" });
           await api.disconnect(connId);
           api.invalidateSessionInfoCache(connId);
-          invalidateSqlCompletion({ connId, reason: "disconnect" });
           const newConnections = { ...activeConnections };
           delete newConnections[connId];
           const newActiveId =
@@ -518,9 +518,9 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
 
       try {
         set({ loading: true, error: null });
+        invalidateSqlCompletion({ connId: toDisconnect, reason: "disconnect" });
         await api.disconnect(toDisconnect);
         api.invalidateSessionInfoCache(toDisconnect);
-        invalidateSqlCompletion({ connId: toDisconnect, reason: "disconnect" });
 
         const newConnections = { ...activeConnections };
         delete newConnections[toDisconnect];
@@ -552,6 +552,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
       const { activeConnections, activeConnId } = get();
       if (!activeConnections[connId]) return;
 
+      invalidateSqlCompletion({ connId, reason: "disconnect" });
       // 后端尽力释放底层资源（隧道 / 连接池），即便失败也不影响前端清理。
       try {
         await api.forceDisconnect(connId);
@@ -559,7 +560,6 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
         /* ignore */
       }
       api.invalidateSessionInfoCache(connId);
-      invalidateSqlCompletion({ connId, reason: "disconnect" });
 
       const newConnections = { ...activeConnections };
       delete newConnections[connId];

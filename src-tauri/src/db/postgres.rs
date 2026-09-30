@@ -1,4 +1,5 @@
 use crate::db::batch_update::{build_batch_update_statements, BatchDialect};
+use crate::db::metadata_batch::{group_tables, normalize_databases};
 use crate::db::postgres_error::format_pg_error;
 use crate::db::result_budget::{collect_rows, ResultBudget};
 use crate::db::sql_utils::{
@@ -13,12 +14,12 @@ pub fn esc_pg_str_external(value: &str) -> String {
     pg_str(value)
 }
 use crate::db::table_pagination::{
-    cached_metadata_for_navigation, remember_metadata, ColumnMetadata, IntegerKind, IntegerValue,
-    PageContext, PagePlan, TableMetadata,
+    load_table_metadata, ColumnMetadata, IntegerKind, IntegerValue, PageContext, PagePlan,
+    TableMetadata,
 };
 use crate::models::types::{
-    ColumnInfo, ConnectionConfig, QueryResult, SqlExecuteResult, TableInfo, TablePageNavigation,
-    TablePageResult,
+    ColumnInfo, ConnectionConfig, DatabaseTableList, QueryResult, SqlExecuteResult, TableInfo,
+    TablePageNavigation, TablePageResult,
 };
 use bytes::BytesMut;
 use deadpool_postgres::{Config as PgPoolConfig, Pool as PgPool, PoolConfig, Runtime, SslMode};
@@ -40,6 +41,18 @@ mod query_tests;
 #[cfg(test)]
 #[path = "postgres_batch_tests.rs"]
 mod batch_tests;
+
+#[cfg(test)]
+mod metadata_batch_tests {
+    #[test]
+    fn metadata_batch_postgres_uses_bound_schema_array() {
+        let sql = super::list_tables_batch_sql();
+        assert!(sql.contains("n.nspname = ANY($1::text[])"));
+        assert!(sql.contains("n.nspname AS database_name"));
+        assert!(sql.contains("c.relkind IN ('r', 'p', 'v', 'm')"));
+        assert!(sql.contains("pg_catalog.pg_relation_size(c.oid)"));
+    }
+}
 
 #[derive(Clone)]
 pub enum PostgresCancelTls {
@@ -289,11 +302,8 @@ pub async fn list_schemas(pool: &PgPool) -> Result<Vec<String>, String> {
     Ok(rows.iter().map(|r| r.get::<_, String>(0)).collect())
 }
 
-pub async fn list_tables(pool: &PgPool, schema: &str) -> Result<Vec<TableInfo>, String> {
-    let client = get_client_with_retry(pool).await?;
-    let rows = client
-        .query(
-            "SELECT c.relname AS name, \
+pub(crate) fn list_tables_batch_sql() -> &'static str {
+    "SELECT n.nspname AS database_name, c.relname AS name, \
                     CASE WHEN c.relkind IN ('v', 'm') THEN 'VIEW' ELSE 'TABLE' END AS table_type, \
                     CASE WHEN c.relkind IN ('r', 'p') THEN 'PostgreSQL' ELSE NULL END AS engine, \
                     CASE WHEN c.relkind IN ('r', 'p') THEN GREATEST(c.reltuples::bigint, 0) ELSE NULL END AS rows_est, \
@@ -302,26 +312,46 @@ pub async fn list_tables(pool: &PgPool, schema: &str) -> Result<Vec<TableInfo>, 
                     COALESCE(pg_catalog.obj_description(c.oid, 'pg_class'), '') AS comment \
              FROM pg_catalog.pg_class c \
              JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
-             WHERE n.nspname = $1 \
+             WHERE n.nspname = ANY($1::text[]) \
                AND c.relkind IN ('r', 'p', 'v', 'm') \
-             ORDER BY c.relname",
-            &[&schema],
-        )
+             ORDER BY n.nspname, c.relname"
+}
+
+pub async fn list_tables(pool: &PgPool, schema: &str) -> Result<Vec<TableInfo>, String> {
+    let mut groups = list_tables_batch(pool, &[schema.to_string()]).await?;
+    Ok(groups.remove(0).tables)
+}
+
+pub async fn list_tables_batch(
+    pool: &PgPool,
+    databases: &[String],
+) -> Result<Vec<DatabaseTableList>, String> {
+    let databases = normalize_databases(databases)?;
+    if databases.is_empty() {
+        return Ok(Vec::new());
+    }
+    let client = get_client_with_retry(pool).await?;
+    let rows = client
+        .query(list_tables_batch_sql(), &[&databases])
         .await
         .map_err(|e| format!("查询表列表失败: {}", e))?;
-
-    Ok(rows
-        .iter()
-        .map(|row| TableInfo {
-            name: row.get::<_, String>("name"),
-            table_type: row.get::<_, String>("table_type"),
-            engine: row.get::<_, Option<String>>("engine"),
-            rows: i64_to_u64(row.get::<_, Option<i64>>("rows_est")),
-            data_length: i64_to_u64(row.get::<_, Option<i64>>("data_length")),
-            index_length: i64_to_u64(row.get::<_, Option<i64>>("index_length")),
-            comment: row.get::<_, String>("comment"),
-        })
-        .collect())
+    group_tables(
+        &databases,
+        rows.iter().map(|row| {
+            (
+                row.get::<_, String>("database_name"),
+                TableInfo {
+                    name: row.get::<_, String>("name"),
+                    table_type: row.get::<_, String>("table_type"),
+                    engine: row.get::<_, Option<String>>("engine"),
+                    rows: i64_to_u64(row.get::<_, Option<i64>>("rows_est")),
+                    data_length: i64_to_u64(row.get::<_, Option<i64>>("data_length")),
+                    index_length: i64_to_u64(row.get::<_, Option<i64>>("index_length")),
+                    comment: row.get::<_, String>("comment"),
+                },
+            )
+        }),
+    )
 }
 
 pub async fn get_table_structure(
@@ -478,20 +508,20 @@ pub async fn query_table_data(
     cancellation: &TableQueryCancellation,
 ) -> Result<TablePageResult, String> {
     let start = Instant::now();
-    let client = cancellation
+    let mut client = cancellation
         .run(get_client_with_retry(&handle.pool))
         .await?;
     let result = cancellation
         .run(async {
             let where_sql = build_where_sql(&where_clause)?;
-            let metadata = match cached_metadata_for_navigation(&context, page, navigation.as_ref())
-            {
-                Some(metadata) => metadata,
-                None => remember_metadata(
-                    &context,
-                    fetch_table_page_metadata(&client, schema, table).await?,
-                ),
-            };
+            let metadata = load_table_metadata(&context, &mut client, |client, context| {
+                Box::pin(fetch_table_page_metadata(
+                    client,
+                    &context.database,
+                    &context.table,
+                ))
+            })
+            .await?;
             let total = if skip_count == Some(true) {
                 0
             } else {

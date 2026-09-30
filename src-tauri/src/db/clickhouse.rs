@@ -1,9 +1,10 @@
+use crate::db::metadata_batch::{group_tables, normalize_databases};
 use crate::db::result_budget::{
     result_bytes_exceeded, ResultBudget, MAX_RESULT_BYTES, MAX_RESULT_ROWS,
 };
 use crate::db::table_query::TableQueryCancellation;
 use crate::models::types::{
-    ColumnInfo, ConnectionConfig, QueryResult, SessionInfo, SqlCompletionColumn,
+    ColumnInfo, ConnectionConfig, DatabaseTableList, QueryResult, SessionInfo, SqlCompletionColumn,
     SqlCompletionMetadata, SqlCompletionTable, SqlExecuteResult, TableInfo,
 };
 use clickhouse_rs::query::Query;
@@ -246,8 +247,8 @@ pub(crate) fn list_databases_sql() -> &'static str {
      ORDER BY name"
 }
 
-pub(crate) fn list_tables_sql() -> &'static str {
-    "SELECT name, \
+pub(crate) fn list_tables_batch_sql() -> &'static str {
+    "SELECT database, name, \
             CASE WHEN engine IN ('View', 'MaterializedView', 'LiveView') \
                  THEN 'VIEW' ELSE 'TABLE' END AS table_type, \
             engine, \
@@ -255,8 +256,8 @@ pub(crate) fn list_tables_sql() -> &'static str {
             total_bytes, \
             comment \
      FROM system.tables \
-     WHERE database = ? \
-     ORDER BY name"
+     WHERE database IN ? \
+     ORDER BY database, name"
 }
 
 pub(crate) fn table_structure_sql() -> &'static str {
@@ -814,13 +815,36 @@ pub async fn list_databases(client: &Client) -> Result<Vec<String>, String> {
     Ok(rows.into_iter().map(|row| row.name).collect())
 }
 
+#[derive(Deserialize)]
+pub(crate) struct ClickHouseBatchTableRow {
+    database: String,
+    #[serde(flatten)]
+    table: ClickHouseTableRow,
+}
+
 pub async fn list_tables(client: &Client, database: &str) -> Result<Vec<TableInfo>, String> {
-    let rows: Vec<ClickHouseTableRow> = fetch_json_each_rows(
-        client.query(list_tables_sql()).bind(database),
+    let mut groups = list_tables_batch(client, &[database.to_string()]).await?;
+    Ok(groups.remove(0).tables)
+}
+
+pub async fn list_tables_batch(
+    client: &Client,
+    databases: &[String],
+) -> Result<Vec<DatabaseTableList>, String> {
+    let databases = normalize_databases(databases)?;
+    if databases.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows: Vec<ClickHouseBatchTableRow> = fetch_json_each_rows(
+        client.query(list_tables_batch_sql()).bind(&databases),
         "查询表列表失败",
     )
     .await?;
-    Ok(rows.into_iter().map(map_clickhouse_table_row).collect())
+    group_tables(
+        &databases,
+        rows.into_iter()
+            .map(|row| (row.database, map_clickhouse_table_row(row.table))),
+    )
 }
 
 pub async fn get_table_structure(
@@ -1324,9 +1348,9 @@ mod tests {
         assert!(databases_sql.contains("'system'"));
         assert!(databases_sql.contains("'INFORMATION_SCHEMA'"));
 
-        let tables_sql = super::list_tables_sql();
+        let tables_sql = super::list_tables_batch_sql();
         assert!(tables_sql.contains("FROM system.tables"));
-        assert!(tables_sql.contains("WHERE database = ?"));
+        assert!(tables_sql.contains("WHERE database IN ?"));
         assert!(tables_sql.contains("engine IN ('View', 'MaterializedView', 'LiveView')"));
 
         let structure_sql = super::table_structure_sql();
@@ -1843,5 +1867,34 @@ mod table_cancellation_compatibility_tests {
         .await;
         assert!(result.is_err());
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[cfg(test)]
+mod metadata_batch_tests {
+    #[test]
+    fn metadata_batch_clickhouse_groups_database_and_binds_names() {
+        let names = vec!["O'Reilly`\"[x];--".to_string(), "normal".to_string()];
+        let query = super::Client::default()
+            .query(super::list_tables_batch_sql())
+            .bind(&names);
+        let rendered = query.sql_display().to_string();
+        assert!(rendered.contains("WHERE database IN ["));
+        assert!(rendered.contains("O\\'Reilly"));
+        let rows: Vec<super::ClickHouseBatchTableRow> = super::parse_json_each_rows(
+            r#"{"database":"one","name":"same","table_type":"VIEW","engine":"View","total_rows":null,"total_bytes":null,"comment":"注释"}
+{"database":"two","name":"same","table_type":"TABLE","engine":"MergeTree","total_rows":"7","total_bytes":"32","comment":""}"#
+        ).unwrap();
+        let mapped = crate::db::metadata_batch::group_tables(
+            &["two".into(), "empty".into(), "one".into()],
+            rows.into_iter()
+                .map(|r| (r.database, super::map_clickhouse_table_row(r.table))),
+        )
+        .unwrap();
+        assert_eq!(mapped[0].tables[0].rows, Some(7));
+        assert!(mapped[1].tables.is_empty());
+        assert_eq!(mapped[2].tables[0].table_type, "VIEW");
+        assert_eq!(mapped[2].tables[0].rows, None);
+        assert_eq!(mapped[2].tables[0].comment, "注释");
     }
 }

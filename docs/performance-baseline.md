@@ -110,3 +110,118 @@ python3 scripts/performance/mysql-cancellation-benchmark.py \
 协议替身验证发现 mysql_async 0.37.0 的 `disconnect()` 会尝试排空多结果集，且跨结果集时可能恢复 disconnected 标志；第二结果流停顿后，即使外层关闭超时，池槽仍可能被后台清理占用。回归先在原版失败，再通过同版本本地补丁新增的 `disconnect_immediately`：直接关闭流并由池回收器释放槽位，不执行额外 SQL、不扩池。
 
 补丁仅增加一个公开方法，保留原来的 disconnect、正常归还和表浏览行为，详见 [补丁说明](../src-tauri/vendor/mysql_async/DB_CONNECT_PATCH.md)。维护成本为约 668 KiB 上游源码快照和一处补丁；没有增加依赖或升级版本。此补丁随本专项整体回滚，不能只移除 Cargo patch 而留下调用点。
+
+## 03：目录集合读取与分页元数据缓存（2026-09-30）
+
+### 夹具与计数口径
+
+目录和缓存实测使用本机已安装的 MySQL 5.7.37、mysql_async 0.37.0、Rust debug 构建。脚本启动自己的临时数据目录和随机 loopback 端口，关闭自己持有的服务进程；不读取应用连接配置、业务账号或凭据，不安装依赖。
+
+夹具包含 100 个数据库，每库一张空表；第一个库另有一张视图，还包括空库、名称含单引号/反引号/双引号/方括号/分隔符的库、仅单表 SELECT 权限的账号及仅 SHOW DATABASES 权限的账号。新旧单库路径均读取同一张表和视图并构造 `TableInfo`。每个样本独立进程和连接池，正式计时前已取得物理连接；服务器不在样本间重启，因此不能把它称为冷启动测量。
+
+目录 SQL 数由独立观察连接读取 Performance Schema 的目标线程执行计数；MySQL 5.7 的预处理语句执行归在 `statement/com/Execute`，与普通 SELECT、SHOW TABLE STATUS、SHOW INDEX 的执行计数一起核对。排除连接初始化、PREPARE 和观察连接自身查询；**一次目录 SQL 不等于一次网络往返**。新路径测试直接调用生产批量函数，固定为一次集合执行；没有逐库/逐表 COUNT 或超限分块查询。
+
+SQLite 采用真实内存连接、同一连接 ATTACH、temp、空 schema、特殊别名以及 authorizer 拒绝测试。PostgreSQL 17.10 另用本机已有镜像完成真实权限与字段对照，详见下方补验。SQL Server、ClickHouse 本轮只有离线方言/映射及代码审查，没有真实服务器权限矩阵和网络性能数据；不能据此宣称这两种引擎的权限兼容性已经全面验收。
+
+### 确定性结果
+
+| 场景 | 修改前 | 修改后 | 证据边界 |
+| --- | ---: | ---: | --- |
+| 刷新 1 / 10 / 100 个已加载目录的目录 IPC | 1 / 10 / 100 | 1 / 1 / 1 | 前值为原源码计数，后值为生产 store + invoke 替身断言 |
+| MySQL 1 / 10 / 100 库的目录 SQL | 1 / 10 / 100 | 1 / 1 / 1 | 前值为原 SHOW 路径源码计数，后值为隔离服务器执行计数 |
+| 20 个同键并发目录调用 | 20 次调用无合并 | 1 次 invoke | 进行中请求合并 19/20，不是完成结果缓存 |
+| MySQL 首次 / 后续无导航元数据读取 | 2 / 每次 2 | 2 / 0 | 真实隔离实例；两条可信主键查询保留 |
+| PG 首次 / 后续无导航元数据读取 | 1 / 每次 1 | 1 / 0 | 注入读取器与原 SQL 边界审查，非服务端计时 |
+| 首读后连续 20 次无导航请求 | 每次重读目录 | 20 次全部命中 | 受控读取器，含首次共 21 次请求，整体命中 20/21 |
+| DDL、刷新、断线前的旧元数据回填 | 缺少统一约束 | 0 次被接纳 | 代次、连接生命周期、游标 revision 及竞态回归 |
+
+空目录替身中，完整刷新还包含后端失效及数据库列表两次 IPC，因此修改后完整刷新是固定 3 次 IPC；有选中表时还可能读取一次结构。表格中的“1 次”仅指目录批量读取，不能描述为整次刷新总共一次 IPC。
+
+MySQL 实测中曾发现普通请求集合 JOIN 会显示 `Scanned all databases`；仅加派生 IN 条件仍被优化器合并。现实现使用请求集合过滤并保留 TABLES 派生查询的物化边界，实际生产 SQL 的 EXPLAIN 断言为 `Scanned 1 database`，同时拒绝 `Scanned all databases`。该最大 LIMIT 用来阻止派生合并，不截断目录结果。SHOW 与新集合查询逐项核对名称顺序、表/视图、NULL 统计、大小和注释；仅有库可见权限时保留空列表，缺失/不可见库整批报错。
+
+### 前端受控替身测量
+
+最终前端修复和全量检查后单独运行：Node 25.5.0、macOS arm64，真实 store/service 配合立即完成的 invoke 替身。每组预热 5 次、记录 30 次，nearest-rank p95；只以调用次数作为确定性断言，不对时间设 CI 门禁。
+
+| 场景 | 目录 IPC | 完整刷新 IPC | p95（ms） |
+| --- | ---: | ---: | ---: |
+| 刷新 1 个目录 | 1 | 3 | 0.105 |
+| 刷新 10 个目录 | 1 | 3 | 0.158 |
+| 刷新 100 个目录 | 1 | 3 | 0.262 |
+| 20 个同键并发调用 | 1 | — | 0.030 |
+
+[测量摘要](performance/metadata-frontend-2026-09-30.json)记录运行环境与口径。前三组返回空目录且没有选中表；第四组合并 19/20 个调用。该结果反映 JavaScript 请求组织成本，不包含 Tauri、数据库、网络或 React，也没有旧实现同口径延迟对照。
+
+### 隔离 MySQL 测量结果
+
+正式采样在最终 MySQL 8 权限修复、编译、构建和全量测试结束后单独重跑；每组 20 个样本，共 80 个目录样本与 20 对缓存冷/热读取。p50/p95 使用 nearest-rank，单位为毫秒。原始记录见 [100 样本证据](performance/metadata-access-2026-09-30.json)；首轮与构建短暂重叠的复现采样没有混入此文件。
+
+| 路径 | 库数量 | 样本数 | p50 | p95 | 每次目录 SQL |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 原 SHOW 单库及字段映射 | 1 | 20 | 0.472 | 0.765 | 1 |
+| 新集合读取 | 1 | 20 | 1.181 | 1.894 | 1 |
+| 新集合读取 | 10 | 20 | 4.098 | 6.224 | 1 |
+| 新集合读取 | 100 | 20 | 9.259 | 13.910 | 1 |
+
+单库 p95 增加约 1.13 ms：集合校验、预处理和归组存在成本，不能宣称单库延迟改善。多库已验证执行次数固定，但没有重新引入旧循环查询来采集旧多库 p95，因而不报告多库端到端提升百分比。
+
+| MySQL 分页元数据路径 | 样本数 | p50 | p95 | 元数据 SQL |
+| --- | ---: | ---: | ---: | ---: |
+| 首次安全目录读取（未命中） | 20 | 13.415 | 19.431 | 2 |
+| 同表无 navigation 热读 | 20 | 0.006 | 0.024 | 0 |
+
+这里仅计生产元数据加载函数，不包含数据 SELECT、COUNT、IPC 或渲染。每对样本第一次调用实际读取可信主键和列证据，第二次复用相同表的缓存；跨分页 20 次复用由前述受控读取器测试覆盖。
+
+### MySQL 8 权限兼容调整与隔离补验
+
+MySQL 8.4.10 / Linux arm64 / `lower_case_table_names=0` 的隔离验收发现：仅有 SHOW DATABASES 权限时，原 SHOW TABLE STATUS 返回 1044，而 INFORMATION_SCHEMA 返回可见库与空表集合。直接把空集合视为成功会掩盖权限错误。公开权限视图也不能完整还原嵌套角色授予的库权限及 partial revoke，因此增加以下必要例外：
+
+- MySQL 8/9 普通非空目录批次仍为 1 条集合查询。
+- 批次包含空目录时，在同一借出连接最多追加 1 条裸 SHOW GRANTS，再在内存统一校验所有空组；总数最多 2，与库数量无关。
+- 缺失/不可见库或任一无权限空组整批失败；未知授权格式、无法可靠判断优先级的重叠库授权明确报无法验证，不伪装空目录。后者可能保守拒绝部分服务端本可允许的配置。
+- 握手版本与同一集合结果提供匹配模式，不为每个库追加探测，不缓存授权、不修改活动角色。MySQL 5.7 的集合 SQL 保持原样。
+
+裸 SHOW GRANTS 会合并当前活动角色和权限限制；这里必须省略 FOR/USING，并与目录查询使用同一连接。该行为由隔离实验及 [MySQL 官方实现](https://github.com/mysql/mysql-server/blob/mysql-8.4.0/sql/sql_show.cc)交叉核实。权限解析按库操作权限、对象授权、通配符、大小写和部分撤权规则判断，不把“能看到库名”当作“能读目录”。
+
+真实矩阵覆盖五库归组及特殊名称、大小写同名库/表、SHOW 字段和排序、空/缺失库、单表 SELECT、仅 SHOW DATABASES、直接空库 CREATE、嵌套角色、列/例程、表级 GRANT OPTION、空角色、通配符和部分撤权。复现入口为 `python3 scripts/performance/mysql8-metadata-validation.py`，只使用本机已有镜像和自建临时容器。[验收证据](performance/metadata-mysql8-2026-09-30.json)不记录凭据。
+
+这明确偏离原计划“所有目录批次固定 1 条 SQL”的绝对指标，以保留原权限错误。没有逐库 SQL 或分块兜底；MySQL 8 的空库额外授权检查不计入下述 MySQL 5.7 延迟样本。
+
+### PostgreSQL 17 隔离补验
+
+使用已有 `postgres:17-alpine` 镜像，实际服务端为 17.10；仅创建带随机标记、绑定随机 loopback 端口的专用容器。管理员与仅拥有一个 schema USAGE、一张表 SELECT 的账号分别调用生产批量函数，并对照修改前的单 schema 查询。
+
+6 个请求去重后返回 5 组，包含空/缺失 schema、特殊引号与分隔符、不同 schema 同名表，以及普通表、视图、物化视图和分区表。所有字段与顺序一致；`pg_stat_statements` 确认两类账号每批各 1 条目录 SQL，空请求和超限请求为 0。受限账号不能访问另一 schema 的数据，但原 `pg_catalog` 路径仍可看到目录，新实现保持该行为，没有为隐藏目录增加权限过滤。
+
+[原始验收结果](performance/metadata-postgres-2026-09-30.json)只记录数量、版本和随机夹具标记，不包含凭据。复现命令为 `python3 scripts/performance/metadata-postgres-validation.py`；脚本只使用现有镜像，退出前校验标签并删除自身容器及匿名卷、临时凭据文件。此补验不提供 PostgreSQL 网络 p95 或分页元数据的真实 SQL 计数。
+
+### 复现与剩余边界
+
+```sh
+python3 scripts/performance/metadata-access-benchmark.py \
+  --mysqld /opt/homebrew/opt/mysql@5.7/bin/mysqld \
+  --samples 20 --output /private/tmp
+npm test -- src/__tests__/metadataRequests.performance.test.ts
+cargo test --manifest-path src-tauri/Cargo.toml metadata_batch
+cargo test --manifest-path src-tauri/Cargo.toml metadata_cache
+cargo test --manifest-path src-tauri/Cargo.toml table_pagination
+```
+
+远程目录及分页 p95 不包含 WebView、Tauri IPC、React 提交、数据页查询和 COUNT。旧多库路径未为测量重新引入循环 SQL，因此只保留次数的源码基线，**没有旧多库端到端 p95 对照**。MySQL 8.4.10 的 Linux 大小写敏感实例已完成上述目录补验；MariaDB、MySQL 其他版本/配置、不同 collation 及真实 SSH/TLS 网络仍未全面实测。
+
+缓存本体保持 300 秒 TTL、256 项元数据和 4096 项游标。连接生命周期的小对象暂按历史连接保留以拒绝极晚响应；长期高频重连的安全回收为非阻断维护项，不能简单用 TTL 删除标记。SQL 修改类结果按连接保守失效，包含 DML；没有声称能精确识别所有带副作用的 SELECT 或外部 DDL，外部变更仍由刷新或 TTL 感知。
+
+### 最终回归与检查
+
+| 检查 | 结果 |
+| --- | --- |
+| 前端全量（`--maxWorkers=2`） | 147 文件、1919 项全部通过，168.23 秒 |
+| Rust 全量 | 771 项通过、18 项默认忽略，5.05 秒；本机协议替身已允许监听 |
+| 独立权限解析回归 | 6 项纳入全量 Rust，通过 |
+| `npm run build` / TypeScript | 通过；大 chunk 及无效动态导入提示保留 |
+| 修改的前端文件 ESLint | 15 文件通过 |
+| Rust 格式、差异空白、3 个 Python 隔离脚本语法 | 通过 |
+| 全仓 ESLint | 仍为未改动 release 脚本的 3 项既有错误 |
+| Clippy | 仍为未改动 `sqlserver_objects.rs:629` 的既有 `type_complexity` |
+
+并发 DDL、刷新接管后再次失效、断线、切换连接、关闭重开同名表及旧请求 finally 均有确定性回归。独立审查发现的问题完成红绿修复并通过限定复审。MySQL 8 重叠授权的有效回归使用不含通配字符的精确库名；早期含未转义下划线的探针被排除，没有当作有效失败证据。

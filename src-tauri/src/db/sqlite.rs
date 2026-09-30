@@ -1,6 +1,7 @@
 pub use crate::db::batch_update::RowUpdate as SqliteRowUpdate;
 use crate::db::batch_update::{build_batch_update_statements, BatchDialect, BatchUpdateStatement};
 use crate::db::dialect::SQLITE_DIALECT;
+use crate::db::metadata_batch::{group_tables, normalize_databases};
 use crate::db::result_budget::ResultBudget;
 use crate::db::sql_utils::{
     sqlite_count_query, sqlite_id, sqlite_paginated_select, sqlite_str, validate_column_type,
@@ -9,9 +10,9 @@ use crate::db::sql_utils::{
 use crate::db::table_query::TableQueryCancellation;
 use crate::models::types::{
     AddColumnRequest, ColumnInfo, ConnectionConfig, CreateIndexRequest, CreateTableRequest,
-    CreateTriggerRequest, ForeignKeyInfo, IndexColumnInfo, IndexInfo, QueryResult, SessionInfo,
-    SqlCompletionColumn, SqlCompletionForeignKey, SqlCompletionMetadata, SqlCompletionTable,
-    SqlExecuteResult, TableInfo, TriggerInfo,
+    CreateTriggerRequest, DatabaseTableList, ForeignKeyInfo, IndexColumnInfo, IndexInfo,
+    QueryResult, SessionInfo, SqlCompletionColumn, SqlCompletionForeignKey, SqlCompletionMetadata,
+    SqlCompletionTable, SqlExecuteResult, TableInfo, TriggerInfo,
 };
 use deadpool_sqlite::{Config as SqliteConfig, Object as SqliteObject, Pool, Runtime};
 use rusqlite::types::Value as SqliteValue;
@@ -310,50 +311,69 @@ pub async fn get_session_info(
 }
 
 pub async fn list_tables(pool: &Pool, database: &str) -> Result<Vec<TableInfo>, String> {
+    let mut groups = list_tables_batch(pool, &[database.to_string()]).await?;
+    Ok(groups.remove(0).tables)
+}
+
+pub async fn list_tables_batch(
+    pool: &Pool,
+    databases: &[String],
+) -> Result<Vec<DatabaseTableList>, String> {
+    let databases = normalize_databases(databases)?;
+    if databases.is_empty() {
+        return Ok(Vec::new());
+    }
     let conn = pool
         .get()
         .await
         .map_err(|e| format!("获取 SQLite 连接失败: {}", e))?;
-    let internal_table_pattern = sqlite_str("sqlite_%");
-    let sql = format!(
-        "SELECT name, \
-                CASE WHEN type = 'view' THEN 'VIEW' ELSE 'TABLE' END AS table_type, \
-                type, \
-                sql \
-         FROM {}.sqlite_schema \
-         WHERE type IN ('table', 'view') \
-           AND name NOT LIKE {} \
-         ORDER BY name",
-        sqlite_id(database),
-        internal_table_pattern
-    );
-
     conn.interact(move |conn| {
-        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-        let rows = stmt
+        // 仅在内存中拼接各分支；所有 attached 别名均在当前物理连接解析。
+        let branches = databases
+            .iter()
+            .enumerate()
+            .map(|(index, database)| {
+                format!(
+                    "SELECT {} AS request_order, name, type \
+             FROM {}.sqlite_schema \
+             WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'",
+                    index,
+                    sqlite_id(database)
+                )
+            })
+            .collect::<Vec<_>>();
+        let sql = format!(
+            "{} ORDER BY request_order, name",
+            branches.join(" UNION ALL ")
+        );
+        let mut statement = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let rows = statement
             .query_map([], |row| {
-                let table_type: String = row.get("table_type")?;
+                let index: u32 = row.get("request_order")?;
                 let object_type: String = row.get("type")?;
-                Ok(TableInfo {
-                    name: row.get("name")?,
-                    table_type,
-                    engine: if object_type == "table" {
-                        Some("SQLite".to_string())
-                    } else {
-                        None
+                Ok((
+                    databases[index as usize].clone(),
+                    TableInfo {
+                        name: row.get("name")?,
+                        table_type: if object_type == "view" {
+                            "VIEW"
+                        } else {
+                            "TABLE"
+                        }
+                        .to_string(),
+                        engine: (object_type == "table").then(|| "SQLite".to_string()),
+                        rows: None,
+                        data_length: None,
+                        index_length: None,
+                        comment: String::new(),
                     },
-                    rows: None,
-                    data_length: None,
-                    index_length: None,
-                    comment: String::new(),
-                })
+                ))
             })
             .map_err(|e| e.to_string())?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row.map_err(|e| e.to_string())?);
-        }
-        Ok(out)
+        let rows = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        group_tables(&databases, rows)
     })
     .await
     .map_err(|e| format!("SQLite 查询任务失败: {}", e))?
@@ -2251,6 +2271,123 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use uuid::Uuid;
+
+    #[tokio::test]
+    async fn metadata_batch_contract_empty_and_oversized_do_not_acquire_sqlite() {
+        let pool = SqliteConfig::new(":memory:")
+            .builder(Runtime::Tokio1)
+            .unwrap()
+            .max_size(1)
+            .build()
+            .unwrap();
+        pool.close();
+        assert!(list_tables_batch(&pool, &[]).await.unwrap().is_empty());
+        let oversized = (0..257).map(|i| format!("db{i}")).collect::<Vec<_>>();
+        assert!(list_tables_batch(&pool, &oversized)
+            .await
+            .unwrap_err()
+            .contains("256"));
+    }
+
+    #[tokio::test]
+    async fn metadata_batch_attached_connection_scope() {
+        let pool = SqliteConfig::new(":memory:")
+            .builder(Runtime::Tokio1)
+            .unwrap()
+            .max_size(1)
+            .build()
+            .unwrap();
+        let conn = pool.get().await.unwrap();
+        conn.interact(|conn| {
+            conn.execute_batch(
+                "ATTACH DATABASE ':memory:' AS \"other\";
+             ATTACH DATABASE ':memory:' AS \"quote'`[\"\"schema\";
+             ATTACH DATABASE ':memory:' AS empty;
+             CREATE TABLE main.same(id INTEGER PRIMARY KEY AUTOINCREMENT);
+             CREATE VIEW main.same_view AS SELECT id FROM same;
+             CREATE TEMP TABLE same(id);
+             CREATE TABLE other.same(id);
+             CREATE TABLE \"quote'`[\"\"schema\".same(id);",
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        drop(conn);
+        let databases = vec![
+            "other".into(),
+            "empty".into(),
+            "main".into(),
+            "temp".into(),
+            "quote'`[\"schema".into(),
+            "main".into(),
+        ];
+        let result = list_tables_batch(&pool, &databases).await.unwrap();
+        assert_eq!(
+            result
+                .iter()
+                .map(|v| v.database.as_str())
+                .collect::<Vec<_>>(),
+            ["other", "empty", "main", "temp", "quote'`[\"schema"]
+        );
+        assert!(result[1].tables.is_empty());
+        assert_eq!(
+            result[2]
+                .tables
+                .iter()
+                .map(|v| v.name.as_str())
+                .collect::<Vec<_>>(),
+            ["same", "same_view"]
+        );
+        assert_eq!(result[2].tables[0].engine.as_deref(), Some("SQLite"));
+        assert_eq!(result[2].tables[1].engine, None);
+        assert_eq!(result[2].tables[1].table_type, "VIEW");
+        assert_eq!(result[2].tables[0].rows, None);
+        assert_eq!(result[3].tables[0].name, "same");
+        assert_eq!(result[4].tables[0].name, "same");
+        assert_eq!(
+            serde_json::to_value(list_tables(&pool, "main").await.unwrap()).unwrap(),
+            serde_json::to_value(&result[2].tables).unwrap()
+        );
+        let other_connection = SqliteConfig::new(":memory:")
+            .builder(Runtime::Tokio1)
+            .unwrap()
+            .max_size(1)
+            .build()
+            .unwrap();
+        assert!(
+            list_tables_batch(&other_connection, &["main".into(), "other".into()])
+                .await
+                .unwrap_err()
+                .contains("other.sqlite_schema")
+        );
+    }
+
+    #[tokio::test]
+    async fn metadata_batch_authorizer_and_missing_schema_fail_whole_request() {
+        use rusqlite::hooks::{AuthContext, Authorization};
+        let pool = SqliteConfig::new(":memory:")
+            .builder(Runtime::Tokio1)
+            .unwrap()
+            .max_size(1)
+            .build()
+            .unwrap();
+        let conn = pool.get().await.unwrap();
+        conn.interact(|conn| {
+            conn.execute_batch("CREATE TABLE visible(id); ATTACH DATABASE ':memory:' AS secret; CREATE TABLE secret.hidden(id);").unwrap();
+            conn.authorizer(Some(|ctx: AuthContext<'_>| {
+                if ctx.database_name == Some("secret") { Authorization::Deny } else { Authorization::Allow }
+            })).unwrap();
+        }).await.unwrap();
+        drop(conn);
+        assert!(list_tables_batch(&pool, &["main".into(), "secret".into()])
+            .await
+            .is_err());
+        assert!(list_tables_batch(&pool, &["main".into(), "missing".into()])
+            .await
+            .is_err());
+        assert_eq!(list_tables(&pool, "main").await.unwrap()[0].name, "visible");
+    }
 
     #[test]
     fn full_rows_result_budget_stops_before_later_sqlite_row_error() {

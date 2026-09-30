@@ -573,6 +573,41 @@ describe("SqlEditor 多语句结果标签", () => {
     }
   );
 
+  it.each(["modify", "select", "failure"])(
+    "执行结果 %s 只在成功修改时失效",
+    async (outcome) => {
+      useConnectionStore.setState({
+        activeConnection: {
+          ...connection,
+          config: { ...connection.config, skip_dangerous_sql_confirm: true },
+        },
+      });
+      if (outcome === "failure")
+        vi.mocked(api.executeSql).mockRejectedValue(new Error("失败"));
+      else
+        vi.mocked(api.executeSql).mockResolvedValue({
+          ...selectResult("row", "value"),
+          result_type: outcome,
+        });
+      const listener = vi.fn();
+      const stop = subscribeSqlCompletionInvalidation(listener);
+      const tabId = openSqlTab("UPDATE t SET value = 1");
+      const mounted = render(<SqlEditor tabId={tabId} />);
+      try {
+        await execute();
+        if (outcome === "modify")
+          expect(listener).toHaveBeenCalledWith({
+            connId: connection.connId,
+            reason: "schema-change",
+          });
+        else expect(listener).not.toHaveBeenCalled();
+      } finally {
+        stop();
+        mounted.unmount();
+      }
+    }
+  );
+
   it.each([
     "CREATE TABLE t (id int)",
     "/* ddl */ ALTER TABLE t ADD name text",

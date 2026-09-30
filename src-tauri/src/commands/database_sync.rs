@@ -11,16 +11,18 @@ use crate::db::schema_sync::{
     build_database_sync_preview, load_sync_schema_snapshot, normalize_selected_tables,
     SyncSchemaSnapshot,
 };
+use crate::db::table_pagination::invalidate_table_metadata;
 use crate::models::types::{
     CompareEndpointInfo, ConnectionConfig, DatabaseSyncExecutionResult,
     DatabaseSyncExecutionStatus, DatabaseSyncFailure, DatabaseSyncOperation, DatabaseSyncPreview,
     DatabaseSyncProgress, DatabaseSyncProgressPhase, DatabaseSyncRequest, DatabaseSyncRisk,
     DatabaseSyncStatementSuccess, DatabaseType, ExecuteDatabaseSyncRequest,
 };
+use crate::AppState;
 use mysql_async::prelude::Queryable;
 use std::future::Future;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, State};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 const DATABASE_SYNC_PROGRESS_EVENT: &str = "database-sync-progress";
@@ -39,18 +41,47 @@ pub async fn preview_database_sync(
 #[tauri::command]
 pub async fn execute_database_sync(
     app: AppHandle,
+    state: State<'_, AppState>,
     input: ExecuteDatabaseSyncRequest,
 ) -> Result<DatabaseSyncExecutionResult, String> {
     let progress_app = app.clone();
     let progress_sink: DatabaseSyncProgressSink = Arc::new(move |progress| {
         let _ = progress_app.emit(DATABASE_SYNC_PROGRESS_EVENT, progress);
     });
-    execute_database_sync_command_with_loader(
+    let target = input.request.target.clone();
+    let result = execute_database_sync_command_with_loader(
         input,
         || load_saved_connections_internal(&app),
         progress_sink,
     )
-    .await
+    .await;
+    if result
+        .as_ref()
+        .is_ok_and(|result| !result.completed_statements.is_empty())
+    {
+        let connections = {
+            let manager = state.connection_manager.lock().await;
+            manager.connection_ids_for_saved(&target.saved_connection_id)
+        };
+        invalidate_metadata_after_sync_result(&connections, &target.database, &result);
+    }
+    result
+}
+
+fn invalidate_metadata_after_sync_result(
+    connections: &[String],
+    database: &str,
+    result: &Result<DatabaseSyncExecutionResult, String>,
+) {
+    if result
+        .as_ref()
+        .is_ok_and(|result| !result.completed_statements.is_empty())
+    {
+        // 纯内存失效；部分成功也必须刷新已执行 DDL 的目标库。
+        for connection in connections {
+            invalidate_table_metadata(connection, Some(database), None);
+        }
+    }
 }
 
 async fn execute_database_sync_command_with_loader<L>(
@@ -912,6 +943,38 @@ mod tests {
     fn remove_sqlite_fixture(source_path: PathBuf, target_path: PathBuf) {
         std::fs::remove_file(source_path).unwrap();
         std::fs::remove_file(target_path).unwrap();
+    }
+
+    #[test]
+    fn metadata_cache_structure_sync_invalidates_only_changed_target_database() {
+        use crate::db::table_pagination::{
+            cached_table_metadata, remember_metadata, Engine, PageContext, TableMetadata,
+        };
+        let ctx = PageContext {
+            engine: Engine::MySql,
+            connection: uuid::Uuid::new_v4().to_string(),
+            database: "target".into(),
+            table: "items".into(),
+            filter: String::new(),
+            sort: vec![],
+            page_size: 2,
+        };
+        let other = PageContext {
+            database: "other".into(),
+            ..ctx.clone()
+        };
+        remember_metadata(&ctx, TableMetadata::new(vec![], false));
+        remember_metadata(&other, TableMetadata::new(vec![], false));
+        let mut result = fake_execution_result();
+        result.completed_statements.clear();
+        let ids = vec![ctx.connection.clone()];
+        invalidate_metadata_after_sync_result(&ids, "target", &Ok(result.clone()));
+        assert!(cached_table_metadata(&ctx).is_some());
+        invalidate_metadata_after_sync_result(&ids, "target", &Err("失败".into()));
+        assert!(cached_table_metadata(&ctx).is_some());
+        invalidate_metadata_after_sync_result(&ids, "target", &Ok(fake_execution_result()));
+        assert!(cached_table_metadata(&ctx).is_none());
+        assert!(cached_table_metadata(&other).is_some());
     }
 
     #[tokio::test]

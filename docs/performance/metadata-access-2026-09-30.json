@@ -1,0 +1,669 @@
+{
+  "run_id": "a2e31395b8ef4aecb8b7cd8940670614",
+  "date": "2026-09-30T08:44:49.931309+00:00",
+  "server_version": "5.7.37",
+  "profile": "debug",
+  "platform": "Darwin",
+  "architecture": "arm64",
+  "pool_max": 1,
+  "mysql_async_version": "0.37.0",
+  "percentile": "nearest-rank",
+  "scope": "本地隔离MySQL，热物理连接；目录IPC及数据查询不在计时内；每样本新池，集合语句首次执行",
+  "permissions": {
+    "passed": true
+  },
+  "catalog_summary_ms": [
+    {
+      "variant": "legacy-single",
+      "databases": 1,
+      "samples": 20,
+      "p50": 0.472041,
+      "p95": 0.765208
+    },
+    {
+      "variant": "batch",
+      "databases": 1,
+      "samples": 20,
+      "p50": 1.181084,
+      "p95": 1.893958
+    },
+    {
+      "variant": "batch",
+      "databases": 10,
+      "samples": 20,
+      "p50": 4.098166,
+      "p95": 6.22425
+    },
+    {
+      "variant": "batch",
+      "databases": 100,
+      "samples": 20,
+      "p50": 9.259084000000001,
+      "p95": 13.910084
+    }
+  ],
+  "pagination_summary_ms": {
+    "cold": {
+      "samples": 20,
+      "p50": 13.414957999999999,
+      "p95": 19.431207999999998
+    },
+    "warm": {
+      "samples": 20,
+      "p50": 0.006209,
+      "p95": 0.02425
+    }
+  },
+  "catalog_samples": [
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 0.642,
+      "variant": "legacy-single"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 0.42216699999999996,
+      "variant": "legacy-single"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 0.513125,
+      "variant": "legacy-single"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 0.8129580000000001,
+      "variant": "legacy-single"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 0.47675,
+      "variant": "legacy-single"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 0.380292,
+      "variant": "legacy-single"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 0.749375,
+      "variant": "legacy-single"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 0.398,
+      "variant": "legacy-single"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 0.440209,
+      "variant": "legacy-single"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 0.447125,
+      "variant": "legacy-single"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 0.472041,
+      "variant": "legacy-single"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 0.7036250000000001,
+      "variant": "legacy-single"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 0.414834,
+      "variant": "legacy-single"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 0.765208,
+      "variant": "legacy-single"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 0.762541,
+      "variant": "legacy-single"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 0.37220800000000004,
+      "variant": "legacy-single"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 0.523208,
+      "variant": "legacy-single"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 0.466875,
+      "variant": "legacy-single"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 0.463958,
+      "variant": "legacy-single"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 0.527875,
+      "variant": "legacy-single"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 1.372416,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 1.893958,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 1.3951669999999998,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 1.626042,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 1.024791,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 1.860583,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 0.9823329999999999,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 1.198959,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 1.1325420000000002,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 1.105916,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 1.047583,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 1.01675,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 1.520583,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 0.972958,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 1.315625,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 1.2701660000000001,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 2.282,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 1.181084,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 1.1683329999999998,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 1,
+      "elapsed_ms": 1.094334,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 10,
+      "elapsed_ms": 8.892208,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 10,
+      "elapsed_ms": 3.9237079999999995,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 10,
+      "elapsed_ms": 3.642291,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 10,
+      "elapsed_ms": 3.714917,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 10,
+      "elapsed_ms": 4.246875,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 10,
+      "elapsed_ms": 3.676792,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 10,
+      "elapsed_ms": 3.804333,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 10,
+      "elapsed_ms": 4.364208,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 10,
+      "elapsed_ms": 3.743625,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 10,
+      "elapsed_ms": 3.688125,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 10,
+      "elapsed_ms": 6.03925,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 10,
+      "elapsed_ms": 4.691667,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 10,
+      "elapsed_ms": 5.652542,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 10,
+      "elapsed_ms": 4.562208,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 10,
+      "elapsed_ms": 4.793334,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 10,
+      "elapsed_ms": 5.265,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 10,
+      "elapsed_ms": 4.053625,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 10,
+      "elapsed_ms": 4.098166,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 10,
+      "elapsed_ms": 3.821541,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 10,
+      "elapsed_ms": 6.22425,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 100,
+      "elapsed_ms": 48.768209,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 100,
+      "elapsed_ms": 10.446709,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 100,
+      "elapsed_ms": 10.333125,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 100,
+      "elapsed_ms": 11.217417000000001,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 100,
+      "elapsed_ms": 10.057833,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 100,
+      "elapsed_ms": 9.419,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 100,
+      "elapsed_ms": 9.857208,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 100,
+      "elapsed_ms": 11.460292,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 100,
+      "elapsed_ms": 8.629249999999999,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 100,
+      "elapsed_ms": 9.105375,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 100,
+      "elapsed_ms": 8.684000000000001,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 100,
+      "elapsed_ms": 8.730458,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 100,
+      "elapsed_ms": 8.8605,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 100,
+      "elapsed_ms": 8.871542,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 100,
+      "elapsed_ms": 13.910084,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 100,
+      "elapsed_ms": 9.259084000000001,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 100,
+      "elapsed_ms": 8.759417000000001,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 100,
+      "elapsed_ms": 9.652084,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 100,
+      "elapsed_ms": 8.932292,
+      "variant": "batch"
+    },
+    {
+      "catalog_sql_count": 1,
+      "databases": 100,
+      "elapsed_ms": 8.899000000000001,
+      "variant": "batch"
+    }
+  ],
+  "pagination_samples": [
+    {
+      "cold_ms": 46.746958,
+      "cold_sql_count": 2,
+      "warm_ms": 0.004666,
+      "warm_sql_count": 0
+    },
+    {
+      "cold_ms": 10.597708,
+      "cold_sql_count": 2,
+      "warm_ms": 0.02425,
+      "warm_sql_count": 0
+    },
+    {
+      "cold_ms": 9.680583,
+      "cold_sql_count": 2,
+      "warm_ms": 0.005084,
+      "warm_sql_count": 0
+    },
+    {
+      "cold_ms": 10.221582999999999,
+      "cold_sql_count": 2,
+      "warm_ms": 0.019541000000000003,
+      "warm_sql_count": 0
+    },
+    {
+      "cold_ms": 10.172832999999999,
+      "cold_sql_count": 2,
+      "warm_ms": 0.007416,
+      "warm_sql_count": 0
+    },
+    {
+      "cold_ms": 9.970417000000001,
+      "cold_sql_count": 2,
+      "warm_ms": 0.012417,
+      "warm_sql_count": 0
+    },
+    {
+      "cold_ms": 11.517625,
+      "cold_sql_count": 2,
+      "warm_ms": 0.008375,
+      "warm_sql_count": 0
+    },
+    {
+      "cold_ms": 11.407375,
+      "cold_sql_count": 2,
+      "warm_ms": 0.005208,
+      "warm_sql_count": 0
+    },
+    {
+      "cold_ms": 19.431207999999998,
+      "cold_sql_count": 2,
+      "warm_ms": 0.006209,
+      "warm_sql_count": 0
+    },
+    {
+      "cold_ms": 13.497833,
+      "cold_sql_count": 2,
+      "warm_ms": 0.008667,
+      "warm_sql_count": 0
+    },
+    {
+      "cold_ms": 15.046999999999999,
+      "cold_sql_count": 2,
+      "warm_ms": 0.004792,
+      "warm_sql_count": 0
+    },
+    {
+      "cold_ms": 14.813375,
+      "cold_sql_count": 2,
+      "warm_ms": 0.004208,
+      "warm_sql_count": 0
+    },
+    {
+      "cold_ms": 13.414957999999999,
+      "cold_sql_count": 2,
+      "warm_ms": 0.016375,
+      "warm_sql_count": 0
+    },
+    {
+      "cold_ms": 12.692708,
+      "cold_sql_count": 2,
+      "warm_ms": 0.00475,
+      "warm_sql_count": 0
+    },
+    {
+      "cold_ms": 13.855915999999999,
+      "cold_sql_count": 2,
+      "warm_ms": 0.027459,
+      "warm_sql_count": 0
+    },
+    {
+      "cold_ms": 15.214666999999999,
+      "cold_sql_count": 2,
+      "warm_ms": 0.005541,
+      "warm_sql_count": 0
+    },
+    {
+      "cold_ms": 14.264667,
+      "cold_sql_count": 2,
+      "warm_ms": 0.005917,
+      "warm_sql_count": 0
+    },
+    {
+      "cold_ms": 12.556584,
+      "cold_sql_count": 2,
+      "warm_ms": 0.010542,
+      "warm_sql_count": 0
+    },
+    {
+      "cold_ms": 13.880333,
+      "cold_sql_count": 2,
+      "warm_ms": 0.004583,
+      "warm_sql_count": 0
+    },
+    {
+      "cold_ms": 16.724958,
+      "cold_sql_count": 2,
+      "warm_ms": 0.013875,
+      "warm_sql_count": 0
+    }
+  ],
+  "rust_version": "1.93.1",
+  "measurement_excludes": [
+    "physical_connection_startup",
+    "tauri_ipc",
+    "data_page_sql",
+    "count_sql",
+    "react_render"
+  ]
+}

@@ -173,6 +173,9 @@ struct Cursor {
 struct PaginationCache {
     metadata: HashMap<TableIdentity, Timed<TableMetadata>>,
     cursors: HashMap<String, Timed<Cursor>>,
+    generations: HashMap<String, u64>,
+    connection_epochs: HashMap<String, u64>,
+    disconnected: std::collections::HashSet<String>,
 }
 static CACHE: OnceLock<Mutex<PaginationCache>> = OnceLock::new();
 fn cache() -> std::sync::MutexGuard<'static, PaginationCache> {
@@ -182,6 +185,186 @@ fn cache() -> std::sync::MutexGuard<'static, PaginationCache> {
         .unwrap_or_else(|e| e.into_inner())
 }
 
+/// 元数据按表标识复用，筛选、排序、页号和导航不会改变其有效期。
+pub fn cached_table_metadata(context: &PageContext) -> Option<TableMetadata> {
+    let cache = cache();
+    let entry = cache.metadata.get(&context.table_identity())?;
+    (entry.created.elapsed() < CACHE_TTL).then(|| entry.value.clone())
+}
+
+#[allow(dead_code, reason = "保留 generation API 供独立元数据读取器使用")]
+pub fn metadata_generation(connection: &str) -> u64 {
+    cache().generations.get(connection).copied().unwrap_or(0)
+}
+
+pub fn remember_metadata_if_current(
+    context: &PageContext,
+    metadata: TableMetadata,
+    generation: u64,
+) -> Option<TableMetadata> {
+    let mut cache = cache();
+    if cache.disconnected.contains(&context.connection)
+        || cache
+            .generations
+            .get(&context.connection)
+            .copied()
+            .unwrap_or(0)
+            != generation
+    {
+        return None;
+    }
+    trim_cache(&mut cache.metadata, MAX_METADATA);
+    cache.metadata.insert(
+        context.table_identity(),
+        Timed {
+            value: metadata.clone(),
+            created: Instant::now(),
+        },
+    );
+    Some(metadata)
+}
+
+/// 只清除命中的元数据和游标；连接代次只约束在途写回，其他表仍可命中。
+pub fn invalidate_table_metadata(connection: &str, database: Option<&str>, table: Option<&str>) {
+    invalidate_cache_scope(&mut cache(), connection, database, table);
+}
+
+fn invalidate_cache_scope(
+    cache: &mut PaginationCache,
+    connection: &str,
+    database: Option<&str>,
+    table: Option<&str>,
+) {
+    let generation = cache.generations.entry(connection.to_string()).or_default();
+    *generation = generation.wrapping_add(1);
+    let matches = |conn: &str, db: &str, name: &str| {
+        conn == connection
+            && database.is_none_or(|value| value == db)
+            && table.is_none_or(|value| value == name)
+    };
+    cache
+        .metadata
+        .retain(|(_, conn, db, name), _| !matches(conn, db, name));
+    cache.cursors.retain(|_, cursor| {
+        let context = &cursor.value.context;
+        !matches(&context.connection, &context.database, &context.table)
+    });
+}
+
+pub fn close_table_metadata_connection(connection: &str) {
+    let mut cache = cache();
+    cache.disconnected.insert(connection.to_string());
+    let epoch = cache
+        .connection_epochs
+        .entry(connection.to_string())
+        .or_default();
+    *epoch = epoch.wrapping_add(1);
+    invalidate_cache_scope(&mut cache, connection, None, None);
+}
+
+pub fn activate_table_metadata_connection(connection: &str) {
+    let mut cache = cache();
+    cache.disconnected.remove(connection);
+    invalidate_cache_scope(&mut cache, connection, None, None);
+}
+
+/// DDL 执行成功后再按范围失效；错误原样返回，不删除仍有效的元数据。
+pub async fn with_table_metadata_invalidation<T>(
+    connection: &str,
+    scopes: &[(Option<&str>, Option<&str>)],
+    operation: impl std::future::Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    let result = operation.await?;
+    for (database, table) in scopes {
+        invalidate_table_metadata(connection, *database, *table);
+    }
+    Ok(result)
+}
+
+pub fn invalidate_metadata_after_sql_result(
+    connection: &str,
+    result: &Result<crate::models::types::SqlExecuteResult, String>,
+) {
+    if result
+        .as_ref()
+        .is_ok_and(|result| result.result_type == "modify")
+    {
+        invalidate_table_metadata(connection, None, None);
+    }
+}
+
+/// 注入的是一次安全目录读取；失效交错时只重读一次，不在循环中执行 SQL。
+pub async fn load_table_metadata<R, F>(
+    context: &PageContext,
+    reader: &mut R,
+    mut read: F,
+) -> Result<TableMetadata, String>
+where
+    F: for<'a> FnMut(
+        &'a mut R,
+        &'a PageContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<TableMetadata, String>> + Send + 'a>,
+    >,
+{
+    // 缓存、写回代次和连接生命周期必须取同一快照，避免断线恰好落在两次读锁之间。
+    let (generation, connection_epoch) = {
+        let cache = cache();
+        if cache.disconnected.contains(&context.connection) {
+            return Err("连接已断开，请重新连接后重试".to_string());
+        }
+        if let Some(entry) = cache.metadata.get(&context.table_identity()) {
+            if entry.created.elapsed() < CACHE_TTL {
+                return Ok(entry.value.clone());
+            }
+        }
+        (
+            cache
+                .generations
+                .get(&context.connection)
+                .copied()
+                .unwrap_or(0),
+            cache
+                .connection_epochs
+                .get(&context.connection)
+                .copied()
+                .unwrap_or(0),
+        )
+    };
+    let metadata = read(reader, context).await?;
+    if let Some(metadata) = remember_metadata_if_current(context, metadata, generation) {
+        return Ok(metadata);
+    }
+    let generation = {
+        let cache = cache();
+        if cache.disconnected.contains(&context.connection)
+            || cache
+                .connection_epochs
+                .get(&context.connection)
+                .copied()
+                .unwrap_or(0)
+                != connection_epoch
+        {
+            return Err("连接已变化，请重新连接后重试".to_string());
+        }
+        // 可复用其他新请求已填入的结果，否则明确执行最后一次读取。
+        if let Some(entry) = cache.metadata.get(&context.table_identity()) {
+            if entry.created.elapsed() < CACHE_TTL {
+                return Ok(entry.value.clone());
+            }
+        }
+        cache
+            .generations
+            .get(&context.connection)
+            .copied()
+            .unwrap_or(0)
+    };
+    let metadata = read(reader, context).await?;
+    remember_metadata_if_current(context, metadata, generation)
+        .ok_or_else(|| "表结构在读取期间再次变化，请重试".to_string())
+}
+
+#[cfg(test)]
 pub fn remember_metadata(context: &PageContext, metadata: TableMetadata) -> TableMetadata {
     let mut cache = cache();
     trim_cache(&mut cache.metadata, MAX_METADATA);
@@ -231,6 +414,7 @@ fn valid_cursor<'a>(
     Some((&cursor.value, &metadata.value))
 }
 
+#[allow(dead_code, reason = "保留导航校验入口，普通查询独立复用元数据")]
 pub fn cached_metadata_for_navigation(
     context: &PageContext,
     page: u32,
@@ -261,21 +445,27 @@ impl PagePlan {
         page: u32,
         navigation: Option<&TablePageNavigation>,
     ) -> Self {
-        let effective_sort = metadata.key.as_ref().and_then(|(key, _)| {
-            if context.page_size == 0 || page == 0 {
-                return None;
-            }
-            match context.sort.as_slice() {
-                [] => Some((key.clone(), "ASC".to_string())),
-                [(column, order)]
-                    if column.trim() == key
-                        && matches!(order.to_uppercase().as_str(), "ASC" | "DESC") =>
-                {
-                    Some((key.clone(), order.to_uppercase()))
+        let is_current = cached_table_metadata(&context)
+            .is_some_and(|cached| cached.revision == metadata.revision);
+        let effective_sort = metadata
+            .key
+            .as_ref()
+            .filter(|_| is_current)
+            .and_then(|(key, _)| {
+                if context.page_size == 0 || page == 0 {
+                    return None;
                 }
-                _ => None,
-            }
-        });
+                match context.sort.as_slice() {
+                    [] => Some((key.clone(), "ASC".to_string())),
+                    [(column, order)]
+                        if column.trim() == key
+                            && matches!(order.to_uppercase().as_str(), "ASC" | "DESC") =>
+                    {
+                        Some((key.clone(), order.to_uppercase()))
+                    }
+                    _ => None,
+                }
+            });
         let (key_column, sort_order) = effective_sort
             .map(|(key, order)| (Some(key), order))
             .unwrap_or((None, "ASC".to_string()));
@@ -359,6 +549,12 @@ impl PagePlan {
     ) -> Option<TablePagination> {
         let key = self.key_column.as_ref()?;
         let mut cache = cache();
+        let current = cache.metadata.get(&self.context.table_identity())?;
+        if current.created.elapsed() >= CACHE_TTL
+            || current.value.revision != self.metadata.revision
+        {
+            return None;
+        }
         let mut insert = |value, page, direction: &str| {
             trim_cache(&mut cache.cursors, MAX_CURSORS);
             let token = uuid::Uuid::new_v4().to_string();
@@ -457,6 +653,293 @@ mod tests {
             },
         }
     }
+    #[tokio::test]
+    async fn metadata_cache_disconnect_blocks_inflight_reload_even_when_id_is_reused() {
+        let ctx = context();
+        let mut reads = 0;
+        let error = load_table_metadata(&ctx, &mut reads, |reads, ctx| {
+            Box::pin(async move {
+                *reads += 1;
+                close_table_metadata_connection(&ctx.connection);
+                activate_table_metadata_connection(&ctx.connection);
+                Ok(metadata())
+            })
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(reads, 1);
+        assert!(error.contains("连接"));
+        assert!(cached_table_metadata(&ctx).is_none());
+    }
+
+    #[tokio::test]
+    async fn metadata_cache_ddl_success_invalidates_scopes_but_failure_preserves_them() {
+        let ctx = context();
+        let renamed = PageContext {
+            table: "renamed".into(),
+            ..ctx.clone()
+        };
+        let other = PageContext {
+            database: "other".into(),
+            ..ctx.clone()
+        };
+        remember_metadata(&ctx, metadata());
+        remember_metadata(&renamed, metadata());
+        remember_metadata(&other, metadata());
+        let scopes = [
+            (Some(ctx.database.as_str()), Some(ctx.table.as_str())),
+            (Some(ctx.database.as_str()), Some(renamed.table.as_str())),
+        ];
+        let failure = with_table_metadata_invalidation(&ctx.connection, &scopes, async {
+            Err::<(), _>("DDL failed".into())
+        })
+        .await;
+        assert!(failure.is_err());
+        assert!(cached_table_metadata(&ctx).is_some());
+        assert!(cached_table_metadata(&renamed).is_some());
+        with_table_metadata_invalidation(&ctx.connection, &scopes, async { Ok(()) })
+            .await
+            .unwrap();
+        assert!(cached_table_metadata(&ctx).is_none());
+        assert!(cached_table_metadata(&renamed).is_none());
+        assert!(cached_table_metadata(&other).is_some());
+        with_table_metadata_invalidation(&ctx.connection, &[(Some("other"), None)], async {
+            Ok(())
+        })
+        .await
+        .unwrap();
+        assert!(cached_table_metadata(&other).is_none());
+    }
+
+    #[test]
+    fn metadata_cache_sql_editor_only_successful_modify_results_invalidate() {
+        let ctx = context();
+        let result = crate::models::types::SqlExecuteResult {
+            result_type: "select".into(),
+            columns: Some(vec!["id".into()]),
+            rows: Some(vec![]),
+            affected_rows: None,
+            message: String::new(),
+            execution_time_ms: 0,
+        };
+        remember_metadata(&ctx, metadata());
+        invalidate_metadata_after_sql_result(&ctx.connection, &Ok(result.clone()));
+        assert!(cached_table_metadata(&ctx).is_some());
+        invalidate_metadata_after_sql_result(&ctx.connection, &Err("SQL failed".into()));
+        assert!(cached_table_metadata(&ctx).is_some());
+        invalidate_metadata_after_sql_result(
+            &ctx.connection,
+            &Ok(crate::models::types::SqlExecuteResult {
+                result_type: "modify".into(),
+                ..result
+            }),
+        );
+        assert!(cached_table_metadata(&ctx).is_none());
+    }
+
+    #[test]
+    fn metadata_cache_without_navigation_preserves_unsupported_keys() {
+        let uuid_meta = TableMetadata::new(
+            vec![ColumnMetadata {
+                name: "id".into(),
+                primary_position: Some(1),
+                integer_kind: None,
+            }],
+            true,
+        );
+        let composite = TableMetadata::new(
+            vec![
+                ColumnMetadata {
+                    name: "id".into(),
+                    primary_position: Some(1),
+                    integer_kind: Some(IntegerKind::Signed),
+                },
+                ColumnMetadata {
+                    name: "tenant_id".into(),
+                    primary_position: Some(2),
+                    integer_kind: Some(IntegerKind::Signed),
+                },
+            ],
+            true,
+        );
+        for metadata in [uuid_meta, composite, metadata()] {
+            let ctx = context();
+            let supported_key = metadata.key.is_some();
+            let cached = remember_metadata(&ctx, metadata);
+            for sort in [vec![], vec![("value".into(), "DESC".into())]] {
+                let should_use_key = supported_key && sort.is_empty();
+                let changed = PageContext {
+                    sort,
+                    filter: "value IS NOT NULL".into(),
+                    ..ctx.clone()
+                };
+                let hit = cached_table_metadata(&changed).expect("无导航查询必须命中表元数据");
+                assert_eq!(hit.revision, cached.revision);
+                let plan = PagePlan::new(changed, hit, 20, None);
+                assert_eq!(plan.key_column.is_some(), should_use_key);
+                assert!(plan.boundary.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn metadata_cache_invalidation_drops_only_matching_table_and_cursors() {
+        let ctx = context();
+        let other = PageContext {
+            table: "other".into(),
+            ..ctx.clone()
+        };
+        let initial = plan(&ctx, 1, None);
+        let paging = initial
+            .pagination(
+                Some(IntegerValue::Signed(1)),
+                Some(IntegerValue::Signed(2)),
+                2,
+            )
+            .unwrap();
+        let token = navigation(&paging, "next");
+        remember_metadata(&other, metadata());
+        invalidate_table_metadata(&ctx.connection, Some(&ctx.database), Some(&ctx.table));
+        assert!(cached_table_metadata(&ctx).is_none());
+        assert!(cached_table_metadata(&other).is_some());
+        assert!(cached_metadata_for_navigation(&ctx, 2, Some(&token)).is_none());
+        assert!(initial
+            .pagination(
+                Some(IntegerValue::Signed(1)),
+                Some(IntegerValue::Signed(2)),
+                2
+            )
+            .is_none());
+        assert!(plan(&ctx, 2, Some(&token)).boundary.is_none());
+    }
+
+    #[test]
+    fn metadata_cache_stale_fetch_cannot_repopulate_or_generate_cursor() {
+        let ctx = context();
+        let generation = metadata_generation(&ctx.connection);
+        let stale = remember_metadata(&ctx, metadata());
+        invalidate_table_metadata(&ctx.connection, None, None);
+        assert!(remember_metadata_if_current(&ctx, stale.clone(), generation).is_none());
+        let stale_plan = PagePlan::new(ctx.clone(), stale, 1, None);
+        assert!(stale_plan.key_column.is_none());
+        let fresh_generation = metadata_generation(&ctx.connection);
+        assert!(remember_metadata_if_current(&ctx, metadata(), fresh_generation).is_some());
+    }
+
+    #[test]
+    fn metadata_cache_ttl_and_capacity_keep_existing_bounds() {
+        let ctx = context();
+        remember_metadata(&ctx, metadata());
+        cache()
+            .metadata
+            .get_mut(&ctx.table_identity())
+            .unwrap()
+            .created = Instant::now() - Duration::from_secs(299);
+        assert!(cached_table_metadata(&ctx).is_some());
+        cache()
+            .metadata
+            .get_mut(&ctx.table_identity())
+            .unwrap()
+            .created = Instant::now() - CACHE_TTL;
+        assert!(cached_table_metadata(&ctx).is_none());
+        // 局部容器验证容量，避免并行测试共享全局缓存造成噪声。
+        for capacity in [MAX_METADATA, MAX_CURSORS] {
+            let mut entries = HashMap::new();
+            for index in 0..=capacity {
+                trim_cache(&mut entries, capacity);
+                entries.insert(
+                    index,
+                    Timed {
+                        value: index,
+                        created: Instant::now(),
+                    },
+                );
+            }
+            assert_eq!(entries.len(), capacity);
+            assert!(!entries.contains_key(&0));
+        }
+    }
+
+    #[tokio::test]
+    async fn metadata_cache_reader_reuses_twenty_non_cursor_pages_and_reloads_after_invalidation() {
+        for (engine, sql_per_fetch) in [(Engine::MySql, 2), (Engine::Postgres, 1)] {
+            let ctx = PageContext {
+                engine,
+                ..context()
+            };
+            let mut sql_count = 0;
+            let first = load_table_metadata(&ctx, &mut sql_count, |count, ctx| {
+                Box::pin(async move {
+                    *count += if ctx.engine == Engine::MySql { 2 } else { 1 };
+                    Ok(metadata())
+                })
+            })
+            .await
+            .unwrap();
+            for page in 2..=21 {
+                let hit = load_table_metadata(&ctx, &mut sql_count, |count, ctx| {
+                    Box::pin(async move {
+                        *count += if ctx.engine == Engine::MySql { 2 } else { 1 };
+                        Ok(metadata())
+                    })
+                })
+                .await
+                .unwrap();
+                assert_eq!(hit.revision, first.revision);
+                assert!(PagePlan::new(ctx.clone(), hit, page, None)
+                    .boundary
+                    .is_none());
+            }
+            assert_eq!(sql_count, sql_per_fetch);
+            invalidate_table_metadata(&ctx.connection, Some(&ctx.database), None);
+            load_table_metadata(&ctx, &mut sql_count, |count, ctx| {
+                Box::pin(async move {
+                    *count += if ctx.engine == Engine::MySql { 2 } else { 1 };
+                    Ok(metadata())
+                })
+            })
+            .await
+            .unwrap();
+            assert_eq!(sql_count, sql_per_fetch * 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn metadata_cache_reader_retries_stale_fetch_once_and_rejects_second_invalidation() {
+        let ctx = context();
+        let mut reads = 0;
+        let result = load_table_metadata(&ctx, &mut reads, |reads, ctx| {
+            Box::pin(async move {
+                *reads += 1;
+                if *reads == 1 {
+                    invalidate_table_metadata(&ctx.connection, None, None);
+                }
+                Ok(metadata())
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(reads, 2);
+        assert_eq!(
+            cached_table_metadata(&ctx).unwrap().revision,
+            result.revision
+        );
+        invalidate_table_metadata(&ctx.connection, None, None);
+        reads = 0;
+        let error = load_table_metadata(&ctx, &mut reads, |reads, ctx| {
+            Box::pin(async move {
+                *reads += 1;
+                invalidate_table_metadata(&ctx.connection, None, None);
+                Ok(metadata())
+            })
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(reads, 2);
+        assert!(error.contains("重试"));
+        assert!(cached_table_metadata(&ctx).is_none());
+    }
+
     #[test]
     fn offset_uses_64_bit_multiplication() {
         assert_eq!(page_offset(u32::MAX, u32::MAX), 18_446_744_060_824_649_730);
@@ -884,11 +1367,11 @@ mod tests {
         assert!(PagePlan::new(context(), mismatched, 1, None)
             .key_column
             .is_none());
-        let complete = metadata().with_primary_key_evidence(&["id".into()]);
+        let ctx = context();
+        let complete =
+            remember_metadata(&ctx, metadata().with_primary_key_evidence(&["id".into()]));
         assert_eq!(
-            PagePlan::new(context(), complete, 1, None)
-                .key_column
-                .as_deref(),
+            PagePlan::new(ctx, complete, 1, None).key_column.as_deref(),
             Some("id")
         );
     }

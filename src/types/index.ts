@@ -308,6 +308,11 @@ export interface DatabaseInfo {
 }
 
 /** 表信息 */
+export interface DatabaseTableList {
+  database: string;
+  tables: TableInfo[];
+}
+
 export interface TableInfo {
   /** 表名 */
   name: string;

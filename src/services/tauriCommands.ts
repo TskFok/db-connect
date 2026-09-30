@@ -1,10 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
+import {
+  getMetadataRequestGeneration,
+  invalidateMetadataRequestScope,
+  invalidateSqlCompletion,
+  subscribeSqlCompletionInvalidation,
+} from "../utils/sqlCompletionInvalidation";
 import type {
   ConnectionConfig,
   ConnectionGroup,
   ConnectionImportResult,
   TestResult,
   DatabaseInfo,
+  DatabaseTableList,
   TableInfo,
   ColumnInfo,
   QueryResult,
@@ -167,8 +174,30 @@ export const previewDatabaseSync = (request: DatabaseSyncRequest) =>
   invoke<DatabaseSyncPreview>("preview_database_sync", { request });
 
 /** 按后端重新校验后的计划执行数据库结构同步 */
-export const executeDatabaseSync = (input: ExecuteDatabaseSyncRequest) =>
-  invoke<DatabaseSyncExecutionResult>("execute_database_sync", { input });
+export async function executeDatabaseSync(
+  input: ExecuteDatabaseSyncRequest
+): Promise<DatabaseSyncExecutionResult> {
+  const result = await invoke<DatabaseSyncExecutionResult>(
+    "execute_database_sync",
+    { input }
+  );
+  if (result.completed_statements.length > 0) {
+    // 同步使用临时连接；按保存配置定位当前已打开的目标连接。
+    const { useConnectionStore } = await import("../stores/connectionStore");
+    for (const connection of Object.values(
+      useConnectionStore.getState().activeConnections
+    )) {
+      if (connection.config.id === input.request.target.saved_connection_id) {
+        invalidateSqlCompletion({
+          connId: connection.connId,
+          database: input.request.target.database,
+          reason: "schema-change",
+        });
+      }
+    }
+  }
+  return result;
+}
 
 /** 获取连接分组 */
 export async function listConnectionGroups(): Promise<ConnectionGroup[]> {
@@ -544,11 +573,86 @@ export async function dropColumn(
 /**
  * 获取指定数据库的表列表
  */
+type MetadataRequest = {
+  connId: string;
+  databases: string[];
+  promise: Promise<DatabaseTableList[]>;
+};
+const metadataRequests = new Map<string, MetadataRequest>();
+
+function clearMetadataRequests(connId: string, database?: string): void {
+  for (const [key, request] of metadataRequests) {
+    if (
+      request.connId === connId &&
+      (database === undefined || request.databases.includes(database))
+    ) {
+      metadataRequests.delete(key);
+    }
+  }
+}
+
+subscribeSqlCompletionInvalidation((event) =>
+  clearMetadataRequests(event.connId, event.database ?? undefined)
+);
+
+export function invalidateMetadataRequests(
+  connId: string,
+  database?: string
+): void {
+  invalidateMetadataRequestScope(connId, database);
+  clearMetadataRequests(connId, database);
+}
+
+export async function invalidateTableMetadataCache(
+  connId: string,
+  database?: string,
+  table?: string
+): Promise<void> {
+  invalidateMetadataRequests(connId, database);
+  await invoke<void>("invalidate_table_metadata_cache", {
+    connId,
+    database: database ?? null,
+    table: table ?? null,
+  });
+}
+
+export async function listTablesBatch(
+  connId: string,
+  databases: string[]
+): Promise<DatabaseTableList[]> {
+  const requested = [...new Set(databases)];
+  if (requested.length === 0) return [];
+  if (requested.length > 256) throw new Error("一次最多读取 256 个数据库目录");
+  const normalized = [...requested].sort();
+  const generation = getMetadataRequestGeneration(connId, normalized);
+  const key = JSON.stringify([connId, normalized, generation]);
+  let request = metadataRequests.get(key);
+  if (!request) {
+    const promise = invoke<DatabaseTableList[]>("list_tables_batch", {
+      connId,
+      databases: normalized,
+    });
+    request = { connId, databases: normalized, promise };
+    metadataRequests.set(key, request);
+  }
+  try {
+    const result = await request.promise;
+    const byDatabase = new Map(result.map((entry) => [entry.database, entry]));
+    return requested.map((database) => {
+      const entry = byDatabase.get(database);
+      if (!entry) throw new Error(`目录批量响应缺少数据库：${database}`);
+      return entry;
+    });
+  } finally {
+    if (metadataRequests.get(key) === request) metadataRequests.delete(key);
+  }
+}
+
 export async function listTables(
   connId: string,
   database: string
 ): Promise<TableInfo[]> {
-  return invoke<TableInfo[]>("list_tables", { connId, database });
+  return (await listTablesBatch(connId, [database]))[0].tables;
 }
 
 /**
@@ -616,7 +720,8 @@ export async function createIndex(
   table: string,
   request: CreateIndexRequest
 ): Promise<void> {
-  return invoke<void>("create_index", { connId, database, table, request });
+  await invoke<void>("create_index", { connId, database, table, request });
+  invalidateSqlCompletion({ connId, database, reason: "schema-change" });
 }
 
 /** 预览新增或修改索引的 SQL，不执行变更。 */
@@ -645,7 +750,8 @@ export async function deleteIndex(
   table: string,
   indexName: string
 ): Promise<void> {
-  return invoke<void>("delete_index", { connId, database, table, indexName });
+  await invoke<void>("delete_index", { connId, database, table, indexName });
+  invalidateSqlCompletion({ connId, database, reason: "schema-change" });
 }
 
 // ==================== 触发器管理 ====================

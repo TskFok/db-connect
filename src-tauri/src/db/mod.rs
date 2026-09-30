@@ -3,6 +3,7 @@ pub mod batch_update;
 pub mod clickhouse;
 pub mod connection;
 pub mod dialect;
+pub(crate) mod metadata_batch;
 pub mod mysql_deferred_fields;
 pub mod mysql_query;
 pub mod postgres;
@@ -21,3 +22,10 @@ pub mod sqlserver_objects;
 pub mod ssh_tunnel;
 pub mod table_pagination;
 pub mod table_query;
+
+#[cfg(test)]
+mod metadata_bench_tests;
+#[cfg(test)]
+mod metadata_mysql8_tests;
+#[cfg(test)]
+mod metadata_pg_tests;
