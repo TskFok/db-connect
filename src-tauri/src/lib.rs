@@ -17,7 +17,6 @@ use tokio::sync::Mutex;
 
 #[derive(Clone)]
 pub enum RunningQuery {
-    MySqlThread(u64),
     Postgres(Box<PostgresCancelHandle>),
     SqlServerUnsupported,
     ClickHouseUnsupported,
@@ -29,6 +28,8 @@ pub struct AppState {
     pub running_queries: Arc<Mutex<HashMap<String, RunningQuery>>>,
     /// 表数据/行数查询的取消状态，按连接和执行标识隔离。
     pub table_queries: db::table_query::TableQueryRegistry,
+    /// SQL 编辑器 MySQL 查询生命周期，按连接和执行标识隔离。
+    pub mysql_queries: db::mysql_query::MysqlQueryRegistry,
     /// 正在导出的 SQL 文件：导出令牌（export_id）-> 协作式取消标记。
     pub running_sql_exports: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
 }
@@ -39,6 +40,7 @@ impl AppState {
             connection_manager: Arc::new(Mutex::new(ConnectionManager::new())),
             running_queries: Arc::new(Mutex::new(HashMap::new())),
             table_queries: db::table_query::TableQueryRegistry::default(),
+            mysql_queries: db::mysql_query::MysqlQueryRegistry::default(),
             running_sql_exports: Arc::new(Mutex::new(HashMap::new())),
         }
     }

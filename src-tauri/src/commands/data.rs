@@ -2,6 +2,7 @@ pub use crate::db::batch_update::RowUpdate;
 use crate::db::batch_update::{build_batch_update_statements, BatchDialect};
 use crate::db::connection::{get_conn_with_retry, DatabasePoolHandle};
 use crate::db::mysql_deferred_fields::{self, MysqlColumn, Projection};
+use crate::db::mysql_query::{finish_mysql_execution, MysqlQueryGuard};
 use crate::db::result_budget::ResultBudget;
 use crate::db::sql_utils::{
     esc_id, esc_str, mysql_count_query, mysql_sql_editor_allowed_on_read_only_connection,
@@ -1539,6 +1540,45 @@ async fn run_sql_on_conn(
     }
 }
 
+/// 带标识的执行任务独立持有连接：IPC 等待被丢弃也不提前释放租约。
+/// 取消与自然完成在 finish 内仲裁，任何取消或错误都丢弃原连接。
+pub(crate) async fn execute_mysql_sql(
+    pool: mysql_async::Pool,
+    guard: Option<MysqlQueryGuard>,
+    database: Option<String>,
+    sql: String,
+    read_only: bool,
+) -> Result<SqlExecuteResult, String> {
+    if let Some(guard) = guard {
+        return tokio::spawn(async move {
+            let mut conn = guard.run(get_conn_with_retry(&pool)).await?;
+            let result = async {
+                guard.attach_connection(u64::from(conn.id()), conn.opts().clone())?;
+                guard.run(use_database_if_set(&mut conn, &database)).await?;
+                guard
+                    .run(run_sql_on_conn(&mut conn, &sql, read_only, Instant::now()))
+                    .await
+            }
+            .await;
+            finish_mysql_execution(conn, result, &guard).await
+        })
+        .await
+        .map_err(|_| "查询任务异常退出，请刷新确认执行结果".to_string())?;
+    }
+
+    // 无执行标识沿用普通调用路径，不启用取消登记，也不重试用户 SQL。
+    let mut conn = get_conn_with_retry(&pool).await?;
+    let result = async {
+        use_database_if_set(&mut conn, &database).await?;
+        run_sql_on_conn(&mut conn, &sql, read_only, Instant::now()).await
+    }
+    .await;
+    if result.is_err() {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), conn.disconnect()).await;
+    }
+    result
+}
+
 /// 执行任意 SQL 语句。
 ///
 /// 传入 `execution_id` 时，会在执行前登记该连接的 MySQL 线程 ID，使前端可通过
@@ -1567,40 +1607,12 @@ pub async fn execute_sql(
                 );
             }
 
-            let mut conn = get_conn_with_retry(&pool).await?;
-
-            use_database_if_set(&mut conn, &database).await?;
-
-            // 登记当前连接的线程 ID，供取消使用；失败不影响正常执行
-            let registered_id: Option<String> = match &execution_id {
-                Some(eid) => match conn.query_first::<u64, _>("SELECT CONNECTION_ID()").await {
-                    Ok(Some(thread_id)) => {
-                        state
-                            .running_queries
-                            .lock()
-                            .await
-                            .insert(eid.clone(), RunningQuery::MySqlThread(thread_id));
-                        Some(eid.clone())
-                    }
-                    _ => None,
-                },
-                None => None,
-            };
-
-            let start = Instant::now();
-            let result = run_sql_on_conn(&mut conn, &sql, read_only, start).await;
-
-            // 无论成功失败都注销登记
-            if let Some(eid) = registered_id {
-                state.running_queries.lock().await.remove(&eid);
-            }
-
-            if result.is_err() {
-                // 不排空超限结果；关闭出错的连接，避免连接池后台继续读取。
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(2), conn.disconnect())
-                    .await;
-            }
-            result
+            // 等待业务池前登记，早到取消与池等待期间的取消均可停止后续 SQL。
+            let guard = execution_id
+                .as_deref()
+                .map(|eid| state.mysql_queries.register(&conn_id, eid))
+                .transpose()?;
+            execute_mysql_sql(pool, guard, database, sql, read_only).await
         }
         DatabasePoolHandle::Postgres(handle) => {
             if read_only && !postgres::sql_editor_allowed_on_read_only_connection(&sql) {
@@ -1688,13 +1700,24 @@ pub async fn execute_sql(
 
 /// 取消（KILL QUERY）由 `execute_sql` 以相同 `execution_id` 登记的运行中查询。
 ///
-/// 用另一条连接执行 `KILL QUERY <thread_id>`。若该执行已结束或未登记，返回 `false`。
+/// MySQL 使用独立物理连接；早到取消短暂保留，已完成返回 `false`。
 #[tauri::command]
 pub async fn cancel_query(
     state: State<'_, AppState>,
     conn_id: String,
     execution_id: String,
 ) -> Result<bool, String> {
+    let is_mysql = {
+        let manager = state.connection_manager.lock().await;
+        matches!(
+            manager.pool_for_ping(&conn_id),
+            Some(DatabasePoolHandle::MySql(_))
+        )
+    };
+    if is_mysql {
+        return state.mysql_queries.cancel(&conn_id, &execution_id).await;
+    }
+
     let running = {
         let map = state.running_queries.lock().await;
         map.get(&execution_id).cloned()
@@ -1716,26 +1739,6 @@ pub async fn cancel_query(
     };
 
     match running {
-        RunningQuery::MySqlThread(thread_id) => {
-            let pool = {
-                let mut manager = state.connection_manager.lock().await;
-                match manager.get_database_pool_and_touch(&conn_id)? {
-                    DatabasePoolHandle::MySql(pool) => pool,
-                    DatabasePoolHandle::Postgres(_)
-                    | DatabasePoolHandle::Sqlite(_)
-                    | DatabasePoolHandle::SqlServer(_)
-                    | DatabasePoolHandle::ClickHouse(_) => {
-                        return Err("当前运行中查询不是 MySQL 查询".to_string());
-                    }
-                }
-            };
-
-            let mut conn = get_conn_with_retry(&pool).await?;
-            // thread_id 为 u64，可安全内联
-            conn.query_drop(format!("KILL QUERY {}", thread_id))
-                .await
-                .map_err(|e| format!("取消查询失败: {}", e))?;
-        }
         RunningQuery::Postgres(handle) => {
             (*handle).cancel().await?;
         }

@@ -75,6 +75,7 @@ const { Text } = Typography;
 const EMPTY_STATEMENT_RESULTS: SqlStatementResult[] = [];
 const DEFAULT_RESULT_PAGE_SIZE = 100;
 const RESULT_TABS_PAGE_SIZE = 50;
+let executionSequence = 0;
 
 interface SqlResultTableRow {
   rowKey: number;
@@ -210,6 +211,16 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
       }
     },
     [tabId, setSqlTabExecution]
+  );
+
+  const isCurrentExecution = useCallback(
+    (cid: string, executionId: string | null) =>
+      tabId
+        ? useDatabaseStore.getState().connectionStates[cid]?.sqlTabExecutions[
+            tabId
+          ]?.executionId === executionId
+        : currentExecutionIdRef.current === executionId,
+    [tabId]
   );
 
   useEffect(() => {
@@ -517,16 +528,19 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
       const executionResults: SqlStatementResult[] = [];
       let lastResult: SqlExecuteResult | null = null;
       let execError: string | null = null;
+      let executionId: string | null = null;
 
       try {
         for (let i = 0; i < statements.length; i++) {
           const stmt = statements[i];
-          const execId = `${tabId ?? "local"}-${Date.now()}-${i}`;
-          markExecution(cid, { executionId: execId });
-          const res = await api.executeSql(cid, db, stmt, execId);
+          executionId = `${tabId ?? "local"}-${Date.now()}-${++executionSequence}`;
+          markExecution(cid, { executionId });
+          const res = await api.executeSql(cid, db, stmt, executionId);
           successfulSql.push(stmt);
           lastResult = res;
           executionResults.push({ sql: stmt, result: res, error: null });
+          // 快捷键或重挂载可能已开始另一轮执行，旧脚本不得继续或覆盖新结果。
+          if (!isCurrentExecution(cid, executionId)) return;
         }
       } catch (e) {
         execError = String(e);
@@ -553,26 +567,28 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
         ) {
           invalidateSqlCompletion({ connId: cid, reason: "schema-change" });
         }
-        markExecution(cid, null);
-        if (tabId && cid) {
-          setSqlTabResult(
-            cid,
-            tabId,
-            lastResult,
-            execError,
-            successfulSql,
-            executionResults
-          );
-          if (execError) {
-            setSqlTabActiveResult(cid, tabId, executionResults.length - 1);
+        if (isCurrentExecution(cid, executionId)) {
+          markExecution(cid, null);
+          if (tabId && cid) {
+            setSqlTabResult(
+              cid,
+              tabId,
+              lastResult,
+              execError,
+              successfulSql,
+              executionResults
+            );
+            if (execError) {
+              setSqlTabActiveResult(cid, tabId, executionResults.length - 1);
+            }
+          } else {
+            setLocalError(execError);
+            setLocalResult(lastResult);
+            setLocalStatementResults(executionResults);
+            setLocalActiveResultIndex(
+              execError ? executionResults.length - 1 : 0
+            );
           }
-        } else {
-          setLocalError(execError);
-          setLocalResult(lastResult);
-          setLocalStatementResults(executionResults);
-          setLocalActiveResultIndex(
-            execError ? executionResults.length - 1 : 0
-          );
         }
       }
     },
@@ -581,6 +597,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
       setSqlTabResult,
       setSqlTabActiveResult,
       markExecution,
+      isCurrentExecution,
       activeConnection?.config.skip_dangerous_sql_confirm,
     ]
   );
@@ -599,15 +616,17 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     }
     try {
       const canceled = await api.cancelQuery(cid, execId);
+      if (!isCurrentExecution(cid, execId)) return;
       if (canceled) {
         message.info("已请求取消当前查询");
       } else {
         message.warning("查询可能已结束，无需取消");
       }
     } catch (e) {
+      if (!isCurrentExecution(cid, execId)) return;
       message.error(`取消查询失败: ${String(e)}`);
     }
-  }, [databaseType, tabId]);
+  }, [databaseType, tabId, isCurrentExecution]);
 
   const tabExecuteNonce = useDatabaseStore((s) =>
     tabId ? ((s.sqlTabExecuteNonce ?? {})[tabId] ?? 0) : 0
