@@ -1,3 +1,4 @@
+import { resultCacheController } from "../../utils/resultCacheBudget";
 import {
   useEffect,
   useState,
@@ -225,6 +226,8 @@ export function TableData() {
   const {
     columns,
     rows,
+    cacheKey,
+    retention,
     total,
     page,
     pageSize,
@@ -244,6 +247,8 @@ export function TableData() {
     _filterTrigger,
   } = useTableDataStore(
     useShallow((s) => ({
+      cacheKey: s.cacheKey,
+      retention: s.retention,
       columns: s.columns,
       rows: s.rows,
       total: s.total,
@@ -317,6 +322,18 @@ export function TableData() {
   const stableConnId = activeConnection?.config.id ?? connId;
   const database = selectedDatabase ?? "";
   const table = selectedTable ?? "";
+  useLayoutEffect(() => {
+    const store = useTableDataStore.getState();
+    if (connId && database && table && tableContentActiveTab === "data") {
+      store.setVisibleTable(`${connId}|${database}|${table}`);
+      return () => store.setVisibleTable(null);
+    }
+  }, [connId, database, table, tableContentActiveTab]);
+  const resultEvicted = retention === "evicted";
+  const pinResult = useCallback(
+    () => (cacheKey ? resultCacheController.pin(cacheKey) : () => {}),
+    [cacheKey]
+  );
   const capabilities = useMemo(
     () => getDatabaseCapabilities(activeConnection?.config.database_type),
     [activeConnection?.config.database_type]
@@ -373,7 +390,8 @@ export function TableData() {
         : requiresPrimaryKeyForDataEditing && !hasRowLocatorForEdits
           ? noPrimaryKeyDisabledReason
           : "";
-  const rowOperationsAllowed = baseDataEditingAllowed && hasRowLocatorForEdits;
+  const rowOperationsAllowed =
+    !resultEvicted && baseDataEditingAllowed && hasRowLocatorForEdits;
   const rowSelectionScopeKey =
     connId && database && table ? `${connId}|${database}|${table}` : "";
   // 只在切表时读取初始位置，不订阅滚动更新，避免每次滚动重渲染整个数据面板。
@@ -752,6 +770,8 @@ export function TableData() {
       const fromCache = switchToTable(connId, database, table);
       if (!fromCache && tableContentActiveTab === "data") {
         loadData(connId, database, table, selectColumnsRef.current);
+        // 本轮恢复已发起读取，后续查询条件 effect 不应因子页切换重复读取。
+        skipRestoredQueryForTableRef.current = `${connId}|${database}|${table}`;
         restoredFromCacheRef.current = false;
       } else if (fromCache) {
         restoredFromCacheRef.current = true;
@@ -1144,6 +1164,7 @@ export function TableData() {
         !state.dataError;
       if (!isCurrent(initial))
         throw new Error("页面已变化，请在加载完成后重试");
+      const release = pinResult();
       let stale = false;
       const unsubscribe = useTableDataStore.subscribe((state) => {
         if (!isCurrent(state)) stale = true;
@@ -1182,9 +1203,11 @@ export function TableData() {
         return complete;
       } finally {
         unsubscribe();
+        release();
       }
     },
     [
+      pinResult,
       connId,
       database,
       table,
@@ -1343,6 +1366,7 @@ export function TableData() {
                 )}
                 onTabNavigate={handleTabNavigate}
                 displayText={renderedText}
+                acquireEditLease={pinResult}
                 loadFullValue={
                   currentDatabaseType === "mysql" && isDeferredField(cellValue)
                     ? async () => {
@@ -1395,6 +1419,7 @@ export function TableData() {
       handleCopyColumnName,
       handleCellEdit,
       loadCompleteRowsForPage,
+      pinResult,
       rowOperationsAllowed,
       noPrimaryKeyDisabledReason,
       showInvisibleChars,
@@ -1647,6 +1672,7 @@ export function TableData() {
       return;
     }
 
+    const release = pinResult();
     const requestId = ++copyInsertRequestRef.current;
     setCopyInsertLoading(true);
     const stillCurrent = () => copyInsertRequestRef.current === requestId;
@@ -1714,9 +1740,11 @@ export function TableData() {
       if (!stillCurrent()) return;
       messageApi.error(`获取完整行数据失败: ${e}`);
     } finally {
+      release();
       if (stillCurrent()) setCopyInsertLoading(false);
     }
   }, [
+    pinResult,
     copyInsertColumnNames,
     copyInsertSelected,
     currentDatabaseType,
@@ -1740,6 +1768,7 @@ export function TableData() {
       messageApi.warning("没有可导出的列，请在列设置中至少显示一列");
       return;
     }
+    const release = pinResult();
     try {
       const complete = await loadCompleteRowsForPage(
         selectedRows,
@@ -1767,8 +1796,11 @@ export function TableData() {
       messageApi.success("已复制 JSON 数组");
     } catch (e) {
       messageApi.error(`复制 JSON 失败: ${e}`);
+    } finally {
+      release();
     }
   }, [
+    pinResult,
     database,
     getSelectedRows,
     loadCompleteRowsForPage,
@@ -1789,6 +1821,7 @@ export function TableData() {
       messageApi.warning("当前页没有数据");
       return;
     }
+    const release = pinResult();
     try {
       assertCsvRowWithinLimit(dataSource.length);
       const complete = await loadCompleteRowsForPage(
@@ -1816,8 +1849,11 @@ export function TableData() {
       if (ok) messageApi.success("已导出当前页为 Excel");
     } catch (e) {
       messageApi.error(String(e));
+    } finally {
+      release();
     }
   }, [
+    pinResult,
     database,
     table,
     visibleColNames,
@@ -1879,6 +1915,7 @@ export function TableData() {
               icon={<FileExcelOutlined />}
               size="small"
               type="text"
+              disabled={resultEvicted}
               aria-label="导出本页为 Excel"
               onClick={() => void handleExportPageExcel()}
             />
@@ -2399,6 +2436,9 @@ export function TableData() {
       </Modal>
 
       {/* 错误提示 */}
+      {resultEvicted && (
+        <Alert type="info" showIcon message="结果已释放，请刷新以查看数据" />
+      )}
       {dataError && (
         <Alert
           type="error"

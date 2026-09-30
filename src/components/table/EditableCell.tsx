@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import type { InputRef } from "antd";
 import { Modal } from "antd";
 import { SafeInput, SafeTextArea } from "../common/SafeInput";
@@ -19,6 +19,8 @@ export interface EditableCellProps {
   onEdit: (newValue: unknown, originalValue?: unknown) => void;
   /** 延迟字段双击后读取完整值；普通字段不会调用。 */
   loadFullValue?: () => Promise<unknown>;
+  /** 编辑期间保护当前结果，返回幂等释放函数。 */
+  acquireEditLease?: () => () => void;
   /** 仅用于显示层覆盖文本，不影响编辑原始值 */
   displayText?: string;
   cellKey?: string;
@@ -46,7 +48,14 @@ export function EditableCell({
   forceStringSemantics = false,
   temporalKind = null,
   loadFullValue,
+  acquireEditLease,
 }: EditableCellProps) {
+  const editLeaseRef = useRef<(() => void) | null>(null);
+  const releaseEditLease = useCallback(() => {
+    const release = editLeaseRef.current;
+    editLeaseRef.current = null;
+    release?.();
+  }, []);
   const [editing, setEditing] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [inputValue, setInputValue] = useState("");
@@ -222,6 +231,7 @@ export function EditableCell({
 
   const startDeferredEdit = () => {
     if (!deferredValue) return;
+    editLeaseRef.current ??= acquireEditLease?.() ?? null;
     deferredModalActiveRef.current = true;
     setModalOpen(true);
     loadDeferredValue();
@@ -233,6 +243,7 @@ export function EditableCell({
       return;
     }
     if (readOnly) return;
+    editLeaseRef.current ??= acquireEditLease?.() ?? null;
     const text = displayValue === null ? "" : String(displayValue);
     activeEditRef.current = true;
     activeEditSessionRef.current = {
@@ -287,19 +298,25 @@ export function EditableCell({
     setDeferredLoadError("");
     setModalOpen(false);
     setEditing(false);
-  }, [cellKey, deferredEnabled, deferredValue, value]);
+    releaseEditLease();
+  }, [cellKey, deferredEnabled, deferredValue, value, releaseEditLease]);
 
   const finishEdit = () => {
     activeEditRef.current = false;
     setEditing(false);
-    commitInputValue(latestInputValueRef.current);
-    activeEditSessionRef.current = null;
+    try {
+      commitInputValue(latestInputValueRef.current);
+    } finally {
+      activeEditSessionRef.current = null;
+      releaseEditLease();
+    }
   };
 
   const cancel = () => {
     activeEditRef.current = false;
     activeEditSessionRef.current = null;
     setEditing(false);
+    releaseEditLease();
   };
 
   const handleBlur = () => {
@@ -333,8 +350,12 @@ export function EditableCell({
     activeEditRef.current = false;
     deferredModalActiveRef.current = false;
     setModalOpen(false);
-    commitInputValue(latestInputValueRef.current);
-    activeEditSessionRef.current = null;
+    try {
+      commitInputValue(latestInputValueRef.current);
+    } finally {
+      activeEditSessionRef.current = null;
+      releaseEditLease();
+    }
   };
 
   const cancelModal = () => {
@@ -344,6 +365,7 @@ export function EditableCell({
     deferredRequestGenerationRef.current += 1;
     deferredRequestRef.current = null;
     setModalOpen(false);
+    releaseEditLease();
   };
 
   useEffect(() => {
@@ -353,14 +375,18 @@ export function EditableCell({
       deferredModalActiveRef.current = false;
       deferredRequestGenerationRef.current += 1;
       deferredRequestRef.current = null;
-      if (!activeEditRef.current) return;
-      activeEditRef.current = false;
-      if (activeEditSessionRef.current?.deferred) {
+      try {
+        if (!activeEditRef.current) return;
+        activeEditRef.current = false;
+        if (activeEditSessionRef.current?.deferred) {
+          activeEditSessionRef.current = null;
+          return;
+        }
+        commitInputValue(latestInputValueRef.current);
         activeEditSessionRef.current = null;
-        return;
+      } finally {
+        releaseEditLease();
       }
-      commitInputValue(latestInputValueRef.current);
-      activeEditSessionRef.current = null;
     };
     // commitInputValue intentionally reads refs so the unmount cleanup can stay stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -518,6 +544,7 @@ export const MemoEditableCell = memo(
     prev.hasPending === next.hasPending &&
     prev.onEdit === next.onEdit &&
     prev.loadFullValue === next.loadFullValue &&
+    prev.acquireEditLease === next.acquireEditLease &&
     prev.displayText === next.displayText &&
     prev.cellKey === next.cellKey &&
     prev.onTabNavigate === next.onTabNavigate &&

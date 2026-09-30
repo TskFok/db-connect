@@ -3083,3 +3083,182 @@ describe("databaseStore", () => {
     });
   });
 });
+
+describe("SQL 结果预算生命周期", () => {
+  beforeEach(() => {
+    useDatabaseStore.getState().reset();
+    useDatabaseStore.getState().switchToConnection("cache-conn");
+  });
+  it("可见结果受保护，切换连接后回收全部别名并保留摘要", async () => {
+    const { resultCacheController: cache, RESULT_CACHE_BUDGET_BYTES: budget } =
+      await import("../utils/resultCacheBudget");
+    const store = useDatabaseStore.getState();
+    store.openSqlTab("cache-conn");
+    const tab = useDatabaseStore.getState().openTabs[0] as {
+      type: "sql";
+      id: string;
+    };
+    const result = {
+      result_type: "select",
+      message: "",
+      columns: ["id"],
+      rows: [[1]],
+      affected_rows: 0,
+      execution_time_ms: 1,
+    };
+    store.setSqlTabResult(
+      "cache-conn",
+      tab.id,
+      result,
+      null,
+      ["select 1"],
+      [{ sql: "select 1", result, error: null }]
+    );
+    const rowsAlias = result.rows;
+    const release = cache.pin("test-pressure");
+    cache.track({
+      key: "test-pressure",
+      estimatedBytes: budget,
+      evict: () => {},
+    });
+    try {
+      expect(result.rows).toEqual([[1]]);
+      store.switchToConnection("other");
+      const saved =
+        useDatabaseStore.getState().connectionStates["cache-conn"]
+          .sqlTabResults[tab.id];
+      expect(saved.statementResults?.[0].retention).toBe("evicted");
+      expect(saved.statementResults?.[0].retainedRowCount).toBe(1);
+      expect(saved.result?.rows ?? []).toEqual([]);
+      expect(rowsAlias).toEqual([]);
+    } finally {
+      cache.remove("test-pressure");
+      release();
+      store.reset();
+    }
+  });
+  it("关闭标签后不接受迟到结果且不保留预算记录", async () => {
+    const { resultCacheController: cache } =
+      await import("../utils/resultCacheBudget");
+    const store = useDatabaseStore.getState();
+    store.openSqlTab("cache-conn");
+    const tab = useDatabaseStore.getState().openTabs[0] as {
+      type: "sql";
+      id: string;
+    };
+    store.setSqlTabResult(
+      "cache-conn",
+      tab.id,
+      {
+        result_type: "select",
+        message: "",
+        columns: ["id"],
+        rows: [[1]],
+        affected_rows: 0,
+        execution_time_ms: 1,
+      },
+      null,
+      ["select 1"]
+    );
+    expect(cache.enforce().retainedBytes).toBeGreaterThan(0);
+    store.closeTab("cache-conn", 0);
+    store.setSqlTabResult(
+      "cache-conn",
+      tab.id,
+      {
+        result_type: "select",
+        message: "",
+        columns: ["id"],
+        rows: [[2]],
+        affected_rows: 0,
+        execution_time_ms: 1,
+      },
+      null,
+      ["select 2"]
+    );
+    expect(cache.enforce().retainedBytes).toBe(0);
+    expect(useDatabaseStore.getState().sqlTabResults[tab.id]).toBeUndefined();
+  });
+});
+
+it("DML 的 null 行列不登记行载荷且仍保留影响行数", () => {
+  useDatabaseStore.getState().reset();
+  const store = useDatabaseStore.getState();
+  store.switchToConnection("dml");
+  store.openSqlTab("dml");
+  const tab = useDatabaseStore.getState().openTabs[0] as {
+    type: "sql";
+    id: string;
+  };
+  const result = {
+    result_type: "modify",
+    message: "",
+    columns: null,
+    rows: null,
+    affected_rows: 2,
+    execution_time_ms: 1,
+  };
+  expect(() =>
+    store.setSqlTabResult("dml", tab.id, result, null, ["update t set a=1"])
+  ).not.toThrow();
+  expect(
+    useDatabaseStore.getState().sqlTabResults[tab.id].result?.affected_rows
+  ).toBe(2);
+  store.reset();
+});
+
+it("进行中结果同键移交保留接收时估算并替换回收拥有方", async () => {
+  const { resultCacheController: cache, RESULT_CACHE_BUDGET_BYTES: budget } =
+    await import("../utils/resultCacheBudget");
+  useDatabaseStore.getState().reset();
+  const store = useDatabaseStore.getState();
+  store.switchToConnection("handoff");
+  store.openSqlTab("handoff");
+  const tab = useDatabaseStore.getState().openTabs[0] as {
+    type: "sql";
+    id: string;
+  };
+  const result = {
+    result_type: "select",
+    message: "",
+    columns: ["id"],
+    rows: [[1]],
+    affected_rows: null,
+    execution_time_ms: 1,
+  };
+  let oldOwnerCalled = false;
+  cache.track({
+    key: "handoff-key",
+    estimatedBytes: 42,
+    evict: () => {
+      oldOwnerCalled = true;
+    },
+  });
+  store.setSqlTabResult(
+    "handoff",
+    tab.id,
+    result,
+    null,
+    ["select 1"],
+    [{ sql: "select 1", result, error: null, cacheKey: "handoff-key" }]
+  );
+  expect(cache.enforce().retainedBytes).toBe(42);
+  const release = cache.pin("handoff-pressure");
+  cache.track({
+    key: "handoff-pressure",
+    estimatedBytes: budget,
+    evict: () => {},
+  });
+  try {
+    store.switchToConnection("another");
+    expect(oldOwnerCalled).toBe(false);
+    expect(
+      useDatabaseStore.getState().connectionStates.handoff.sqlTabResults[tab.id]
+        .statementResults?.[0].retention
+    ).toBe("evicted");
+  } finally {
+    cache.remove("handoff-pressure");
+    release();
+    store.reset();
+  }
+});

@@ -1,6 +1,6 @@
 use crate::db::batch_update::{build_batch_update_statements, BatchDialect};
 use crate::db::postgres_error::format_pg_error;
-use crate::db::result_budget::ResultBudget;
+use crate::db::result_budget::{collect_rows, ResultBudget};
 use crate::db::sql_utils::{
     pg_id, pg_str, postgres_count_query, postgres_sql_editor_allowed_on_read_only_connection,
     validate_where_clause,
@@ -517,43 +517,58 @@ pub async fn query_table_data(
             );
             // 保留 simple_query 的任意 PostgreSQL 类型文本展示；边界只能来自严格解析后的 i64，
             // 再输出标准十进制整数，绝不将客户端游标或未经校验的文本拼入 SQL。
-            let messages = client
-                .simple_query(&data_sql)
+            let stream = client
+                .simple_query_raw(&data_sql)
                 .await
-                .map_err(|e| format!("查询数据失败: {}", e))?;
-            let raw_rows: Vec<_> = messages
-                .iter()
-                .filter_map(|message| match message {
-                    SimpleQueryMessage::Row(row) => Some(row),
-                    _ => None,
-                })
-                .collect();
-            let key_index = plan.key_column.as_ref().and_then(|key| {
-                raw_rows
-                    .first()?
-                    .columns()
-                    .iter()
-                    .position(|column| column.name() == key)
-            });
-            let boundary = |row: &&tokio_postgres::SimpleQueryRow| {
-                key_index
-                    .and_then(|index| row.get(index))
-                    .and_then(IntegerValue::from_postgres)
-            };
-            let (mut first, mut last) = (
-                raw_rows.first().and_then(boundary),
-                raw_rows.last().and_then(boundary),
-            );
-            if plan.reverse {
-                std::mem::swap(&mut first, &mut last);
+                .map_err(|e| format_pg_error("查询数据", e))?;
+            futures_util::pin_mut!(stream);
+            let mut budget = ResultBudget::default();
+            let mut columns = Vec::new();
+            let mut rows = Vec::new();
+            let mut key_index = None;
+            let (mut first, mut last) = (None, None);
+            while let Some(message) = stream
+                .try_next()
+                .await
+                .map_err(|e| format_pg_error("查询数据", e))?
+            {
+                match message {
+                    SimpleQueryMessage::RowDescription(cols) => {
+                        columns = cols.iter().map(|c| c.name().to_string()).collect();
+                        budget.add_columns(&columns)?;
+                        key_index = plan
+                            .key_column
+                            .as_ref()
+                            .and_then(|key| columns.iter().position(|column| column == key));
+                    }
+                    SimpleQueryMessage::Row(row) => {
+                        let boundary = key_index
+                            .and_then(|i| row.get(i))
+                            .and_then(IntegerValue::from_postgres);
+                        if rows.is_empty() {
+                            first = boundary;
+                        }
+                        last = boundary;
+                        let values = (0..row.len())
+                            .map(|i| simple_value_to_json(row.get(i)))
+                            .collect::<Vec<_>>();
+                        budget.add_row(&values)?;
+                        rows.push(values);
+                        if rows.len() % 256 == 0 {
+                            tokio::task::yield_now().await;
+                        }
+                    }
+                    _ => {}
+                }
             }
-            let pagination = plan.pagination(first, last, raw_rows.len());
-            let (mut columns, mut rows) = simple_messages_to_columns_and_json(&messages)?;
             if plan.reverse {
                 rows.reverse();
+                std::mem::swap(&mut first, &mut last);
             }
+            let pagination = plan.pagination(first, last, rows.len());
             if columns.is_empty() && rows.is_empty() {
                 columns = selected_columns.unwrap_or(metadata.columns);
+                budget.add_columns(&columns)?;
             }
             Ok(TablePageResult {
                 result: QueryResult {
@@ -1242,31 +1257,42 @@ pub async fn query_full_rows(
         .map(|value| value as &(dyn ToSql + Sync))
         .collect();
 
-    let rows = client
-        .query(&stmt, &params)
-        .await
-        .map_err(|e| format_pg_error("查询完整行数据", e))?;
-
-    let columns: Vec<String> = stmt
-        .columns()
-        .iter()
-        .map(|c| c.name().to_string())
-        .collect();
-    let json_rows: Vec<Vec<JsonValue>> = rows
-        .iter()
-        .map(|row| {
-            (0..columns.len())
-                .map(|i| pg_row_value_to_json(row, i))
-                .collect()
+    let result = async {
+        let columns: Vec<String> = stmt
+            .columns()
+            .iter()
+            .map(|c| c.name().to_string())
+            .collect();
+        let mut budget = ResultBudget::default();
+        budget.add_columns(&columns)?;
+        let stream = client
+            .query_raw(&stmt, params)
+            .await
+            .map_err(|e| format_pg_error("查询完整行数据", e))?;
+        let rows = collect_rows(
+            stream
+                .map_ok(|row| {
+                    (0..columns.len())
+                        .map(|i| pg_row_value_to_json(&row, i))
+                        .collect::<Vec<_>>()
+                })
+                .map_err(|e| format_pg_error("查询完整行数据", e)),
+            &mut budget,
+        )
+        .await?;
+        Ok(QueryResult {
+            total: rows.len() as u64,
+            columns,
+            rows,
+            execution_time_ms: start.elapsed().as_millis() as u64,
         })
-        .collect();
-    let total = json_rows.len() as u64;
-    Ok(QueryResult {
-        columns,
-        rows: json_rows,
-        total,
-        execution_time_ms: start.elapsed().as_millis() as u64,
-    })
+    }
+    .await;
+    if result.is_err() {
+        // 不复用仍可能有未读结果的池连接；关闭连接会结束原会话。
+        drop(deadpool_postgres::Client::take(client));
+    }
+    result
 }
 
 /// 把 binary 协议返回的列值统一转换为 JSON：尽量保留可读字面，未支持类型回退为 `null`。
@@ -1320,34 +1346,6 @@ fn build_where_sql(where_clause: &Option<String>) -> Result<String, String> {
         }
         _ => Ok(String::new()),
     }
-}
-
-fn simple_messages_to_columns_and_json(
-    messages: &[SimpleQueryMessage],
-) -> Result<(Vec<String>, Vec<Vec<JsonValue>>), String> {
-    let mut columns = Vec::new();
-    let mut rows = Vec::new();
-
-    for msg in messages {
-        match msg {
-            SimpleQueryMessage::RowDescription(cols) if columns.is_empty() => {
-                columns = cols.iter().map(|c| c.name().to_string()).collect();
-            }
-            SimpleQueryMessage::Row(row) => {
-                if columns.is_empty() {
-                    columns = row.columns().iter().map(|c| c.name().to_string()).collect();
-                }
-                rows.push(
-                    (0..row.len())
-                        .map(|i| simple_value_to_json(row.get(i)))
-                        .collect(),
-                );
-            }
-            _ => {}
-        }
-    }
-
-    Ok((columns, rows))
 }
 
 fn simple_value_to_json(value: Option<&str>) -> JsonValue {

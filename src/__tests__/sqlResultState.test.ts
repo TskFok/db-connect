@@ -57,10 +57,23 @@ describe("SQL 结果标签状态", () => {
     saveResults("conn-1", tabId);
     expect(
       useDatabaseStore.getState().sqlTabResults[tabId].statementResults
-    ).toEqual(statementResults);
+    ).toEqual(
+      statementResults.map((statement) => ({
+        ...statement,
+        cacheKey: expect.any(String),
+        retention: "resident",
+        retainedRowCount: 1,
+      }))
+    );
     expect(
       useDatabaseStore.getState().sqlTabResults[tabId].activeResultIndex
     ).toBe(0);
+    const savedKeys = useDatabaseStore
+      .getState()
+      .sqlTabResults[
+        tabId
+      ].statementResults!.map((statement) => statement.cacheKey);
+    expect(new Set(savedKeys).size).toBe(2);
 
     useDatabaseStore.getState().setSqlTabActiveResult("conn-1", tabId, 1);
     openSqlTab("conn-1");
@@ -70,6 +83,9 @@ describe("SQL 结果标签状态", () => {
 
     const saved = useDatabaseStore.getState().sqlTabResults[tabId];
     expect(saved.activeResultIndex).toBe(1);
+    expect(
+      saved.statementResults?.map((statement) => statement.cacheKey)
+    ).toEqual(savedKeys);
     expect(
       saved.statementResults?.[saved.activeResultIndex ?? 0].result?.rows
     ).toEqual([[2]]);
@@ -109,7 +125,14 @@ describe("SQL 结果标签状态", () => {
     useDatabaseStore.getState().switchToConnection("conn-2");
     expect(
       useDatabaseStore.getState().sqlTabResults[backgroundTab].statementResults
-    ).toEqual(statementResults);
+    ).toEqual(
+      statementResults.map((statement) => ({
+        ...statement,
+        cacheKey: expect.any(String),
+        retention: "resident",
+        retainedRowCount: 1,
+      }))
+    );
   });
 
   it("后台连接切换结果仅改变所属标签，当前连接和同连接其他标签不受影响", () => {
@@ -152,9 +175,14 @@ describe("SQL 结果标签状态", () => {
     }
   );
 
-  it("旧单结果调用清空上一批结果标签且无法选择不存在的结果", () => {
+  it("旧单结果调用替换上一批结果并登记唯一结果，无法选择不存在的索引", () => {
     const tabId = openSqlTab("conn-1");
     saveResults("conn-1", tabId);
+    const oldKeys = useDatabaseStore
+      .getState()
+      .sqlTabResults[
+        tabId
+      ].statementResults!.map((statement) => statement.cacheKey);
     useDatabaseStore
       .getState()
       .setSqlTabResult("conn-1", tabId, firstResult, null, []);
@@ -162,9 +190,22 @@ describe("SQL 结果标签状态", () => {
 
     expect(useDatabaseStore.getState().sqlTabResults[tabId]).toMatchObject({
       result: firstResult,
-      statementResults: [],
+      statementResults: [
+        {
+          sql: "",
+          result: firstResult,
+          error: null,
+          cacheKey: expect.any(String),
+          retention: "resident",
+          retainedRowCount: 1,
+        },
+      ],
       activeResultIndex: 0,
     });
+    expect(oldKeys).not.toContain(
+      useDatabaseStore.getState().sqlTabResults[tabId].statementResults![0]
+        .cacheKey
+    );
   });
 
   it("关闭标签清理全部结果，迟到结果不能重新创建已关闭标签的状态", () => {

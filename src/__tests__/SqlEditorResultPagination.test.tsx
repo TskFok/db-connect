@@ -96,18 +96,20 @@ describe("SqlEditor 查询结果分页", () => {
     useDatabaseStore.getState().switchToConnection(connection.connId);
   });
 
-  it("首屏只读取和转换当前页的行", () => {
+  it("接收估算后首屏和重渲染只读取并转换当前页的行", () => {
     const rows = Array.from({ length: 101 }, (_, index) => [`row-${index}`]);
+    // 接收时允许一次遍历估算，之后的渲染不可再读取整份结果。
+    const tabId = openSqlTabWithResult(selectResult(rows));
     Object.defineProperty(rows, 100, {
       configurable: true,
       get() {
         throw new Error("首屏不应读取第二页行");
       },
     });
-    const tabId = openSqlTabWithResult(selectResult(rows));
-
-    expect(() => render(<SqlEditor tabId={tabId} />)).not.toThrow();
+    const view = render(<SqlEditor tabId={tabId} />);
     expect(screen.getByText("共 101 行")).toBeInTheDocument();
+    expect(() => view.rerender(<SqlEditor tabId={tabId} />)).not.toThrow();
+    expect(screen.getByText("row-0")).toBeInTheDocument();
   });
 
   it("切到末页后收到新结果时复位到第一页", async () => {

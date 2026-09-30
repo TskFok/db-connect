@@ -1,7 +1,7 @@
 pub use crate::db::batch_update::RowUpdate as SqlServerRowUpdate;
 use crate::db::batch_update::{build_batch_update_statements, BatchDialect};
 use crate::db::dialect::SQLSERVER_DIALECT;
-use crate::db::result_budget::ResultBudget;
+use crate::db::result_budget::{collect_rows, ResultBudget};
 use crate::db::sql_utils::{
     sqlserver_count_query, sqlserver_id, sqlserver_paginated_select,
     sqlserver_sql_editor_allowed_on_read_only_connection, sqlserver_str, validate_where_clause,
@@ -674,20 +674,18 @@ pub async fn query_table_data(
                 offset,
             );
 
-            let rows = client
+            let stream = client
                 .simple_query(data_sql)
                 .await
-                .map_err(|e| normalize_sqlserver_error("查询数据失败", e.to_string()))?
-                .into_first_result()
-                .await
-                .map_err(|e| normalize_sqlserver_error("读取数据失败", e.to_string()))?;
-            let (mut columns, rows) = rows_to_columns_and_json(&rows);
+                .map_err(|e| normalize_sqlserver_error("查询数据失败", e.to_string()))?;
+            let (mut columns, rows) = collect_query_stream(stream).await?;
 
             if columns.is_empty() && rows.is_empty() {
                 columns = match selected_columns_for_empty_result {
                     Some(cols) => cols,
                     None => fetch_column_names_on_client(&mut client, schema, table).await?,
                 };
+                ResultBudget::default().add_columns(&columns)?;
             }
 
             Ok(QueryResult {
@@ -1686,41 +1684,48 @@ pub async fn query_full_rows_by_primary_keys(
         .iter()
         .map(|opt| opt as &dyn tiberius::ToSql)
         .collect();
-    let result_rows = client
-        .query(sql, &bound)
-        .await
-        .map_err(|e| normalize_sqlserver_error("查询完整行数据失败", e.to_string()))?
-        .into_first_result()
-        .await
-        .map_err(|e| normalize_sqlserver_error("读取完整行数据失败", e.to_string()))?;
-    let (columns, json_rows) = rows_to_columns_and_json(&result_rows);
-    Ok(QueryResult {
-        columns,
-        total: json_rows.len() as u64,
-        rows: json_rows,
-        execution_time_ms: start.elapsed().as_millis() as u64,
-    })
+    let result = async {
+        let stream = client
+            .query(sql, &bound)
+            .await
+            .map_err(|e| normalize_sqlserver_error("查询完整行数据失败", e.to_string()))?;
+        let (columns, rows) = collect_query_stream(stream).await?;
+        Ok(QueryResult {
+            total: rows.len() as u64,
+            columns,
+            rows,
+            execution_time_ms: start.elapsed().as_millis() as u64,
+        })
+    }
+    .await;
+    client.discard_on_error(result)
 }
 
-fn rows_to_columns_and_json(rows: &[Row]) -> (Vec<String>, Vec<Vec<JsonValue>>) {
-    let columns = rows
-        .first()
-        .map(|row| {
-            row.columns()
+async fn collect_query_stream(
+    mut stream: tiberius::QueryStream<'_>,
+) -> Result<(Vec<String>, Vec<Vec<JsonValue>>), String> {
+    let columns = stream
+        .columns()
+        .await
+        .map_err(|e| normalize_sqlserver_error("读取查询列失败", e.to_string()))?
+        .map(|columns| {
+            columns
                 .iter()
-                .map(|column| column.name().to_string())
+                .map(|c| c.name().to_string())
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let json_rows = rows
-        .iter()
-        .map(|row| {
-            row.cells()
-                .map(|(_, value)| sqlserver_column_data_to_json(value))
-                .collect::<Vec<_>>()
-        })
-        .collect();
-    (columns, json_rows)
+    let mut budget = ResultBudget::default();
+    budget.add_columns(&columns)?;
+    let rows = collect_rows(
+        stream
+            .into_row_stream()
+            .map_ok(|row| row_to_json(&row))
+            .map_err(|e| normalize_sqlserver_error("读取查询结果失败", e.to_string())),
+        &mut budget,
+    )
+    .await?;
+    Ok((columns, rows))
 }
 
 pub(crate) fn sqlserver_column_data_to_json(value: &ColumnData<'static>) -> JsonValue {

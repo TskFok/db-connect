@@ -145,34 +145,50 @@ impl Projection {
         }
         result
     }
-    pub fn finish(&self, columns: &mut Vec<String>, rows: &mut [Vec<Value>]) {
-        if self.deferred.is_empty() {
-            return;
+    /// 每次结果只解析一次辅助列位置；行流不复制列名或重复查找索引。
+    pub fn prepare_rows(&self, columns: &mut Vec<String>) -> impl Fn(&mut Vec<Value>) {
+        let deferred: Vec<_> = self
+            .deferred
+            .iter()
+            .filter_map(|(index, alias, kind)| {
+                columns
+                    .iter()
+                    .position(|column| column == alias)
+                    .map(|length_index| (*index, length_index, *kind))
+            })
+            .collect();
+        let width = (!self.deferred.is_empty()).then_some(self.columns.len());
+        if let Some(width) = width {
+            columns.truncate(width);
         }
-        for (index, alias, kind) in &self.deferred {
-            let Some(length_index) = columns.iter().position(|c| c == alias) else {
-                continue;
-            };
-            for row in rows.iter_mut() {
-                let length = row.get(length_index).and_then(|v| {
-                    v.as_u64()
-                        .or_else(|| v.as_str().and_then(|v| v.parse().ok()))
+        move |row| {
+            for (index, length_index, kind) in &deferred {
+                let length = row.get(*length_index).and_then(|value| {
+                    value
+                        .as_u64()
+                        .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
                 });
                 if let (Some(length), Some(value)) = (length, row.get_mut(*index)) {
                     if length > 4096 && !value.is_null() {
-                        let preview = value
-                            .as_str()
-                            .map(str::to_owned)
-                            .unwrap_or_else(|| value.to_string());
+                        let preview = match std::mem::take(value) {
+                            Value::String(text) => text,
+                            other => other.to_string(),
+                        };
                         *value = serde_json::json!({"__deferred_field":true,"preview":preview,"byte_length":length,"kind":kind});
                     }
                 }
             }
+            if let Some(width) = width {
+                row.truncate(width);
+            }
         }
-        // 辅助列始终追加在投影末尾；只在确认执行了投影时移除。
-        columns.truncate(self.columns.len());
+    }
+
+    #[cfg(test)]
+    pub fn finish(&self, columns: &mut Vec<String>, rows: &mut [Vec<Value>]) {
+        let finish_row = self.prepare_rows(columns);
         for row in rows {
-            row.truncate(self.columns.len());
+            finish_row(row);
         }
     }
 }

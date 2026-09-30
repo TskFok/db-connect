@@ -363,6 +363,7 @@ pub fn mysql_value_to_json_typed(
 /// 将结果行转换为 JSON 行矩阵；`col_count` 为列数，缺失值以 `null` 填充。
 /// 优先按列元数据（`ColumnType`）判断数值/文本，文本列保留字符串。
 /// 表格查询与 SQL 编辑器共用 `mysql_row_to_json`，避免逻辑漂移。
+#[cfg(test)]
 fn rows_to_json_with_columns(rows: &[Row], col_count: usize) -> Vec<Vec<JsonValue>> {
     rows.iter()
         .map(|row| mysql_row_to_json(row, col_count))
@@ -383,6 +384,7 @@ fn mysql_row_to_json(row: &Row, col_count: usize) -> Vec<JsonValue> {
 
 /// 从结果行集中提取列名（取首行的列元数据）并一并转换为 JSON 行矩阵。
 /// 行集为空时返回空列名与空行集，调用方可自行回退到其它方式获取列名。
+#[cfg(test)]
 fn rows_to_columns_and_json(rows: &[Row]) -> (Vec<String>, Vec<Vec<JsonValue>>) {
     let columns: Vec<String> = match rows.first() {
         Some(first) => first
@@ -585,7 +587,7 @@ async fn finish_mysql_table_query<T>(
             .await;
         }
         // 不归还含未读结果的连接，也不为清理而排空昂贵的结果集。
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), conn.disconnect()).await;
+        conn.disconnect_immediately();
     }
     result
 }
@@ -746,6 +748,13 @@ fn build_sqlserver_order_by_sql(sort_fields: &Option<Vec<TableSortField>>) -> St
     sqlserver::build_order_by_sql(&borrowed)
 }
 
+fn validate_table_page_size(page_size: u32) -> Result<(), String> {
+    if !(1..=10_000).contains(&page_size) {
+        return Err("每页行数必须在 1–10,000 之间".to_string());
+    }
+    Ok(())
+}
+
 /// 查询表数据 (分页)
 ///
 /// `select_columns`: 可选的列列表。传入时仅查询指定列（自动合并主键列以保证删除/修改功能正常）；
@@ -767,6 +776,7 @@ pub async fn query_table_data(
     navigation: Option<TablePageNavigation>,
     execution_id: Option<String>,
 ) -> Result<TablePageResult, String> {
+    validate_table_page_size(page_size)?;
     let guard = state
         .table_queries
         .register(&conn_id, execution_id.as_deref())?;
@@ -938,40 +948,52 @@ pub async fn query_table_data(
             let data_sql = plan.sql(select_part, &qualified_table, &quoted_key, &fallback_order);
             // 保留文本协议，避免切换 prepared/binary 后日期微秒、午夜时间等展示发生变化。
             // 边界来自真实整数主键的 i64/u64 解析后规范十进制，客户端文本不会进入 SQL。
-            let mut rows: Vec<mysql_async::Row> = conn
-                .query(&data_sql)
+            let mut stream = conn
+                .query_iter(&data_sql)
                 .await
                 .map_err(|e| format!("查询数据失败: {}", e))?;
-            if plan.reverse {
-                rows.reverse();
+            let raw_columns: Vec<String> = stream
+                .columns_ref()
+                .iter()
+                .map(|column| column.name_str().to_string())
+                .collect();
+            let mut columns = raw_columns.clone();
+            let finish_row = projection.prepare_rows(&mut columns);
+            if columns.is_empty() {
+                columns = projection.columns.clone();
             }
-
-            let mut columns: Vec<String> = rows
-                .first()
-                .map(|row| {
-                    row.columns_ref()
-                        .iter()
-                        .map(|c| c.name_str().to_string())
-                        .collect()
-                })
-                .unwrap_or_else(|| projection.columns.clone());
             let key_index = plan
                 .key_column
                 .as_ref()
-                .and_then(|key| columns.iter().position(|column| column == key));
-            let boundary = |row: &mysql_async::Row| {
-                key_index
+                .and_then(|key| raw_columns.iter().position(|column| column == key));
+            let mut budget = ResultBudget::default();
+            budget.add_columns(&columns)?;
+            let mut json_rows = Vec::new();
+            let (mut first, mut last) = (None, None);
+            while let Some(row) = stream
+                .next()
+                .await
+                .map_err(|e| format!("查询数据失败: {}", e))?
+            {
+                // 先从原始整数读取游标，避免经过 JSON 数字造成精度损失。
+                let boundary = key_index
                     .and_then(|i| row.as_ref(i))
-                    .and_then(|value| IntegerValue::from_mysql(value, plan.integer_kind()?))
-            };
-            // 游标必须在展示值转换前解析原始整数文本，不能借道 JavaScript 数字。
-            let pagination = plan.pagination(
-                rows.first().and_then(boundary),
-                rows.last().and_then(boundary),
-                rows.len(),
-            );
-            let mut json_rows = rows_to_json_with_columns(&rows, columns.len());
-            projection.finish(&mut columns, &mut json_rows);
+                    .and_then(|value| IntegerValue::from_mysql(value, plan.integer_kind()?));
+                if json_rows.is_empty() {
+                    first = boundary;
+                }
+                last = boundary;
+                let mut values = mysql_row_to_json(&row, raw_columns.len());
+                finish_row(&mut values);
+                // 按实际返回的预览标记计数，辅助长度列不计入结果预算。
+                budget.add_row(&values)?;
+                json_rows.push(values);
+            }
+            if plan.reverse {
+                json_rows.reverse();
+                std::mem::swap(&mut first, &mut last);
+            }
+            let pagination = plan.pagination(first, last, json_rows.len());
             Ok(TablePageResult {
                 result: QueryResult {
                     columns,
@@ -1475,22 +1497,40 @@ pub async fn query_full_rows(
     )?;
     let params: Vec<MyValue> = values.iter().map(json_to_mysql_value).collect();
 
-    let rows: Vec<mysql_async::Row> = conn
-        .exec(&sql, mysql_async::Params::Positional(params))
-        .await
-        .map_err(|e| format!("查询完整行数据失败: {}", e))?;
-
-    let (columns, json_rows) = rows_to_columns_and_json(&rows);
-
-    let total = json_rows.len() as u64;
-    let elapsed = start.elapsed().as_millis() as u64;
-
-    Ok(QueryResult {
-        columns,
-        rows: json_rows,
-        total,
-        execution_time_ms: elapsed,
-    })
+    let result = async {
+        let mut stream = conn
+            .exec_iter(&sql, mysql_async::Params::Positional(params))
+            .await
+            .map_err(|e| format!("查询完整行数据失败: {}", e))?;
+        let columns: Vec<String> = stream
+            .columns_ref()
+            .iter()
+            .map(|column| column.name_str().to_string())
+            .collect();
+        let mut budget = ResultBudget::default();
+        budget.add_columns(&columns)?;
+        let mut rows = Vec::new();
+        while let Some(row) = stream
+            .next()
+            .await
+            .map_err(|e| format!("查询完整行数据失败: {}", e))?
+        {
+            let values = mysql_row_to_json(&row, columns.len());
+            budget.add_row(&values)?;
+            rows.push(values);
+        }
+        Ok(QueryResult {
+            total: rows.len() as u64,
+            columns,
+            rows,
+            execution_time_ms: start.elapsed().as_millis() as u64,
+        })
+    }
+    .await;
+    if result.is_err() {
+        conn.disconnect_immediately();
+    }
+    result
 }
 
 /// 在给定连接上执行单条 SQL（结果集 / USE / DML-DDL 三类），不涉及连接获取与取消登记。
@@ -1955,6 +1995,17 @@ pub async fn explain_sql(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn result_budget_page_size_rejects_invalid_boundaries() {
+        for value in [0, 10_001, u32::MAX] {
+            assert!(validate_table_page_size(value)
+                .unwrap_err()
+                .contains("1–10,000"));
+        }
+        assert!(validate_table_page_size(1).is_ok());
+        assert!(validate_table_page_size(10_000).is_ok());
+    }
 
     #[test]
     fn test_mysql_value_to_json_null() {

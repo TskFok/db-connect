@@ -525,11 +525,14 @@ pub(crate) fn clickhouse_json_to_query_result(
 
     let columns: Vec<String> = parsed.meta.into_iter().map(|m| m.name).collect();
     let has_duplicate_columns = columns.iter().collect::<BTreeSet<_>>().len() != columns.len();
-    let rows: Vec<Vec<JsonValue>> = parsed
-        .data
-        .into_iter()
-        .map(|row| clickhouse_json_row_values(row, &columns, has_duplicate_columns))
-        .collect();
+    let mut budget = ResultBudget::default();
+    budget.add_columns(&columns)?;
+    let mut rows = Vec::with_capacity(parsed.data.len().min(MAX_RESULT_ROWS));
+    for row in parsed.data {
+        let values = clickhouse_json_row_values(row, &columns, has_duplicate_columns);
+        budget.add_row(&values)?;
+        rows.push(values);
+    }
 
     Ok(QueryResult {
         columns,
@@ -1267,6 +1270,19 @@ mod tests {
             skip_dangerous_sql_confirm: None,
             group_id: None,
         }
+    }
+
+    #[test]
+    fn table_result_budget_rejects_rows_beyond_limit() {
+        let body = format!(
+            r#"{{"meta":[{{"name":"n","type":"UInt8"}}],"data":[{}]}}"#,
+            std::iter::repeat_n(r#"{"n":1}"#, super::MAX_RESULT_ROWS + 1)
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let result = super::clickhouse_json_to_query_result(&body, 0, 0);
+        assert!(result.is_err(), "表读取必须检查行预算");
+        assert!(result.unwrap_err().contains("最大行数"));
     }
 
     #[test]

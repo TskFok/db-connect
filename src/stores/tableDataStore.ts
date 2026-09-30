@@ -1,4 +1,8 @@
 import { create } from "zustand";
+import {
+  estimateResultBytes,
+  resultCacheController,
+} from "../utils/resultCacheBudget";
 import * as api from "../services/tauriCommands";
 import type { TableSortField } from "../services/tauriCommands";
 import type {
@@ -27,6 +31,9 @@ interface PendingPageNavigation extends LoadedPageContext {
 
 /** 单表的快照数据，用于切换时恢复 */
 interface TableDataSnapshot {
+  cacheKey?: string;
+  retention?: "resident" | "evicted";
+  retainedRowCount?: number;
   columns: string[];
   rows: unknown[][];
   total: number;
@@ -62,6 +69,11 @@ export interface PendingChange {
 }
 
 interface TableDataState {
+  cacheKey?: string;
+  retention: "resident" | "evicted";
+  retainedRowCount: number;
+  visibleTableKey: string | null;
+  setVisibleTable: (key: string | null) => void;
   /** 当前表标识 connId|database|table */
   activeTableKey: string | null;
   /** 按表缓存的快照（切换时不重新加载） */
@@ -351,6 +363,9 @@ function applyCrudDataReload(
     (get().activeTableKey === key ? get().total : 0);
 
   const snapshot: TableDataSnapshot = {
+    cacheKey: `table:${key}:${++tableResultGeneration}`,
+    retention: "resident",
+    retainedRowCount: result.rows.length,
     columns: result.columns,
     rows: result.rows,
     total: prevTotal,
@@ -380,6 +395,9 @@ function applyCrudDataReload(
       return { tableDataCache: nextCache, countCache: nextCount };
     }
     return {
+      cacheKey: snapshot.cacheKey,
+      retention: "resident",
+      retainedRowCount: snapshot.retainedRowCount ?? 0,
       columns: result.columns,
       rows: result.rows,
       total: prevTotal,
@@ -407,7 +425,8 @@ async function reloadAfterMutation(
   connId: string,
   database: string,
   table: string,
-  key: string
+  key: string,
+  isCurrent: () => boolean
 ) {
   const rp = getReloadQueryParams(get, connId, database, table);
   const isActive =
@@ -428,6 +447,8 @@ async function reloadAfterMutation(
     rp.lastSelectColumns,
     true
   );
+  // 写操作所属标签已关闭/断线时，迟到的重新加载不得复活缓存。
+  if (!isCurrent()) return;
   // 新的页面请求或查询条件优先；后台源表重载仍只更新其缓存。
   const current = get();
   if (current.activeTableKey === key || current.activeTableKey === null) {
@@ -440,6 +461,9 @@ async function reloadAfterMutation(
 }
 
 const initialSlice = {
+  cacheKey: undefined as string | undefined,
+  retention: "resident" as "resident" | "evicted",
+  retainedRowCount: 0,
   columns: [] as string[],
   rows: [] as unknown[][],
   total: 0,
@@ -459,6 +483,7 @@ const initialSlice = {
   canCancelLoad: false,
 };
 
+let tableResultGeneration = 0;
 let _loadCounter = 0;
 let _requestCounter = 0;
 
@@ -477,7 +502,17 @@ const pendingTableWrites = new Set<{ key: string }>();
 function registerTableWrite(key: string) {
   const write = { key };
   pendingTableWrites.add(write);
-  return () => pendingTableWrites.delete(write);
+  const cacheKey = useTableDataStore.getState().tableDataCache[key]?.cacheKey;
+  const release = cacheKey ? resultCacheController.pin(cacheKey) : () => {};
+  return Object.assign(
+    () => {
+      pendingTableWrites.delete(write);
+      release();
+    },
+    {
+      isCurrent: () => pendingTableWrites.has(write),
+    }
+  );
 }
 
 function registerTableRequest(
@@ -514,6 +549,8 @@ function canCancelTableLoad(key: string | null) {
 
 export const useTableDataStore = create<TableDataState>((set, get) => ({
   activeTableKey: null,
+  visibleTableKey: null,
+  setVisibleTable: (visibleTableKey) => set({ visibleTableKey }),
   tableDataCache: {},
   pendingChangesCache: {},
   rowSelectionCache: {},
@@ -606,7 +643,7 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
             countRequest!.executionId
           );
 
-    const isLatest = () => _loadCounter === myLoadId;
+    const isLatest = () => _loadCounter === myLoadId && !dataRequest.cancelled;
 
     dataPromise
       .then((result) => {
@@ -615,6 +652,9 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
         const totalForSnapshot = get().countCache[ccKey] ?? cachedTotal ?? 0;
         const loadedPageContext = { page, queryKey };
         const snapshot: TableDataSnapshot = {
+          cacheKey: `table:${key}:${++tableResultGeneration}`,
+          retention: "resident",
+          retainedRowCount: result.rows.length,
           columns: result.columns,
           rows: result.rows,
           total: totalForSnapshot,
@@ -631,6 +671,9 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
           loadedPageContext,
         };
         set((s) => ({
+          cacheKey: snapshot.cacheKey,
+          retention: "resident",
+          retainedRowCount: snapshot.retainedRowCount ?? 0,
           columns: result.columns,
           rows: result.rows,
           executionTime: result.execution_time_ms,
@@ -702,6 +745,9 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
       ? {}
       : snapshot
         ? {
+            cacheKey: snapshot.cacheKey,
+            retention: snapshot.retention ?? "resident",
+            retainedRowCount: snapshot.retainedRowCount ?? snapshot.rows.length,
             columns: snapshot.columns,
             rows: snapshot.rows,
             total: snapshot.total,
@@ -938,8 +984,18 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
     try {
       set({ dataLoading: true, dataError: null, canCancelLoad: false });
       await api.updateRow(connId, database, table, primaryKeys, updates);
-      await reloadAfterMutation(set, get, connId, database, table, key);
+      if (!finishWrite.isCurrent()) return;
+      await reloadAfterMutation(
+        set,
+        get,
+        connId,
+        database,
+        table,
+        key,
+        finishWrite.isCurrent
+      );
     } catch (e) {
+      if (!finishWrite.isCurrent()) return;
       const msg = String(e);
       console.error("更新数据失败:", msg);
       set((s) => {
@@ -960,8 +1016,18 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
     set({ dataLoading: true, dataError: null, canCancelLoad: false });
     try {
       await api.batchUpdateRows(connId, database, table, rows);
-      await reloadAfterMutation(set, get, connId, database, table, key);
+      if (!finishWrite.isCurrent()) return;
+      await reloadAfterMutation(
+        set,
+        get,
+        connId,
+        database,
+        table,
+        key,
+        finishWrite.isCurrent
+      );
     } catch (e) {
+      if (!finishWrite.isCurrent()) throw e;
       const msg = String(e);
       console.error("批量更新数据失败:", msg);
       set((s) => {
@@ -984,8 +1050,18 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
     try {
       set({ dataLoading: true, dataError: null, canCancelLoad: false });
       await api.insertRow(connId, database, table, values);
-      await reloadAfterMutation(set, get, connId, database, table, key);
+      if (!finishWrite.isCurrent()) return;
+      await reloadAfterMutation(
+        set,
+        get,
+        connId,
+        database,
+        table,
+        key,
+        finishWrite.isCurrent
+      );
     } catch (e) {
+      if (!finishWrite.isCurrent()) return;
       const msg = String(e);
       console.error("插入数据失败:", msg);
       set((s) => {
@@ -1006,8 +1082,18 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
     try {
       set({ dataLoading: true, dataError: null, canCancelLoad: false });
       await api.deleteRows(connId, database, table, primaryKeys);
-      await reloadAfterMutation(set, get, connId, database, table, key);
+      if (!finishWrite.isCurrent()) return;
+      await reloadAfterMutation(
+        set,
+        get,
+        connId,
+        database,
+        table,
+        key,
+        finishWrite.isCurrent
+      );
     } catch (e) {
+      if (!finishWrite.isCurrent()) return;
       const msg = String(e);
       console.error("删除数据失败:", msg);
       set((s) => {
@@ -1024,10 +1110,12 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
 
   reset: () => {
     ++_loadCounter;
+    for (const request of pendingTableRequests) request.cancelled = true;
     pendingTableRequests.clear();
     pendingTableWrites.clear();
     set({
       activeTableKey: null,
+      visibleTableKey: null,
       tableDataCache: {},
       pendingChangesCache: {},
       rowSelectionCache: {},
@@ -1062,6 +1150,9 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
         : get().page;
 
     const snapshot: TableDataSnapshot = {
+      cacheKey: get().cacheKey,
+      retention: get().retention,
+      retainedRowCount: get().retainedRowCount,
       columns: get().columns,
       rows: get().rows,
       total: get().total,
@@ -1094,6 +1185,9 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
       set((s) => ({
         activeTableKey: key,
         tableDataCache: newCache,
+        cacheKey: cached.cacheKey,
+        retention: cached.retention ?? "resident",
+        retainedRowCount: cached.retainedRowCount ?? cached.rows.length,
         columns: cached.columns,
         rows: cached.rows,
         total: cached.total,
@@ -1118,7 +1212,8 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
             ? { ...s.countCache, [ccKey]: cached.total }
             : s.countCache,
       }));
-      return true;
+      if (cached.cacheKey) resultCacheController.touch(cached.cacheKey);
+      return cached.retention !== "evicted";
     }
 
     set({
@@ -1165,6 +1260,10 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
 
   removeTableFromCache: (connId: string, database: string, table: string) => {
     const key = tableKey(connId, database, table);
+    for (const request of pendingTableRequests)
+      if (request.key === key) request.cancelled = true;
+    for (const write of pendingTableWrites)
+      if (write.key === key) pendingTableWrites.delete(write);
     const {
       tableDataCache,
       pendingChangesCache,
@@ -1200,6 +1299,10 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
 
   removeConnectionCache: (connId: string) => {
     const prefix = `${connId}|`;
+    for (const request of pendingTableRequests)
+      if (request.connId === connId) request.cancelled = true;
+    for (const write of pendingTableWrites)
+      if (write.key.startsWith(prefix)) pendingTableWrites.delete(write);
     const { activeTableKey } = get();
     if (activeTableKey?.startsWith(prefix)) ++_loadCounter;
     set((s) => {
@@ -1325,3 +1428,83 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
     });
   },
 }));
+
+function evictTableResult(tableIdentity: string, cacheKey: string) {
+  useTableDataStore.setState((state) => {
+    const snapshot = state.tableDataCache[tableIdentity];
+    if (snapshot?.cacheKey !== cacheKey || snapshot.retention === "evicted")
+      return {};
+    snapshot.rows.length = 0;
+    const rowSelectionCache = { ...state.rowSelectionCache };
+    delete rowSelectionCache[tableIdentity];
+    const evicted = {
+      ...snapshot,
+      rows: [],
+      retention: "evicted" as const,
+      pagination: null,
+      loadedPageContext: null,
+    };
+    return {
+      tableDataCache: { ...state.tableDataCache, [tableIdentity]: evicted },
+      rowSelectionCache,
+      ...(state.cacheKey === cacheKey
+        ? {
+            rows: [],
+            retention: "evicted" as const,
+            pagination: null,
+            _loadedPageContext: null,
+            _pendingNavigation: null,
+          }
+        : {}),
+    };
+  });
+}
+
+const tableCacheKeys = new Set<string>();
+const tableProtection = new Map<string, () => void>();
+useTableDataStore.subscribe((state, previous) => {
+  if (
+    state.tableDataCache === previous.tableDataCache &&
+    state.pendingChangesCache === previous.pendingChangesCache &&
+    state.visibleTableKey === previous.visibleTableKey
+  )
+    return;
+  const retained = new Set<string>();
+  const protectedKeys = new Set<string>();
+  for (const [identity, snapshot] of Object.entries(state.tableDataCache)) {
+    if (!snapshot.cacheKey || snapshot.retention === "evicted") continue;
+    retained.add(snapshot.cacheKey);
+    if (
+      state.visibleTableKey === identity ||
+      Object.keys(state.pendingChangesCache[identity] ?? {}).length > 0
+    )
+      protectedKeys.add(snapshot.cacheKey);
+  }
+  // 先保护新页，再释放上一页，避免换页接收阶段同步回收可见数据。
+  for (const key of protectedKeys)
+    if (!tableProtection.has(key))
+      tableProtection.set(key, resultCacheController.pin(key));
+  for (const key of tableCacheKeys) {
+    if (!retained.has(key)) {
+      tableCacheKeys.delete(key);
+      resultCacheController.remove(key);
+    }
+  }
+  for (const [identity, snapshot] of Object.entries(state.tableDataCache)) {
+    const key = snapshot.cacheKey;
+    if (!key || snapshot.retention === "evicted" || tableCacheKeys.has(key))
+      continue;
+    tableCacheKeys.add(key);
+    resultCacheController.track({
+      key,
+      estimatedBytes: estimateResultBytes(snapshot.columns, snapshot.rows),
+      evict: () => evictTableResult(identity, key),
+    });
+  }
+  for (const [key, release] of tableProtection) {
+    if (!protectedKeys.has(key)) {
+      tableProtection.delete(key);
+      release();
+    }
+  }
+});

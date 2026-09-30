@@ -30,6 +30,9 @@ export interface TableSearchState {
 
 /** 单条 SQL 的执行结果，与原语句对应。 */
 export interface SqlStatementResult {
+  cacheKey?: string;
+  retention?: "resident" | "evicted";
+  retainedRowCount?: number;
   sql: string;
   result: SqlExecuteResult | null;
   error: string | null;

@@ -1464,27 +1464,7 @@ pub async fn query_table_data(
             i64_to_u64(count)
         };
 
-        let mut stmt = conn.prepare(&data_sql).map_err(|e| e.to_string())?;
-        let columns = stmt
-            .column_names()
-            .iter()
-            .map(|name| (*name).to_string())
-            .collect::<Vec<_>>();
-        let col_count = stmt.column_count();
-        let row_iter = stmt
-            .query_map([], |row| {
-                let mut values = Vec::with_capacity(col_count);
-                for idx in 0..col_count {
-                    let value: SqliteValue = row.get(idx)?;
-                    values.push(sqlite_value_to_json(&value));
-                }
-                Ok(values)
-            })
-            .map_err(|e| e.to_string())?;
-        let mut rows = Vec::new();
-        for row in row_iter {
-            rows.push(row.map_err(|e| e.to_string())?);
-        }
+        let (columns, rows) = select_json_rows(conn, &data_sql, &[])?;
         Ok::<(Vec<String>, Vec<Vec<JsonValue>>, u64), String>((columns, rows, total))
     })
     .await?;
@@ -1857,6 +1837,8 @@ fn select_json_rows(
         .iter()
         .map(|name| (*name).to_string())
         .collect::<Vec<_>>();
+    let mut budget = ResultBudget::default();
+    budget.add_columns(&columns)?;
     let col_count = stmt.column_count();
     let mut query = stmt
         .query(params_from_iter(params.iter()))
@@ -1873,6 +1855,7 @@ fn select_json_rows(
                 .map_err(|e| format!("读取完整行数据失败: {}", e))?;
             values.push(sqlite_value_to_json(&value));
         }
+        budget.add_row(&values)?;
         rows.push(values);
     }
     Ok((columns, rows))
@@ -2268,6 +2251,81 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use uuid::Uuid;
+
+    #[test]
+    fn full_rows_result_budget_stops_before_later_sqlite_row_error() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let result = select_json_rows(
+            &conn,
+            "WITH RECURSIVE seq(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM seq WHERE x<100002)
+             SELECT CASE WHEN x=100002 THEN json('invalid') ELSE 'ok' END AS v FROM seq",
+            &[],
+        );
+        assert!(result.unwrap_err().contains("最大行数"));
+        let next = select_json_rows(&conn, "SELECT 42 AS n", &[]).unwrap();
+        assert_eq!(next.1, vec![vec![serde_json::json!(42)]]);
+    }
+
+    #[tokio::test]
+    async fn table_and_full_rows_result_budget_reject_oversized_payload_and_pool_recovers() {
+        let pool = SqliteConfig::new(":memory:")
+            .builder(Runtime::Tokio1)
+            .unwrap()
+            .max_size(1)
+            .build()
+            .unwrap();
+        let conn = pool.get().await.unwrap();
+        conn.interact(|conn| {
+            conn.execute_batch(
+                "CREATE TABLE payloads (id INTEGER PRIMARY KEY, body TEXT);
+                INSERT INTO payloads VALUES (1, CAST(zeroblob(8388608) AS TEXT));
+                CREATE TABLE empty_no_key (name TEXT);",
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+        drop(conn);
+        let page = query_table_data(
+            &pool,
+            "main",
+            "payloads",
+            1,
+            10,
+            String::new(),
+            None,
+            None,
+            Some(true),
+            &TableQueryCancellation::default(),
+        )
+        .await;
+        assert!(page.is_err(), "超限表页不得作为成功结果返回");
+        assert!(page.unwrap_err().contains("最大字节数"));
+        let full =
+            query_full_rows(&pool, "main", "payloads", "id", vec![serde_json::json!(1)]).await;
+        assert!(full.is_err(), "超限完整行不得作为成功结果返回");
+        assert!(full.unwrap_err().contains("最大字节数"));
+        let empty = query_table_data(
+            &pool,
+            "main",
+            "empty_no_key",
+            1,
+            10,
+            String::new(),
+            None,
+            None,
+            Some(true),
+            &TableQueryCancellation::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(empty.columns, vec!["name"]);
+        assert!(empty.rows.is_empty());
+        let next = run_sql_on_pool(&pool, "SELECT 42", true, Instant::now())
+            .await
+            .unwrap();
+        assert_eq!(next.rows.unwrap(), vec![vec![serde_json::json!(42)]]);
+    }
 
     #[tokio::test]
     async fn sql_completion_foreign_keys_from_memory_schema_keep_pairs_and_namespace() {

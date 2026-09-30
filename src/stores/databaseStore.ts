@@ -1,4 +1,8 @@
 import { create } from "zustand";
+import {
+  estimateResultBytes,
+  resultCacheController,
+} from "../utils/resultCacheBudget";
 import type {
   AddColumnRequest,
   AlterColumnRequest,
@@ -232,6 +236,7 @@ interface DatabaseState {
 }
 
 // 标签对象同时作为请求身份：关闭后重开同名表不会接收旧请求的结果。
+let sqlResultGeneration = 0;
 const tableMetadataRequests = new WeakMap<OpenTabEntry, Promise<void>>();
 
 export const useDatabaseStore = create<DatabaseState>((set, get) => ({
@@ -742,6 +747,21 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     ) {
       return;
     }
+    const generation = ++sqlResultGeneration;
+    statementResults = (
+      statementResults.length
+        ? statementResults
+        : result
+          ? [{ sql: executedSqlList[0] ?? "", result, error }]
+          : []
+    ).map((statement, index) => ({
+      ...statement,
+      cacheKey:
+        statement.cacheKey ?? `sql:${connId}:${tabId}:${generation}:${index}`,
+      retention: statement.retention ?? "resident",
+      retainedRowCount:
+        statement.retainedRowCount ?? statement.result?.rows?.length ?? 0,
+    }));
     const newSqlTabResults = {
       ...(state.sqlTabResults ?? {}),
       [tabId]: {
@@ -764,6 +784,30 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       res.sqlTabResults = newSqlTabResults;
     }
     set(res);
+    for (const statement of statementResults) {
+      if (
+        !statement.result?.rows ||
+        !statement.result.columns ||
+        statement.retention === "evicted" ||
+        !statement.cacheKey
+      )
+        continue;
+      const key = statement.cacheKey;
+      if (
+        resultCacheController.transfer(key, () =>
+          evictSqlResult(connId, tabId, key)
+        )
+      )
+        continue;
+      resultCacheController.track({
+        key,
+        estimatedBytes: estimateResultBytes(
+          statement.result.columns,
+          statement.result.rows
+        ),
+        evict: () => evictSqlResult(connId, tabId, key),
+      });
+    }
   },
 
   setSqlTabActiveResult: (connId, tabId, index) => {
@@ -1806,3 +1850,82 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     });
   },
 }));
+
+/** 回调只捕获身份，行从当前拥有方读取；同时释放兼容字段和执行上下文的数组别名。 */
+function evictSqlResult(connId: string, tabId: string, cacheKey: string) {
+  useDatabaseStore.setState((state) => {
+    const conn = state.connectionStates[connId];
+    const tab = conn?.sqlTabResults[tabId];
+    if (!tab) return {};
+    let changed = false;
+    const statements = tab.statementResults?.map((statement) => {
+      if (statement.cacheKey !== cacheKey || statement.retention === "evicted")
+        return statement;
+      changed = true;
+      if (statement.result?.rows) statement.result.rows.length = 0;
+      statement.retention = "evicted";
+      return {
+        ...statement,
+        result: statement.result ? { ...statement.result, rows: [] } : null,
+      };
+    });
+    if (!changed) return {};
+    const sqlTabResults = {
+      ...conn.sqlTabResults,
+      [tabId]: {
+        ...tab,
+        statementResults: statements,
+        result: tab.result ? { ...tab.result, rows: tab.result.rows } : null,
+      },
+    };
+    return {
+      connectionStates: {
+        ...state.connectionStates,
+        [connId]: { ...conn, sqlTabResults },
+      },
+      ...(state.activeConnId === connId ? { sqlTabResults } : {}),
+    };
+  });
+}
+
+let sqlCacheKeys = new Set<string>();
+let visibleSqlKey: string | undefined;
+let releaseVisibleSql: (() => void) | undefined;
+useDatabaseStore.subscribe((state, previous) => {
+  if (
+    state.connectionStates === previous.connectionStates &&
+    state.activeConnId === previous.activeConnId
+  )
+    return;
+  const keys = new Set<string>();
+  for (const conn of Object.values(state.connectionStates)) {
+    for (const tab of Object.values(conn.sqlTabResults)) {
+      for (const result of tab.statementResults ?? []) {
+        if (result.cacheKey && result.retention !== "evicted")
+          keys.add(result.cacheKey);
+      }
+    }
+  }
+  const conn = state.activeConnId
+    ? state.connectionStates[state.activeConnId]
+    : undefined;
+  const tab =
+    conn?.viewMode === "tab" ? conn.openTabs[conn.activeTabIndex] : undefined;
+  const result = tab?.type === "sql" ? conn?.sqlTabResults[tab.id] : undefined;
+  const visible = result?.statementResults?.[result.activeResultIndex ?? 0];
+  const nextVisibleKey =
+    visible?.retention !== "evicted" ? visible?.cacheKey : undefined;
+  const previousRelease =
+    nextVisibleKey !== visibleSqlKey ? releaseVisibleSql : undefined;
+  if (nextVisibleKey !== visibleSqlKey) {
+    visibleSqlKey = nextVisibleKey;
+    releaseVisibleSql = nextVisibleKey
+      ? resultCacheController.pin(nextVisibleKey)
+      : undefined;
+    if (nextVisibleKey) resultCacheController.touch(nextVisibleKey);
+  }
+  const removed = [...sqlCacheKeys].filter((key) => !keys.has(key));
+  sqlCacheKeys = keys;
+  for (const key of removed) resultCacheController.remove(key);
+  previousRelease?.();
+});

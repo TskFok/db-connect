@@ -68,6 +68,10 @@ import {
 } from "../../utils/excelExport";
 import { listDangerousSqlStatements } from "../../utils/dangerousSql";
 import { supportsExplainAnalyze } from "../../utils/mysqlVersion";
+import {
+  resultCacheController,
+  estimateResultBytes,
+} from "../../utils/resultCacheBudget";
 import { formatSql } from "../../utils/sqlFormat";
 
 const { Text } = Typography;
@@ -75,6 +79,8 @@ const { Text } = Typography;
 const EMPTY_STATEMENT_RESULTS: SqlStatementResult[] = [];
 const DEFAULT_RESULT_PAGE_SIZE = 100;
 const RESULT_TABS_PAGE_SIZE = 50;
+// EXPLAIN 只有前端归属标识，后端未登记可取消的查询令牌。
+const EXPLAIN_REQUEST_PREFIX = "explain:";
 let executionSequence = 0;
 
 interface SqlResultTableRow {
@@ -97,6 +103,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     contentFromStore,
     tabResult,
     tabExecuting,
+    tabExecutionId,
     setSqlTabContent,
     setSqlTabResult,
     setSqlTabActiveResult,
@@ -108,6 +115,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
       contentFromStore: tabId ? (s.sqlTabContents[tabId] ?? "") : undefined,
       tabResult: tabId ? s.sqlTabResults[tabId] : null,
       tabExecuting: tabId ? !!s.sqlTabExecutions[tabId] : false,
+      tabExecutionId: tabId ? s.sqlTabExecutions[tabId]?.executionId : null,
       setSqlTabContent: s.setSqlTabContent,
       setSqlTabResult: s.setSqlTabResult,
       setSqlTabActiveResult: s.setSqlTabActiveResult,
@@ -134,7 +142,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     useState("");
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const [editorReady, setEditorReady] = useState(false);
-  /** 当前正在执行语句的取消令牌（用于「停止」按钮取消运行中的查询） */
+  /** 当前执行归属标识；普通查询兼作取消令牌，EXPLAIN 前缀仅在前端使用。 */
   const currentExecutionIdRef = useRef<string | null>(null);
 
   const connId = activeConnection?.connId ?? "";
@@ -161,6 +169,32 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     DEFAULT_RESULT_PAGE_SIZE
   );
 
+  const localExecutionCleanupRef = useRef<(() => void) | null>(null);
+  const localOwnedResultsRef = useRef<SqlStatementResult[]>([]);
+  const localVisibleReleaseRef = useRef<(() => void) | null>(null);
+  const localMountedRef = useRef(true);
+  const clearLocalResults = useCallback(() => {
+    localExecutionCleanupRef.current?.();
+    localExecutionCleanupRef.current = null;
+    localOwnedResultsRef.current.forEach((entry) => {
+      if (entry.cacheKey) resultCacheController.remove(entry.cacheKey);
+      if (entry.result) entry.result.rows = [];
+    });
+    localOwnedResultsRef.current = [];
+    localVisibleReleaseRef.current?.();
+    localVisibleReleaseRef.current = null;
+  }, []);
+  useEffect(() => {
+    localMountedRef.current = true;
+    return () => {
+      localMountedRef.current = false;
+      if (!tabId) {
+        currentExecutionIdRef.current = null;
+        clearLocalResults();
+      }
+    };
+  }, [tabId, connId, clearLocalResults]);
+
   const statementResults = tabId
     ? (tabResult?.statementResults ?? EMPTY_STATEMENT_RESULTS)
     : localStatementResults;
@@ -180,6 +214,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     : tabId
       ? (tabResult?.result ?? null)
       : localResult;
+  const resultEvicted = activeStatement?.retention === "evicted";
   const error = activeStatement
     ? activeStatement.error
     : tabId
@@ -187,6 +222,11 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
       : localError;
   // 独立 SQL 标签页：执行中状态存于 store，切换标签（组件卸载重挂载）后仍能显示执行中并可停止
   const executing = tabId ? tabExecuting : localExecuting;
+  const explainExecuting =
+    executing &&
+    (tabId ? tabExecutionId : currentExecutionIdRef.current)?.startsWith(
+      EXPLAIN_REQUEST_PREFIX
+    );
 
   const handleResultTabChange = useCallback(
     (key: string) => {
@@ -194,13 +234,21 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
       if (tabId && connId) {
         setSqlTabActiveResult(connId, tabId, index);
       } else {
+        const selected = localOwnedResultsRef.current[index];
+        const release =
+          selected?.cacheKey && selected.retention !== "evicted"
+            ? resultCacheController.pin(selected.cacheKey)
+            : null;
+        if (selected?.cacheKey) resultCacheController.touch(selected.cacheKey);
+        localVisibleReleaseRef.current?.();
+        localVisibleReleaseRef.current = release;
         setLocalActiveResultIndex(index);
       }
     },
     [tabId, connId, setSqlTabActiveResult]
   );
 
-  /** 标记执行状态：tab 模式写入 store（跨卸载保留），表内嵌模式用本地 state；同时维护取消令牌 */
+  /** 标记执行归属：tab 模式写入 store（跨卸载保留），表内嵌模式用本地 state。 */
   const markExecution = useCallback(
     (cid: string, execution: { executionId: string | null } | null) => {
       currentExecutionIdRef.current = execution?.executionId ?? null;
@@ -422,10 +470,12 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
         message.warning("请先输入或选中要解释的 SQL");
         return;
       }
-      markExecution(cid, { executionId: null });
+      const requestId = `${EXPLAIN_REQUEST_PREFIX}${cid}:${tabId ?? "local"}:${++executionSequence}`;
+      markExecution(cid, { executionId: requestId });
       if (tabId && cid) {
         setSqlTabResult(cid, tabId, null, null, []);
       } else {
+        clearLocalResults();
         setLocalError(null);
         setLocalResult(null);
         setLocalStatementResults([]);
@@ -433,12 +483,45 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
       }
       try {
         const res = await api.explainSql(cid, db, sql, analyze);
+        if (!isCurrentExecution(cid, requestId)) return;
         if (tabId && cid) {
           setSqlTabResult(cid, tabId, res, null, []);
-        } else {
+        } else if (
+          localMountedRef.current &&
+          execParamsRef.current.connId === cid
+        ) {
+          const statement: SqlStatementResult = {
+            sql: `${analyze ? "EXPLAIN ANALYZE" : "EXPLAIN"} ${sql}`,
+            result: res,
+            error: null,
+            retention: "resident",
+            retainedRowCount: res.rows?.length ?? 0,
+          };
+          const owned = [statement];
+          localOwnedResultsRef.current = owned;
+          if (res.rows?.length) {
+            const key = `${cid}:explain:${++executionSequence}`;
+            statement.cacheKey = key;
+            localVisibleReleaseRef.current = resultCacheController.pin(key);
+            resultCacheController.track({
+              key,
+              estimatedBytes: estimateResultBytes(res.columns ?? [], res.rows),
+              evict: () => {
+                res.rows = [];
+                statement.retention = "evicted";
+                if (
+                  localMountedRef.current &&
+                  localOwnedResultsRef.current === owned
+                )
+                  setLocalStatementResults([...owned]);
+              },
+            });
+          }
           setLocalResult(res);
+          setLocalStatementResults(owned);
         }
       } catch (e) {
+        if (!isCurrentExecution(cid, requestId)) return;
         const err = String(e);
         if (tabId && cid) {
           setSqlTabResult(cid, tabId, null, err, []);
@@ -446,10 +529,17 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
           setLocalError(err);
         }
       } finally {
-        markExecution(cid, null);
+        if (isCurrentExecution(cid, requestId)) markExecution(cid, null);
       }
     },
-    [getEditorSqlSnippet, tabId, setSqlTabResult, markExecution]
+    [
+      getEditorSqlSnippet,
+      tabId,
+      setSqlTabResult,
+      markExecution,
+      isCurrentExecution,
+      clearLocalResults,
+    ]
   );
 
   const doExecute = useCallback(
@@ -519,6 +609,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
       if (tabId && cid) {
         setSqlTabResult(cid, tabId, null, null, []);
       } else {
+        clearLocalResults();
         setLocalError(null);
         setLocalResult(null);
         setLocalStatementResults([]);
@@ -529,6 +620,30 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
       let lastResult: SqlExecuteResult | null = null;
       let execError: string | null = null;
       let executionId: string | null = null;
+      let releaseLatest: (() => void) | null = null;
+      let transferred = false;
+      const discardExecution = () => {
+        executionResults.forEach((entry) => {
+          if (entry.cacheKey) resultCacheController.remove(entry.cacheKey);
+          if (entry.result) entry.result.rows = [];
+          entry.retention = "evicted";
+        });
+        releaseLatest?.();
+        releaseLatest = null;
+      };
+      const unsubscribe = tabId
+        ? useDatabaseStore.subscribe((state) => {
+            const owner = state.connectionStates[cid];
+            if (
+              !owner?.openTabs.some(
+                (tab) => tab.type === "sql" && tab.id === tabId
+              ) ||
+              owner.sqlTabExecutions[tabId]?.executionId !== executionId
+            )
+              discardExecution();
+          })
+        : () => {};
+      if (!tabId) localExecutionCleanupRef.current = discardExecution;
 
       try {
         for (let i = 0; i < statements.length; i++) {
@@ -537,10 +652,40 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
           markExecution(cid, { executionId });
           const res = await api.executeSql(cid, db, stmt, executionId);
           successfulSql.push(stmt);
-          lastResult = res;
-          executionResults.push({ sql: stmt, result: res, error: null });
           // 快捷键或重挂载可能已开始另一轮执行，旧脚本不得继续或覆盖新结果。
           if (!isCurrentExecution(cid, executionId)) return;
+          lastResult = res;
+          const statement: SqlStatementResult = {
+            sql: stmt,
+            result: res,
+            error: null,
+          };
+          executionResults.push(statement);
+          if (res.rows?.length) {
+            const cacheKey = `${cid}:sql:${executionId}`;
+            statement.cacheKey = cacheKey;
+            statement.retention = "resident";
+            statement.retainedRowCount = res.rows.length;
+            const release = resultCacheController.pin(cacheKey);
+            resultCacheController.track({
+              key: cacheKey,
+              estimatedBytes: estimateResultBytes(res.columns ?? [], res.rows),
+              evict: () => {
+                // 同时清除兼容字段和执行局部变量所引用的结果行。
+                res.rows = [];
+                statement.retention = "evicted";
+                if (
+                  !tabId &&
+                  localMountedRef.current &&
+                  localOwnedResultsRef.current === executionResults
+                ) {
+                  setLocalStatementResults([...executionResults]);
+                }
+              },
+            });
+            releaseLatest?.();
+            releaseLatest = release;
+          }
         }
       } catch (e) {
         execError = String(e);
@@ -550,49 +695,67 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
           error: execError,
         });
       } finally {
-        // 成功的 DDL 可能带跨库目标；保守使当前连接失效，不执行额外探测 SQL。
-        if (
-          successfulSql.some((sql) => {
-            const first = tokenizeSql(sql, completionDialectRef.current).find(
-              (token) => token.kind !== "comment"
-            );
-            return (
-              !!first &&
-              !first.quoted &&
-              ["CREATE", "ALTER", "DROP", "RENAME"].includes(
-                first.text.toUpperCase()
-              )
-            );
-          })
-        ) {
-          invalidateSqlCompletion({ connId: cid, reason: "schema-change" });
-        }
-        if (isCurrentExecution(cid, executionId)) {
-          markExecution(cid, null);
-          if (tabId && cid) {
-            setSqlTabResult(
-              cid,
-              tabId,
-              lastResult,
-              execError,
-              successfulSql,
-              executionResults
-            );
-            if (execError) {
-              setSqlTabActiveResult(cid, tabId, executionResults.length - 1);
-            }
-          } else {
-            setLocalError(execError);
-            setLocalResult(lastResult);
-            setLocalStatementResults(executionResults);
-            setLocalActiveResultIndex(
-              execError ? executionResults.length - 1 : 0
-            );
+        unsubscribe();
+        if (localExecutionCleanupRef.current === discardExecution)
+          localExecutionCleanupRef.current = null;
+        try {
+          // 成功的 DDL 可能带跨库目标；保守使当前连接失效，不执行额外探测 SQL。
+          if (
+            successfulSql.some((sql) => {
+              const first = tokenizeSql(sql, completionDialectRef.current).find(
+                (token) => token.kind !== "comment"
+              );
+              return (
+                !!first &&
+                !first.quoted &&
+                ["CREATE", "ALTER", "DROP", "RENAME"].includes(
+                  first.text.toUpperCase()
+                )
+              );
+            })
+          ) {
+            invalidateSqlCompletion({ connId: cid, reason: "schema-change" });
           }
+          if (isCurrentExecution(cid, executionId)) {
+            markExecution(cid, null);
+            if (tabId && cid) {
+              setSqlTabResult(
+                cid,
+                tabId,
+                lastResult,
+                execError,
+                successfulSql,
+                executionResults
+              );
+              transferred = true;
+              if (execError) {
+                setSqlTabActiveResult(cid, tabId, executionResults.length - 1);
+              }
+            } else {
+              localOwnedResultsRef.current = executionResults;
+              const selected =
+                executionResults[execError ? executionResults.length - 1 : 0];
+              localVisibleReleaseRef.current =
+                selected?.cacheKey && selected.retention !== "evicted"
+                  ? resultCacheController.pin(selected.cacheKey)
+                  : null;
+              transferred = true;
+              setLocalError(execError);
+              setLocalResult(lastResult);
+              setLocalStatementResults(executionResults);
+              setLocalActiveResultIndex(
+                execError ? executionResults.length - 1 : 0
+              );
+            }
+          }
+        } finally {
+          if (!transferred) discardExecution();
+          releaseLatest?.();
         }
       }
     },
     [
+      clearLocalResults,
       tabId,
       setSqlTabResult,
       setSqlTabActiveResult,
@@ -609,7 +772,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
       ? (useDatabaseStore.getState().sqlTabExecutions[tabId]?.executionId ??
         null)
       : currentExecutionIdRef.current;
-    if (!cid || !execId) return;
+    if (!cid || !execId || execId.startsWith(EXPLAIN_REQUEST_PREFIX)) return;
     if (databaseType === "clickhouse") {
       message.warning("ClickHouse 暂不支持主动取消查询");
       return;
@@ -795,10 +958,13 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
   }, [databaseType]);
 
   const handleExportSqlExcel = useCallback(async () => {
-    if (!result?.columns?.length || !result.rows?.length) {
+    if (resultEvicted || !result?.columns?.length || !result.rows?.length) {
       message.warning("没有可导出的查询结果");
       return;
     }
+    const release = activeStatement?.cacheKey
+      ? resultCacheController.pin(activeStatement.cacheKey)
+      : () => {};
     try {
       assertCsvRowWithinLimit(result.rows.length);
       const b64 = await buildQueryResultWorkbookBase64(
@@ -810,8 +976,10 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
       if (ok) message.success("已导出结果为 Excel");
     } catch (e) {
       message.error(String(e));
+    } finally {
+      release();
     }
-  }, [result]);
+  }, [result, resultEvicted, activeStatement?.cacheKey]);
 
   // 只挂载当前标签的表格，分页与导出始终使用当前语句的结果。
   const resultContent = (
@@ -846,6 +1014,14 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
         />
       )}
 
+      {resultEvicted && (
+        <Alert
+          type="info"
+          showIcon
+          message="结果已释放，请重新执行以查看数据"
+          style={{ marginBottom: 8 }}
+        />
+      )}
       {result && (
         <>
           {/* 结果头 */}
@@ -877,6 +1053,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
                 type="link"
                 icon={<FileExcelOutlined />}
                 style={{ marginLeft: "auto", paddingInline: 4 }}
+                disabled={resultEvicted}
                 onClick={() => void handleExportSqlExcel()}
               >
                 导出 Excel
@@ -885,7 +1062,7 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
           </div>
 
           {/* SELECT / EXPLAIN 结果表格 */}
-          {hasSelectResult && (
+          {hasSelectResult && !resultEvicted && (
             <Table
               columns={resultColumns}
               dataSource={resultData}
@@ -908,7 +1085,8 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
           )}
 
           {/* SELECT 返回 0 行 */}
-          {result.result_type === "select" &&
+          {!resultEvicted &&
+            result.result_type === "select" &&
             (!result.columns || result.columns.length === 0) && (
               <Empty
                 description="查询成功，返回 0 行数据"
@@ -958,17 +1136,20 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
           {executing && (
             <Tooltip
               title={
-                databaseType === "sqlite"
-                  ? "停止当前查询（SQLite 暂不支持主动取消）"
-                  : databaseType === "clickhouse"
-                    ? "停止当前查询（ClickHouse 暂不支持主动取消）"
-                    : "停止当前查询（KILL QUERY）"
+                explainExecuting
+                  ? "EXPLAIN 暂不支持取消，请等待执行结束"
+                  : databaseType === "sqlite"
+                    ? "停止当前查询（SQLite 暂不支持主动取消）"
+                    : databaseType === "clickhouse"
+                      ? "停止当前查询（ClickHouse 暂不支持主动取消）"
+                      : "停止当前查询（KILL QUERY）"
               }
             >
               <Button
                 danger
                 size="small"
                 icon={<StopOutlined />}
+                disabled={!!explainExecuting}
                 onClick={() => void handleStop()}
               >
                 停止

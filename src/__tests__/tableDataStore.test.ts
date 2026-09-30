@@ -107,7 +107,9 @@ describe("tableDataStore", () => {
         },
       });
 
-      useTableDataStore.getState().removeTableFromCache("conn-1", "mydb", "users");
+      useTableDataStore
+        .getState()
+        .removeTableFromCache("conn-1", "mydb", "users");
 
       expect(useTableDataStore.getState().scrollPositionCache).toEqual({
         "conn-1|mydb|posts": { top: 640, left: 240 },
@@ -117,25 +119,30 @@ describe("tableDataStore", () => {
     it.each([
       ["当前连接", "conn-1|db1|users", null],
       ["后台连接", "conn-2|db1|users", "conn-2|db1|users"],
-    ])("断开%s时清理其全部滚动位置并保留其他连接", (_label, activeKey, expectedActiveKey) => {
-      useTableDataStore.setState({
-        activeTableKey: activeKey,
-        scrollPositionCache: {
-          "conn-1|db1|users": { top: 320, left: 120 },
-          "conn-1|db2|posts": { top: 640, left: 240 },
+    ])(
+      "断开%s时清理其全部滚动位置并保留其他连接",
+      (_label, activeKey, expectedActiveKey) => {
+        useTableDataStore.setState({
+          activeTableKey: activeKey,
+          scrollPositionCache: {
+            "conn-1|db1|users": { top: 320, left: 120 },
+            "conn-1|db2|posts": { top: 640, left: 240 },
+            "conn-2|db1|users": { top: 960, left: 360 },
+            "conn-10|db1|users": { top: 1280, left: 480 },
+          },
+        });
+
+        useTableDataStore.getState().removeConnectionCache("conn-1");
+
+        expect(useTableDataStore.getState().scrollPositionCache).toEqual({
           "conn-2|db1|users": { top: 960, left: 360 },
           "conn-10|db1|users": { top: 1280, left: 480 },
-        },
-      });
-
-      useTableDataStore.getState().removeConnectionCache("conn-1");
-
-      expect(useTableDataStore.getState().scrollPositionCache).toEqual({
-        "conn-2|db1|users": { top: 960, left: 360 },
-        "conn-10|db1|users": { top: 1280, left: 480 },
-      });
-      expect(useTableDataStore.getState().activeTableKey).toBe(expectedActiveKey);
-    });
+        });
+        expect(useTableDataStore.getState().activeTableKey).toBe(
+          expectedActiveKey
+        );
+      }
+    );
 
     it("重置时清空所有滚动位置", () => {
       useTableDataStore.setState({
@@ -233,7 +240,10 @@ describe("tableDataStore", () => {
 
   describe("loadData", () => {
     it("应该加载表数据（无 selectColumns 时使用 SELECT *）", async () => {
-      mockApi.queryTableData.mockResolvedValue({ ...mockQueryResult, total: 0 });
+      mockApi.queryTableData.mockResolvedValue({
+        ...mockQueryResult,
+        total: 0,
+      });
       mockApi.queryTableCount.mockResolvedValue(100);
 
       useTableDataStore.getState().loadData("conn-1", "mydb", "users");
@@ -287,7 +297,9 @@ describe("tableDataStore", () => {
       });
       mockApi.queryTableCount.mockResolvedValue(50);
 
-      useTableDataStore.getState().loadData("conn-1", "mydb", "users", ["name", "email"]);
+      useTableDataStore
+        .getState()
+        .loadData("conn-1", "mydb", "users", ["name", "email"]);
 
       await vi.waitFor(
         () => {
@@ -343,7 +355,10 @@ describe("tableDataStore", () => {
     });
 
     it("换页时不应重复请求 count（使用 countCache）", async () => {
-      mockApi.queryTableData.mockResolvedValue({ ...mockQueryResult, total: 0 });
+      mockApi.queryTableData.mockResolvedValue({
+        ...mockQueryResult,
+        total: 0,
+      });
       mockApi.queryTableCount.mockResolvedValue(100);
 
       useTableDataStore.getState().loadData("conn-1", "mydb", "users");
@@ -355,7 +370,10 @@ describe("tableDataStore", () => {
       );
 
       vi.clearAllMocks();
-      mockApi.queryTableData.mockResolvedValue({ ...mockQueryResult, total: 0 });
+      mockApi.queryTableData.mockResolvedValue({
+        ...mockQueryResult,
+        total: 0,
+      });
 
       useTableDataStore.setState({ page: 2 });
       useTableDataStore.getState().loadData("conn-1", "mydb", "users");
@@ -373,7 +391,10 @@ describe("tableDataStore", () => {
     });
 
     it("refreshPagination 应强制重新请求 count 并更新缓存", async () => {
-      mockApi.queryTableData.mockResolvedValue({ ...mockQueryResult, total: 0 });
+      mockApi.queryTableData.mockResolvedValue({
+        ...mockQueryResult,
+        total: 0,
+      });
       mockApi.queryTableCount.mockResolvedValue(100);
 
       await useTableDataStore.getState().loadData("conn-1", "mydb", "users");
@@ -387,7 +408,9 @@ describe("tableDataStore", () => {
       vi.clearAllMocks();
       mockApi.queryTableCount.mockResolvedValue(42);
 
-      await useTableDataStore.getState().refreshPagination("conn-1", "mydb", "users");
+      await useTableDataStore
+        .getState()
+        .refreshPagination("conn-1", "mydb", "users");
 
       expect(mockApi.queryTableData).not.toHaveBeenCalled();
       expect(mockApi.queryTableCount).toHaveBeenCalledWith(
@@ -406,7 +429,10 @@ describe("tableDataStore", () => {
     });
 
     it("refreshPagination 应清除 totalCountStale", async () => {
-      mockApi.queryTableData.mockResolvedValue({ ...mockQueryResult, total: 0 });
+      mockApi.queryTableData.mockResolvedValue({
+        ...mockQueryResult,
+        total: 0,
+      });
       mockApi.queryTableCount.mockResolvedValue(100);
       useTableDataStore.getState().loadData("conn-1", "mydb", "users");
       await vi.waitFor(
@@ -417,13 +443,18 @@ describe("tableDataStore", () => {
       useTableDataStore.setState({ totalCountStale: true });
       mockApi.queryTableCount.mockResolvedValue(100);
 
-      await useTableDataStore.getState().refreshPagination("conn-1", "mydb", "users");
+      await useTableDataStore
+        .getState()
+        .refreshPagination("conn-1", "mydb", "users");
 
       expect(useTableDataStore.getState().totalCountStale).toBe(false);
     });
 
     it("refreshPagination 在总行数变少时应回退到最后一页", async () => {
-      mockApi.queryTableData.mockResolvedValue({ ...mockQueryResult, total: 0 });
+      mockApi.queryTableData.mockResolvedValue({
+        ...mockQueryResult,
+        total: 0,
+      });
       mockApi.queryTableCount.mockResolvedValue(100);
 
       await useTableDataStore.getState().loadData("conn-1", "mydb", "users");
@@ -437,14 +468,19 @@ describe("tableDataStore", () => {
       useTableDataStore.setState({ page: 5, pageSize: 20 });
       mockApi.queryTableCount.mockResolvedValue(30);
 
-      await useTableDataStore.getState().refreshPagination("conn-1", "mydb", "users");
+      await useTableDataStore
+        .getState()
+        .refreshPagination("conn-1", "mydb", "users");
 
       expect(useTableDataStore.getState().page).toBe(2);
       expect(useTableDataStore.getState().total).toBe(30);
     });
 
     it("应该传递排序和筛选参数", async () => {
-      mockApi.queryTableData.mockResolvedValue({ ...mockQueryResult, total: 0 });
+      mockApi.queryTableData.mockResolvedValue({
+        ...mockQueryResult,
+        total: 0,
+      });
       mockApi.queryTableCount.mockResolvedValue(100);
 
       useTableDataStore.setState({
@@ -487,10 +523,14 @@ describe("tableDataStore", () => {
       const firstResolve = vi.fn();
       const secondResolve = vi.fn();
       const firstPromise = new Promise<typeof mockQueryResult>((resolve) => {
-        firstResolve.mockImplementation((value: typeof mockQueryResult) => resolve(value));
+        firstResolve.mockImplementation((value: typeof mockQueryResult) =>
+          resolve(value)
+        );
       });
       const secondPromise = new Promise<typeof mockQueryResult>((resolve) => {
-        secondResolve.mockImplementation((value: typeof mockQueryResult) => resolve(value));
+        secondResolve.mockImplementation((value: typeof mockQueryResult) =>
+          resolve(value)
+        );
       });
       let callCount = 0;
       mockApi.queryTableData.mockImplementation(() => {
@@ -688,9 +728,7 @@ describe("tableDataStore", () => {
     });
 
     it("setWhereClause 传入 filterRows 时应同时更新 filterRows", () => {
-      const rows = [
-        { column: "status", operator: "=" as const, value: "1" },
-      ];
+      const rows = [{ column: "status", operator: "=" as const, value: "1" }];
       useTableDataStore.getState().setWhereClause("status = 1", rows);
 
       const state = useTableDataStore.getState();
@@ -716,13 +754,15 @@ describe("tableDataStore", () => {
       mockApi.updateRow.mockResolvedValue(1);
       mockApi.queryTableData.mockResolvedValue(mockQueryResult);
 
-      await useTableDataStore.getState().updateCell(
-        "conn-1",
-        "mydb",
-        "users",
-        { id: 1 },
-        { name: "Alice Updated" }
-      );
+      await useTableDataStore
+        .getState()
+        .updateCell(
+          "conn-1",
+          "mydb",
+          "users",
+          { id: 1 },
+          { name: "Alice Updated" }
+        );
 
       expect(mockApi.updateRow).toHaveBeenCalledWith(
         "conn-1",
@@ -737,7 +777,10 @@ describe("tableDataStore", () => {
 
     it("更新成功后应跳过 COUNT 并标记总数可能已过期", async () => {
       mockApi.updateRow.mockResolvedValue(1);
-      mockApi.queryTableData.mockResolvedValue({ ...mockQueryResult, total: 0 });
+      mockApi.queryTableData.mockResolvedValue({
+        ...mockQueryResult,
+        total: 0,
+      });
       mockApi.queryTableCount.mockResolvedValue(100);
       useTableDataStore.getState().loadData("conn-1", "mydb", "users");
       await vi.waitFor(
@@ -752,16 +795,20 @@ describe("tableDataStore", () => {
         execution_time_ms: 8,
       });
 
-      await useTableDataStore.getState().updateCell(
-        "conn-1",
-        "mydb",
-        "users",
-        { id: 1 },
-        { name: "Alice Updated" }
-      );
+      await useTableDataStore
+        .getState()
+        .updateCell(
+          "conn-1",
+          "mydb",
+          "users",
+          { id: 1 },
+          { name: "Alice Updated" }
+        );
 
       const lastCall =
-        mockApi.queryTableData.mock.calls[mockApi.queryTableData.mock.calls.length - 1]!;
+        mockApi.queryTableData.mock.calls[
+          mockApi.queryTableData.mock.calls.length - 1
+        ]!;
       expect(lastCall[8]).toBe(true);
       const state = useTableDataStore.getState();
       expect(state.totalCountStale).toBe(true);
@@ -781,29 +828,30 @@ describe("tableDataStore", () => {
       // 先用 selectColumns 加载一次，设置 lastSelectColumns
       useTableDataStore.setState({ lastSelectColumns: ["name"] });
 
-      await useTableDataStore.getState().updateCell(
-        "conn-1",
-        "mydb",
-        "users",
-        { id: 1 },
-        { name: "Alice Updated" }
-      );
+      await useTableDataStore
+        .getState()
+        .updateCell(
+          "conn-1",
+          "mydb",
+          "users",
+          { id: 1 },
+          { name: "Alice Updated" }
+        );
 
       // 重新加载时应传递 lastSelectColumns
-      const lastCall = mockApi.queryTableData.mock.calls[mockApi.queryTableData.mock.calls.length - 1];
+      const lastCall =
+        mockApi.queryTableData.mock.calls[
+          mockApi.queryTableData.mock.calls.length - 1
+        ];
       expect(lastCall[7]).toEqual(["name"]);
     });
 
     it("更新失败时应该设置错误", async () => {
       mockApi.updateRow.mockRejectedValue("更新失败");
 
-      await useTableDataStore.getState().updateCell(
-        "conn-1",
-        "mydb",
-        "users",
-        { id: 1 },
-        { name: "test" }
-      );
+      await useTableDataStore
+        .getState()
+        .updateCell("conn-1", "mydb", "users", { id: 1 }, { name: "test" });
 
       expect(useTableDataStore.getState().dataError).toBe("更新失败");
     });
@@ -826,7 +874,10 @@ describe("tableDataStore", () => {
         execution_time_ms: 5,
       };
 
-      mockApi.queryTableData.mockResolvedValue({ ...mockQueryResult, total: 0 });
+      mockApi.queryTableData.mockResolvedValue({
+        ...mockQueryResult,
+        total: 0,
+      });
       mockApi.queryTableCount.mockResolvedValue(100);
       useTableDataStore.getState().loadData("conn-1", "mydb", "users");
       await vi.waitFor(
@@ -834,13 +885,15 @@ describe("tableDataStore", () => {
         { timeout: 2000 }
       );
 
-      const updatePromise = useTableDataStore.getState().updateCell(
-        "conn-1",
-        "mydb",
-        "users",
-        { id: 1 },
-        { name: "Alice Updated" }
-      );
+      const updatePromise = useTableDataStore
+        .getState()
+        .updateCell(
+          "conn-1",
+          "mydb",
+          "users",
+          { id: 1 },
+          { name: "Alice Updated" }
+        );
 
       useTableDataStore.getState().switchToTable("conn-1", "mydb", "posts");
       mockApi.queryTableData.mockResolvedValue({
@@ -869,7 +922,9 @@ describe("tableDataStore", () => {
       expect(usersSnap).toBeDefined();
       expect(usersSnap!.rows[0][1]).toBe("Alice Updated");
 
-      const reloadCalls = mockApi.queryTableData.mock.calls.filter((c) => c[2] === "users");
+      const reloadCalls = mockApi.queryTableData.mock.calls.filter(
+        (c) => c[2] === "users"
+      );
       expect(reloadCalls.length).toBeGreaterThan(0);
       const usersReload = reloadCalls[reloadCalls.length - 1]!;
       expect(usersReload[3]).toBe(1);
@@ -907,7 +962,9 @@ describe("tableDataStore", () => {
     });
 
     it("批量更新失败（整批回滚）时应设置错误并向上抛出", async () => {
-      mockApi.batchUpdateRows.mockRejectedValue("批量更新失败，已回滚（未提交任何修改）: x");
+      mockApi.batchUpdateRows.mockRejectedValue(
+        "批量更新失败，已回滚（未提交任何修改）: x"
+      );
 
       await expect(
         useTableDataStore
@@ -926,12 +983,10 @@ describe("tableDataStore", () => {
       mockApi.insertRow.mockResolvedValue(1);
       mockApi.queryTableData.mockResolvedValue(mockQueryResult);
 
-      await useTableDataStore.getState().insertRow(
-        "conn-1",
-        "mydb",
-        "users",
-        { name: "Charlie", email: "charlie@example.com" }
-      );
+      await useTableDataStore.getState().insertRow("conn-1", "mydb", "users", {
+        name: "Charlie",
+        email: "charlie@example.com",
+      });
 
       expect(mockApi.insertRow).toHaveBeenCalledWith(
         "conn-1",
@@ -941,7 +996,9 @@ describe("tableDataStore", () => {
       );
       expect(mockApi.queryTableData).toHaveBeenCalled();
       expect(
-        mockApi.queryTableData.mock.calls[mockApi.queryTableData.mock.calls.length - 1]![8]
+        mockApi.queryTableData.mock.calls[
+          mockApi.queryTableData.mock.calls.length - 1
+        ]![8]
       ).toBe(true);
       expect(useTableDataStore.getState().totalCountStale).toBe(true);
     });
@@ -952,12 +1009,9 @@ describe("tableDataStore", () => {
       mockApi.deleteRows.mockResolvedValue(2);
       mockApi.queryTableData.mockResolvedValue(mockQueryResult);
 
-      await useTableDataStore.getState().deleteRows(
-        "conn-1",
-        "mydb",
-        "users",
-        [{ id: 1 }, { id: 2 }]
-      );
+      await useTableDataStore
+        .getState()
+        .deleteRows("conn-1", "mydb", "users", [{ id: 1 }, { id: 2 }]);
 
       expect(mockApi.deleteRows).toHaveBeenCalledWith(
         "conn-1",
@@ -967,7 +1021,9 @@ describe("tableDataStore", () => {
       );
       expect(mockApi.queryTableData).toHaveBeenCalled();
       expect(
-        mockApi.queryTableData.mock.calls[mockApi.queryTableData.mock.calls.length - 1]![8]
+        mockApi.queryTableData.mock.calls[
+          mockApi.queryTableData.mock.calls.length - 1
+        ]![8]
       ).toBe(true);
       expect(useTableDataStore.getState().totalCountStale).toBe(true);
     });
@@ -975,7 +1031,9 @@ describe("tableDataStore", () => {
 
   describe("多表切换缓存", () => {
     it("switchToTable 无缓存时应返回 false 并重置为初始状态", () => {
-      const fromCache = useTableDataStore.getState().switchToTable("conn-1", "mydb", "users");
+      const fromCache = useTableDataStore
+        .getState()
+        .switchToTable("conn-1", "mydb", "users");
       expect(fromCache).toBe(false);
       const state = useTableDataStore.getState();
       expect(state.columns).toEqual([]);
@@ -984,7 +1042,10 @@ describe("tableDataStore", () => {
     });
 
     it("switchToTable 有缓存时应恢复数据并返回 true", async () => {
-      mockApi.queryTableData.mockResolvedValue({ ...mockQueryResult, total: 0 });
+      mockApi.queryTableData.mockResolvedValue({
+        ...mockQueryResult,
+        total: 0,
+      });
       mockApi.queryTableCount.mockResolvedValue(100);
       useTableDataStore.getState().loadData("conn-1", "mydb", "users");
       await vi.waitFor(
@@ -1004,7 +1065,9 @@ describe("tableDataStore", () => {
       useTableDataStore.getState().loadData("conn-1", "mydb", "posts");
 
       vi.clearAllMocks();
-      const fromCache = useTableDataStore.getState().switchToTable("conn-1", "mydb", "users");
+      const fromCache = useTableDataStore
+        .getState()
+        .switchToTable("conn-1", "mydb", "users");
       expect(fromCache).toBe(true);
       const state = useTableDataStore.getState();
       expect(state.columns).toEqual(["id", "name", "email"]);
@@ -1014,7 +1077,10 @@ describe("tableDataStore", () => {
     });
 
     it("switchToTable 有缓存时应恢复 whereClause 与 filterRows", async () => {
-      mockApi.queryTableData.mockResolvedValue({ ...mockQueryResult, total: 0 });
+      mockApi.queryTableData.mockResolvedValue({
+        ...mockQueryResult,
+        total: 0,
+      });
       mockApi.queryTableCount.mockResolvedValue(100);
       useTableDataStore.getState().loadData("conn-1", "mydb", "users");
       await vi.waitFor(
@@ -1043,7 +1109,9 @@ describe("tableDataStore", () => {
       );
 
       vi.clearAllMocks();
-      const fromCache = useTableDataStore.getState().switchToTable("conn-1", "mydb", "users");
+      const fromCache = useTableDataStore
+        .getState()
+        .switchToTable("conn-1", "mydb", "users");
       expect(fromCache).toBe(true);
       const state = useTableDataStore.getState();
       expect(state.whereClause).toBe("status = 1");
@@ -1051,7 +1119,10 @@ describe("tableDataStore", () => {
     });
 
     it("switchToTable 从缓存恢复后 setWhereClause 应正常更新 _filterTrigger", async () => {
-      mockApi.queryTableData.mockResolvedValue({ ...mockQueryResult, total: 0 });
+      mockApi.queryTableData.mockResolvedValue({
+        ...mockQueryResult,
+        total: 0,
+      });
       mockApi.queryTableCount.mockResolvedValue(100);
       useTableDataStore.getState().loadData("conn-1", "mydb", "users");
       await vi.waitFor(
@@ -1073,7 +1144,9 @@ describe("tableDataStore", () => {
         { timeout: 2000 }
       );
 
-      const fromCache = useTableDataStore.getState().switchToTable("conn-1", "mydb", "users");
+      const fromCache = useTableDataStore
+        .getState()
+        .switchToTable("conn-1", "mydb", "users");
       expect(fromCache).toBe(true);
 
       const triggerBefore = useTableDataStore.getState()._filterTrigger;
@@ -1086,7 +1159,10 @@ describe("tableDataStore", () => {
     });
 
     it("switchToTable 恢复相同默认状态后 setWhereClause 仍应递增 _filterTrigger", async () => {
-      mockApi.queryTableData.mockResolvedValue({ ...mockQueryResult, total: 0 });
+      mockApi.queryTableData.mockResolvedValue({
+        ...mockQueryResult,
+        total: 0,
+      });
       mockApi.queryTableCount.mockResolvedValue(100);
       useTableDataStore.getState().loadData("conn-1", "mydb", "users");
       await vi.waitFor(
@@ -1109,7 +1185,9 @@ describe("tableDataStore", () => {
       );
 
       // 两张表都是默认状态 (page=1, whereClause="")，switchToTable 不会改变这些值
-      const fromCache = useTableDataStore.getState().switchToTable("conn-1", "mydb", "users");
+      const fromCache = useTableDataStore
+        .getState()
+        .switchToTable("conn-1", "mydb", "users");
       expect(fromCache).toBe(true);
       expect(useTableDataStore.getState().whereClause).toBe("");
       expect(useTableDataStore.getState().page).toBe(1);
@@ -1125,7 +1203,10 @@ describe("tableDataStore", () => {
     });
 
     it("removeTableFromCache 应移除指定表的缓存", async () => {
-      mockApi.queryTableData.mockResolvedValue({ ...mockQueryResult, total: 0 });
+      mockApi.queryTableData.mockResolvedValue({
+        ...mockQueryResult,
+        total: 0,
+      });
       mockApi.queryTableCount.mockResolvedValue(100);
       useTableDataStore.getState().loadData("conn-1", "mydb", "users");
       await vi.waitFor(
@@ -1133,7 +1214,9 @@ describe("tableDataStore", () => {
         { timeout: 2000 }
       );
 
-      useTableDataStore.getState().removeTableFromCache("conn-1", "mydb", "users");
+      useTableDataStore
+        .getState()
+        .removeTableFromCache("conn-1", "mydb", "users");
       const state = useTableDataStore.getState();
       expect(state.tableDataCache["conn-1|mydb|users"]).toBeUndefined();
       expect(state.activeTableKey).toBeNull();
@@ -1159,7 +1242,9 @@ describe("tableDataStore", () => {
       ).toBeDefined();
 
       const callN = mockApi.queryTableData.mock.calls.length;
-      useTableDataStore.getState().afterTableDataCleared("conn-1", "mydb", "posts");
+      useTableDataStore
+        .getState()
+        .afterTableDataCleared("conn-1", "mydb", "posts");
 
       expect(mockApi.queryTableData.mock.calls.length).toBe(callN);
       expect(
@@ -1185,7 +1270,9 @@ describe("tableDataStore", () => {
       ).toBeDefined();
 
       useTableDataStore.setState({ activeTableKey: "conn-1|mydb|other" });
-      useTableDataStore.getState().afterTableDataCleared("conn-1", "mydb", "users");
+      useTableDataStore
+        .getState()
+        .afterTableDataCleared("conn-1", "mydb", "users");
 
       expect(
         useTableDataStore.getState().tableDataCache["conn-1|mydb|users"]
@@ -1209,7 +1296,9 @@ describe("tableDataStore", () => {
       });
       mockApi.queryTableCount.mockResolvedValue(0);
 
-      useTableDataStore.getState().afterTableDataCleared("conn-1", "mydb", "users");
+      useTableDataStore
+        .getState()
+        .afterTableDataCleared("conn-1", "mydb", "users");
 
       await vi.waitFor(() => {
         expect(mockApi.queryTableData.mock.calls.length).toBeGreaterThan(prevN);
@@ -1290,4 +1379,198 @@ describe("tableDataStore", () => {
       expect(state.activeTableKey).toBe("conn-2|db2|posts");
     });
   });
+});
+
+describe("表页预算生命周期", () => {
+  beforeEach(() => {
+    useTableDataStore.getState().reset();
+    vi.clearAllMocks();
+  });
+  it("回收表页后保留查询与滚动意图，失效选择和游标，恢复要求重载", async () => {
+    const { resultCacheController: cache, RESULT_CACHE_BUDGET_BYTES: budget } =
+      await import("../utils/resultCacheBudget");
+    mockApi.queryTableData.mockResolvedValue({
+      ...mockQueryResult,
+      rows: [[1, "Alice", "a"]],
+    });
+    mockApi.queryTableCount.mockResolvedValue(100);
+    const store = useTableDataStore.getState();
+    store.switchToTable("c", "d", "t");
+    store.setPageSize(25);
+    store.setWhereClause("id > 0");
+    store.setSort("id", "ASC");
+    await store.loadData("c", "d", "t");
+    await Promise.resolve();
+    store.setRowSelection("c", "d", "t", ["0"]);
+    store.setScrollPosition("c", "d", "t", { top: 100, left: 0 });
+    const release = cache.pin("test-pressure");
+    cache.track({
+      key: "test-pressure",
+      estimatedBytes: budget,
+      evict: () => {},
+    });
+    try {
+      const s = useTableDataStore.getState();
+      expect(s.tableDataCache["c|d|t"].retention).toBe("evicted");
+      expect(s.rows).toEqual([]);
+      expect(s.rowSelectionCache["c|d|t"]).toBeUndefined();
+      expect(store.switchToTable("c", "d", "t")).toBe(false);
+      expect(useTableDataStore.getState()).toMatchObject({
+        pageSize: 25,
+        whereClause: "id > 0",
+        sortFields: [{ column: "id", order: "ASC" }],
+        pagination: null,
+      });
+      expect(useTableDataStore.getState().scrollPositionCache["c|d|t"]).toEqual(
+        { top: 100, left: 0 }
+      );
+    } finally {
+      cache.remove("test-pressure");
+      release();
+      store.reset();
+    }
+  });
+  it("未提交修改保护后台页，清空修改后恢复回收", async () => {
+    const { resultCacheController: cache, RESULT_CACHE_BUDGET_BYTES: budget } =
+      await import("../utils/resultCacheBudget");
+    mockApi.queryTableData.mockResolvedValue({
+      ...mockQueryResult,
+      rows: [[1, "Alice", "a"]],
+    });
+    mockApi.queryTableCount.mockResolvedValue(100);
+    const store = useTableDataStore.getState();
+    await store.loadData("c", "d", "t");
+    await Promise.resolve();
+    store.setPendingChange("c", "d", "t", "0:name", {
+      rowKey: 0,
+      colName: "name",
+      oldValue: "Alice",
+      newValue: "Bob",
+      primaryKeys: { id: 1 },
+    });
+    store.switchToTable("c", "d", "other");
+    const release = cache.pin("test-pressure");
+    cache.track({
+      key: "test-pressure",
+      estimatedBytes: budget,
+      evict: () => {},
+    });
+    try {
+      expect(
+        useTableDataStore.getState().tableDataCache["c|d|t"].rows
+      ).toHaveLength(1);
+      store.clearPendingChanges("c", "d", "t");
+      expect(
+        useTableDataStore.getState().tableDataCache["c|d|t"].retention
+      ).toBe("evicted");
+    } finally {
+      cache.remove("test-pressure");
+      release();
+      store.reset();
+    }
+  });
+});
+
+it("写请求完成前关闭表，不重新查询或复活已关闭表快照", async () => {
+  useTableDataStore.getState().reset();
+  vi.clearAllMocks();
+  let completeWrite!: () => void;
+  mockApi.updateRow.mockImplementation(
+    () =>
+      new Promise<number>((resolve) => {
+        completeWrite = () => resolve(1);
+      })
+  );
+  mockApi.queryTableData.mockResolvedValue({
+    ...mockQueryResult,
+    rows: [[1, "Alice", "a"]],
+  });
+  const store = useTableDataStore.getState();
+  store.switchToTable("c", "d", "t");
+  const updating = store.updateCell("c", "d", "t", { id: 1 }, { name: "B" });
+  store.removeTableFromCache("c", "d", "t");
+  completeWrite();
+  await updating;
+  expect(mockApi.queryTableData).not.toHaveBeenCalled();
+  expect(useTableDataStore.getState().tableDataCache["c|d|t"]).toBeUndefined();
+});
+
+it("隐藏页的迟到总数在关闭后不会重新建立缓存", async () => {
+  useTableDataStore.getState().reset();
+  vi.clearAllMocks();
+  let completeCount!: (total: number) => void;
+  mockApi.queryTableCount.mockImplementation(
+    () =>
+      new Promise<number>((resolve) => {
+        completeCount = resolve;
+      })
+  );
+  const store = useTableDataStore.getState();
+  store.switchToTable("c", "d", "t");
+  const refreshing = store.refreshPagination("c", "d", "t");
+  store.switchToTable("other", "d", "t");
+  store.removeTableFromCache("c", "d", "t");
+  completeCount(999);
+  await refreshing;
+  expect(useTableDataStore.getState().countCache["c|d|t|"]).toBeUndefined();
+});
+
+it("可见表的新页在登记前取得保护，同页快照和当前视图只计费一次", async () => {
+  const { resultCacheController: cache, RESULT_CACHE_BUDGET_BYTES: budget } =
+    await import("../utils/resultCacheBudget");
+  useTableDataStore.getState().reset();
+  vi.clearAllMocks();
+  mockApi.queryTableData.mockResolvedValue({
+    columns: ["id"],
+    rows: [[1]],
+    total: 1,
+    execution_time_ms: 1,
+  });
+  mockApi.queryTableCount.mockResolvedValue(1);
+  const store = useTableDataStore.getState();
+  store.switchToTable("v", "d", "t");
+  store.setVisibleTable("v|d|t");
+  const release = cache.pin("visible-pressure");
+  cache.track({
+    key: "visible-pressure",
+    estimatedBytes: budget,
+    evict: () => {},
+  });
+  try {
+    await store.loadData("v", "d", "t");
+    await Promise.resolve();
+    expect(useTableDataStore.getState().rows).toEqual([[1]]);
+    expect(cache.enforce()).toEqual({
+      retainedBytes: budget + 11,
+      overBudget: true,
+    });
+    expect(store.switchToTable("v", "d", "t")).toBe(true);
+    expect(cache.enforce().retainedBytes).toBe(budget + 11);
+    store.setVisibleTable(null);
+    expect(useTableDataStore.getState().retention).toBe("evicted");
+  } finally {
+    cache.remove("visible-pressure");
+    release();
+    store.reset();
+  }
+});
+
+it("旧表写请求失败不得污染关闭后重新打开的同名表", async () => {
+  useTableDataStore.getState().reset();
+  vi.clearAllMocks();
+  let failWrite!: (error: Error) => void;
+  mockApi.updateRow.mockImplementation(
+    () =>
+      new Promise<number>((_resolve, reject) => {
+        failWrite = reject;
+      })
+  );
+  const store = useTableDataStore.getState();
+  store.switchToTable("c", "d", "t");
+  const updating = store.updateCell("c", "d", "t", { id: 1 }, { name: "B" });
+  store.removeTableFromCache("c", "d", "t");
+  store.switchToTable("c", "d", "t");
+  failWrite(new Error("旧写请求失败"));
+  await updating;
+  expect(useTableDataStore.getState().dataError).toBeNull();
 });
