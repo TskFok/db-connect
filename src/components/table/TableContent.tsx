@@ -20,7 +20,7 @@ import { useDatabaseStore } from "../../stores/databaseStore";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { TableStructure } from "./TableStructure";
 import { TableData } from "./TableData";
-import { SqlEditor } from "../sql/SqlEditorLazy";
+import { TableSqlExamples } from "./TableSqlExamples";
 import { getDatabaseCapabilities } from "../../utils/databaseCapabilities";
 import { normalizeDatabaseType } from "../../utils/connectionConfig";
 import { requestTableListSearchFocus } from "../../utils/tableListSearchFocus";
@@ -218,7 +218,7 @@ export function TableContent() {
             SQL
           </span>
         ),
-        children: <SqlEditor />,
+        children: <TableSqlExamples key={`sql:${tableScopeKey}`} />,
       });
     }
     // selectedDatabase / selectedTable 必须参与依赖：否则顶部多表标签切换时仍复用旧 items，
