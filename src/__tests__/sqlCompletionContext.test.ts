@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { analyzeSqlCompletion } from "../utils/sqlCompletionContext";
+import {
+  analyzeSqlCompletion,
+  analyzeSqlCompletionTokens,
+} from "../utils/sqlCompletionContext";
 import type { SqlDialect } from "../utils/sqlCompletion";
+import { findSqlStatement, tokenizeSql } from "../utils/sqlCompletionTokenizer";
 
 function context(marked: string, dialect: SqlDialect = "mysql") {
   const offset = marked.indexOf("|");
@@ -16,6 +20,25 @@ function relations(marked: string, dialect: SqlDialect = "mysql") {
 }
 
 describe("SQL completion context", () => {
+  it.each([
+    "WITH c AS (SELECT id FROM users) SELECT c.| FROM c",
+    "SELECT * FROM users WHERE EXISTS (SELECT | FROM orders)",
+    "SELECT id FROM users UNION SELECT | FROM orders",
+    "UPDATE users SET name = | WHERE id = 1",
+    "INSERT INTO users(id, |) VALUES (1, 2)",
+    "SELECT * FROM users; SELECT u.| FROM users u",
+    "SELECT * FROM users WHERE EXISTS (SELECT | FROM orders",
+    "SELECT '😀' AS face, u.| FROM users u",
+  ])("token 入口保持上下文、语句和编辑区间一致：%s", (marked) => {
+    const offset = marked.indexOf("|");
+    const sql = marked.replace("|", "");
+    const dialect: SqlDialect = "postgres";
+    const tokens = tokenizeSql(sql, dialect);
+    const statement = findSqlStatement(tokens, offset, sql.length);
+    expect(
+      analyzeSqlCompletionTokens({ tokens, statement, offset, dialect })
+    ).toEqual(analyzeSqlCompletion({ sql, offset, dialect }));
+  });
   it("uses FROM after cursor and preserves explicit/implicit aliases", () => {
     expect(context("SELECT | FROM users u").slot).toBe("column");
     expect(relations("SELECT | FROM users u, orders AS o")).toEqual(

@@ -66,3 +66,23 @@ describe("SQL completion tokenizer", () => {
     ).toBe(9);
   });
 });
+
+it("scans checkpoints with the original GO line context and stops on request", async () => {
+  const { scanSqlTokens } = await import("../utils/sqlCompletionTokenizer");
+  const sql = "SELECT 1; GO\nSELECT 2;\nGO\nSELECT 3";
+  const start = sql.indexOf(";") + 1;
+  const scanned: ReturnType<typeof tokenizeSql> = [];
+  scanSqlTokens(sql, "sqlserver", start, (token) => {
+    scanned.push(token);
+  });
+  expect(scanned).toEqual(
+    tokenizeSql(sql, "sqlserver").filter((t) => t.start >= start)
+  );
+  expect(scanned[0]).toMatchObject({ text: "GO", kind: "identifier" });
+  const stopped: ReturnType<typeof tokenizeSql> = [];
+  scanSqlTokens(sql, "sqlserver", start, (token) => {
+    stopped.push(token);
+    return token.text !== ";";
+  });
+  expect(stopped[stopped.length - 1]?.end).toBe(sql.indexOf("2;") + 2);
+});

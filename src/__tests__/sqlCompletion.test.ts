@@ -6,6 +6,7 @@ import {
   type SqlDialect,
 } from "../utils/sqlCompletion";
 import { buildSqlMetadataIndex } from "../utils/sqlCompletionMetadataIndex";
+import { createSqlCompletionModel } from "./fixtures/sqlCompletionModel";
 import { loadSqlCompletionSchema } from "../utils/sqlCompletionSchema";
 import {
   completionKey,
@@ -202,17 +203,10 @@ function providerSuggestions(marked: string, binding: SqlCompletionBinding) {
     "scope-test",
     () => binding
   );
-  const model = {
-    uri: { toString: () => "scope-test" },
-    getValue: () => sql,
-    getOffsetAt: () => offset,
-    getPositionAt: (at: number) => ({ lineNumber: 1, column: at + 1 }),
-    getVersionId: () => 1,
-    isDisposed: () => false,
-  } as unknown as Monaco.editor.ITextModel;
+  const { model } = createSqlCompletionModel(sql, "scope-test");
   const list = provider.provideCompletionItems(
     model,
-    { lineNumber: 1, column: offset + 1 } as Monaco.Position,
+    model.getPositionAt(offset),
     { triggerKind: 0 },
     { isCancellationRequested: false } as Monaco.CancellationToken
   ) as Monaco.languages.CompletionList;

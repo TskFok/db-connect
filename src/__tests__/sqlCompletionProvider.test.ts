@@ -6,6 +6,7 @@ import {
   type SqlCompletionBinding,
 } from "../utils/sqlCompletion";
 import { buildSqlMetadataIndex } from "../utils/sqlCompletionMetadataIndex";
+import { createSqlCompletionModel } from "./fixtures/sqlCompletionModel";
 
 const key = {
   connId: "provider",
@@ -39,21 +40,8 @@ function setup(sql: string, offset = sql.length) {
       },
     },
   } as unknown as typeof Monaco;
-  const positionAt = (at: number) => {
-    const lines = sql.slice(0, at).split("\n");
-    return {
-      lineNumber: lines.length,
-      column: lines[lines.length - 1].length + 1,
-    };
-  };
-  const model = {
-    uri: { toString: () => "model:a" },
-    getValue: () => sql,
-    getOffsetAt: () => offset,
-    getPositionAt: positionAt,
-    getVersionId: () => 1,
-    isDisposed: () => false,
-  } as unknown as Monaco.editor.ITextModel;
+  const fixture = createSqlCompletionModel(sql);
+  const model = fixture.model;
   let binding: SqlCompletionBinding | undefined = {
     key,
     index: buildSqlMetadataIndex(schema, key),
@@ -69,14 +57,15 @@ function setup(sql: string, offset = sql.length) {
     isCancellationRequested: false,
     onCancellationRequested: () => ({ dispose() {} }),
   };
-  const run = (m = model) =>
+  const run = (m = model, at = offset) =>
     provider.provideCompletionItems(
       m,
-      positionAt(offset) as Monaco.Position,
+      m.getPositionAt(at),
       { triggerKind: 0 },
       token
     ) as Monaco.languages.CompletionList;
   return {
+    ...fixture,
     run,
     model,
     providers,
@@ -179,5 +168,169 @@ describe("SQL 引用的语义名称", () => {
     expect(quoteSqlReference("U", true, "postgres")).toBe('"U"');
     expect(quoteSqlReference("ÄU", false, "postgres")).toBe('"Äu"');
     expect(quoteSqlReference("U", false, "mysql")).toBe("`U`");
+  });
+});
+
+describe("provider 文档增量缓存和生命周期", () => {
+  it("同模型同版本只读一次全文，普通编辑通过内容事件更新", () => {
+    const sql = "SELECT * FROM users u WHERE u.na";
+    const s = setup(sql);
+    expect(
+      s.run().suggestions.some((item) => item.insertText === '"name"')
+    ).toBe(true);
+    s.run();
+    expect(s.getValue).toHaveBeenCalledTimes(1);
+    expect(s.subscriptions()).toBe(2);
+    s.edit([{ rangeOffset: sql.length, rangeLength: 0, text: "m" }]);
+    expect(
+      s
+        .run(s.model, sql.length + 1)
+        .suggestions.some((item) => item.insertText === '"name"')
+    ).toBe(true);
+    expect(s.getValue).toHaveBeenCalledTimes(1);
+    s.disposable.dispose();
+    expect(s.subscriptions()).toBe(0);
+  });
+
+  it.each(["跳跃事件", "漏事件", "flush"])("%s 只完整重建一次", (reason) => {
+    const sql = "SELECT * FROM users u WHERE u.na";
+    const s = setup(sql);
+    s.run();
+    s.edit([{ rangeOffset: sql.length, rangeLength: 0, text: "m" }], {
+      nextVersion: reason === "跳跃事件" ? 4 : 2,
+      silent: reason === "漏事件",
+      flush: reason === "flush",
+    });
+    expect(
+      s
+        .run(s.model, sql.length + 1)
+        .suggestions.some((item) => item.insertText === '"name"')
+    ).toBe(true);
+    s.run(s.model, sql.length + 1);
+    expect(s.getValue).toHaveBeenCalledTimes(2);
+    s.disposable.dispose();
+  });
+
+  it("相同 URI 新模型替换旧模型，清理订阅并使旧异步请求失效", () => {
+    const s = setup("SELECT * FROM users u WHERE u.na");
+    const refresh = vi.fn();
+    s.setBinding({
+      key,
+      revision: 0,
+      index: buildSqlMetadataIndex(schema, key),
+      requestRefresh: refresh,
+    });
+    s.run();
+    const previous = refresh.mock.calls[0][0] as () => boolean;
+    const nextSql = "SELECT * FROM ";
+    const next = createSqlCompletionModel(nextSql);
+    expect(
+      s
+        .run(next.model, nextSql.length)
+        .suggestions.some((item) => item.label === "users")
+    ).toBe(true);
+    expect(previous()).toBe(false);
+    expect(s.subscriptions()).toBe(0);
+    expect(next.subscriptions()).toBe(2);
+    next.dispose();
+    expect(next.subscriptions()).toBe(0);
+    expect(s.run(next.model, nextSql.length).suggestions).toEqual([]);
+    s.disposable.dispose();
+  });
+
+  it("反复更换模型后仅当前模型有订阅，解绑恢复基线", () => {
+    const s = setup("SELECT * FROM ");
+    s.run();
+    const models = Array.from({ length: 12 }, () =>
+      createSqlCompletionModel("SELECT * FROM ")
+    );
+    for (const next of models) s.run(next.model, 14);
+    expect(s.subscriptions()).toBe(0);
+    expect(
+      models.reduce((count, item) => count + item.subscriptions(), 0)
+    ).toBe(2);
+    s.setBinding(undefined);
+    expect(s.run(models[models.length - 1].model, 14).suggestions).toEqual([]);
+    expect(models.every((item) => item.subscriptions() === 0)).toBe(true);
+    s.disposable.dispose();
+  });
+
+  it("方言变更重建词法，同方言更换元数据和连接立即重新绑定 CTE 字段", () => {
+    const sql = "WITH x AS (SELECT * FROM users) SELECT * FROM x WHERE x.";
+    const s = setup(sql);
+    expect(s.run().suggestions.map((item) => item.label)).toContain("x.name");
+    const nextKey = { ...key, connectionRevision: 1 };
+    s.setBinding({
+      key: nextKey,
+      revision: 1,
+      index: buildSqlMetadataIndex(
+        { ...schema, columns: [{ table: "users", name: "fresh" }] },
+        nextKey
+      ),
+    });
+    const fresh = s.run().suggestions.map((item) => item.label);
+    expect(fresh).toContain("x.fresh");
+    expect(fresh).not.toContain("x.name");
+    expect(s.getValue).toHaveBeenCalledTimes(1);
+    const mysqlKey = { ...nextKey, dialect: "mysql" as const };
+    s.setBinding({
+      key: mysqlKey,
+      revision: 2,
+      index: buildSqlMetadataIndex(schema, mysqlKey),
+    });
+    expect(
+      s.run().suggestions.some((item) => item.insertText === "`name`")
+    ).toBe(true);
+    s.run();
+    expect(s.getValue).toHaveBeenCalledTimes(2);
+    s.disposable.dispose();
+  });
+
+  it("计算期间取消或绑定改变时也不发布候选", () => {
+    const s = setup("SELECT * FROM ");
+    s.setBinding({
+      key,
+      revision: 0,
+      index: buildSqlMetadataIndex(schema, key),
+      requestRefresh: () => {
+        s.token.isCancellationRequested = true;
+      },
+    });
+    expect(s.run().suggestions).toEqual([]);
+    s.token.isCancellationRequested = false;
+    s.setBinding({
+      key,
+      revision: 0,
+      index: buildSqlMetadataIndex(schema, key),
+      requestRefresh: () => {
+        s.setBinding({ key, revision: 1 });
+      },
+    });
+    expect(s.run().suggestions).toEqual([]);
+    s.disposable.dispose();
+  });
+
+  it("同一双引号输入切换 MySQL 后采用字符串语义，切回 PostgreSQL 恢复标识符候选", () => {
+    const s = setup('SELECT * FROM users u WHERE u."na');
+    expect(
+      s.run().suggestions.some((item) => item.insertText === '"name"')
+    ).toBe(true);
+    const mysqlKey = { ...key, dialect: "mysql" as const };
+    s.setBinding({
+      key: mysqlKey,
+      revision: 1,
+      index: buildSqlMetadataIndex(schema, mysqlKey),
+    });
+    expect(s.run().suggestions).toEqual([]);
+    s.setBinding({
+      key,
+      revision: 2,
+      index: buildSqlMetadataIndex(schema, key),
+    });
+    expect(
+      s.run().suggestions.some((item) => item.insertText === '"name"')
+    ).toBe(true);
+    expect(s.getValue).toHaveBeenCalledTimes(3);
+    s.disposable.dispose();
   });
 });

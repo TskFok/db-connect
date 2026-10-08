@@ -1,0 +1,2805 @@
+{
+  "cases" : [
+    {
+      "bytes" : 49,
+      "historicalStatements" : 0,
+      "modes" : {
+        "cold" : {
+          "candidateCount" : 50,
+          "discardedFocusSamples" : [
+
+          ],
+          "focusDiscarded" : 0,
+          "measured" : 20,
+          "metrics" : {
+            "editMs" : {
+              "max" : null,
+              "over50" : 0,
+              "p50" : null,
+              "p95" : null
+            },
+            "frameGapMs" : {
+              "max" : 20,
+              "over50" : 0,
+              "p50" : 17,
+              "p95" : 18
+            },
+            "providerMaxMs" : {
+              "max" : 2,
+              "over50" : 0,
+              "p50" : 1,
+              "p95" : 2
+            },
+            "providerMs" : {
+              "max" : 2,
+              "over50" : 0,
+              "p50" : 1,
+              "p95" : 2
+            },
+            "widgetMs" : {
+              "max" : 107,
+              "over50" : 20,
+              "p50" : 103,
+              "p95" : 104.00000000000023
+            }
+          },
+          "raw" : [
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 104.00000000000023
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 2,
+              "providerMs" : 2,
+              "widgetItems" : 12,
+              "widgetMs" : 107
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 20,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 2,
+              "providerMs" : 2,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 103.00000000000045
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1.0000000000004547,
+              "providerMs" : 1.0000000000004547,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 103.00000000000045
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 102.99999999999955
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 102
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 102
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 102
+            }
+          ],
+          "warmupRaw" : [
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 29,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 6,
+              "providerMs" : 6,
+              "widgetItems" : 12,
+              "widgetMs" : 122
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 104.99999999999989
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1.0000000000001137,
+              "providerMs" : 1.0000000000001137,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104.00000000000023
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            }
+          ],
+          "warmups" : 5
+        },
+        "edit" : {
+          "candidateCount" : 50,
+          "discardedFocusSamples" : [
+
+          ],
+          "focusDiscarded" : 0,
+          "measured" : 20,
+          "metrics" : {
+            "editMs" : {
+              "max" : 2,
+              "over50" : 0,
+              "p50" : 1,
+              "p95" : 2
+            },
+            "frameGapMs" : {
+              "max" : 18,
+              "over50" : 0,
+              "p50" : 17,
+              "p95" : 18
+            },
+            "providerMaxMs" : {
+              "max" : 1,
+              "over50" : 0,
+              "p50" : 0,
+              "p95" : 1
+            },
+            "providerMs" : {
+              "max" : 1,
+              "over50" : 0,
+              "p50" : 0,
+              "p95" : 1
+            },
+            "widgetMs" : {
+              "max" : 106,
+              "over50" : 20,
+              "p50" : 104,
+              "p95" : 106
+            }
+          },
+          "raw" : [
+            {
+              "editMs" : 0.99999999999818101,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103.99999999999818
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 105
+            },
+            {
+              "editMs" : 0.99999999999818101,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 103.99999999999818
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103.00000000000182
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 106
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "editMs" : 1.000000000001819,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 106
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104.00000000000182
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "editMs" : 0.99999999999818101,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 103.99999999999818
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "editMs" : 2,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 105.00000000000182
+            },
+            {
+              "editMs" : 2,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "editMs" : 0.99999999999818101,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103.99999999999818
+            },
+            {
+              "editMs" : 0,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103.00000000000182
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104.00000000000182
+            },
+            {
+              "editMs" : 1.000000000001819,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0.99999999999818101,
+              "providerMs" : 0.99999999999818101,
+              "widgetItems" : 12,
+              "widgetMs" : 105
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 105
+            }
+          ],
+          "warmupRaw" : [
+            {
+              "editMs" : 3,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 107
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "editMs" : 0.99999999999818101,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103.99999999999818
+            },
+            {
+              "editMs" : 2,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 105.00000000000182
+            }
+          ],
+          "warmups" : 5
+        },
+        "hot" : {
+          "candidateCount" : 50,
+          "discardedFocusSamples" : [
+            {
+              "reason" : "editor lost focus before widget timeout",
+              "sample" : {
+                "frameGapMs" : 23,
+                "providerCalls" : 1,
+                "providerItems" : 50,
+                "providerMaxMs" : 1.0000000000009095,
+                "providerMs" : 1.0000000000009095,
+                "timeout" : "suggest widget did not show within 5s",
+                "widgetState" : {
+                  "className" : "editor-widget suggest-widget",
+                  "documentFocused" : false,
+                  "focused" : false,
+                  "rows" : 0
+                }
+              },
+              "sampleIndex" : 15
+            }
+          ],
+          "focusDiscarded" : 1,
+          "measured" : 20,
+          "metrics" : {
+            "editMs" : {
+              "max" : null,
+              "over50" : 0,
+              "p50" : null,
+              "p95" : null
+            },
+            "frameGapMs" : {
+              "max" : 18,
+              "over50" : 0,
+              "p50" : 18,
+              "p95" : 18
+            },
+            "providerMaxMs" : {
+              "max" : 1.000000000001819,
+              "over50" : 0,
+              "p50" : 1,
+              "p95" : 1.0000000000009095
+            },
+            "providerMs" : {
+              "max" : 1.000000000001819,
+              "over50" : 0,
+              "p50" : 1,
+              "p95" : 1.0000000000009095
+            },
+            "widgetMs" : {
+              "max" : 104,
+              "over50" : 20,
+              "p50" : 103,
+              "p95" : 104
+            }
+          },
+          "raw" : [
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1.0000000000009095,
+              "providerMs" : 1.0000000000009095,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 103.00000000000091
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 102
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 101.99999999999818
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 101.99999999999818
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1.000000000001819,
+              "providerMs" : 1.000000000001819,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0.99999999999818101,
+              "providerMs" : 0.99999999999818101,
+              "widgetItems" : 12,
+              "widgetMs" : 103.99999999999818
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            }
+          ],
+          "warmupRaw" : [
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 102.00000000000091
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 102
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 106
+            }
+          ],
+          "warmups" : 5
+        }
+      }
+    },
+    {
+      "bytes" : 102400,
+      "historicalStatements" : 1931,
+      "modes" : {
+        "cold" : {
+          "candidateCount" : 50,
+          "discardedFocusSamples" : [
+
+          ],
+          "focusDiscarded" : 0,
+          "measured" : 20,
+          "metrics" : {
+            "editMs" : {
+              "max" : null,
+              "over50" : 0,
+              "p50" : null,
+              "p95" : null
+            },
+            "frameGapMs" : {
+              "max" : 31,
+              "over50" : 0,
+              "p50" : 18,
+              "p95" : 23
+            },
+            "providerMaxMs" : {
+              "max" : 11,
+              "over50" : 0,
+              "p50" : 8.999999999996362,
+              "p95" : 11
+            },
+            "providerMs" : {
+              "max" : 11,
+              "over50" : 0,
+              "p50" : 8.999999999996362,
+              "p95" : 11
+            },
+            "widgetMs" : {
+              "max" : 116,
+              "over50" : 20,
+              "p50" : 110.99999999999636,
+              "p95" : 114
+            }
+          },
+          "raw" : [
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 23,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 11,
+              "providerMs" : 11,
+              "widgetItems" : 12,
+              "widgetMs" : 116
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 8.999999999996362,
+              "providerMs" : 8.999999999996362,
+              "widgetItems" : 12,
+              "widgetMs" : 110.99999999999636
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 21,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 11,
+              "providerMs" : 11,
+              "widgetItems" : 12,
+              "widgetMs" : 114
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 8,
+              "providerMs" : 8,
+              "widgetItems" : 12,
+              "widgetMs" : 110
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 22,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 9,
+              "providerMs" : 9,
+              "widgetItems" : 12,
+              "widgetMs" : 111
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 8,
+              "providerMs" : 8,
+              "widgetItems" : 12,
+              "widgetMs" : 110
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 8,
+              "providerMs" : 8,
+              "widgetItems" : 12,
+              "widgetMs" : 110
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 9,
+              "providerMs" : 9,
+              "widgetItems" : 12,
+              "widgetMs" : 111
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17.999999999996362,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 8.999999999996362,
+              "providerMs" : 8.999999999996362,
+              "widgetItems" : 12,
+              "widgetMs" : 109.99999999999636
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 19,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 8,
+              "providerMs" : 8,
+              "widgetItems" : 12,
+              "widgetMs" : 112
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 9,
+              "providerMs" : 9,
+              "widgetItems" : 12,
+              "widgetMs" : 111
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 9.000000000003638,
+              "providerMs" : 9.000000000003638,
+              "widgetItems" : 12,
+              "widgetMs" : 112
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 6.999999999996362,
+              "providerMs" : 6.999999999996362,
+              "widgetItems" : 12,
+              "widgetMs" : 108.99999999999636
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 11,
+              "providerMs" : 11,
+              "widgetItems" : 12,
+              "widgetMs" : 113.00000000000364
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 20,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 8,
+              "providerMs" : 8,
+              "widgetItems" : 12,
+              "widgetMs" : 110
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 9,
+              "providerMs" : 9,
+              "widgetItems" : 12,
+              "widgetMs" : 110
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 8,
+              "providerMs" : 8,
+              "widgetItems" : 12,
+              "widgetMs" : 110
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 9,
+              "providerMs" : 9,
+              "widgetItems" : 12,
+              "widgetMs" : 110
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 9,
+              "providerMs" : 9,
+              "widgetItems" : 12,
+              "widgetMs" : 111
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 31,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 8,
+              "providerMs" : 8,
+              "widgetItems" : 12,
+              "widgetMs" : 111.00000000000364
+            }
+          ],
+          "warmupRaw" : [
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 19,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 12,
+              "providerMs" : 12,
+              "widgetItems" : 12,
+              "widgetMs" : 115.00000000000364
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 25,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 21,
+              "providerMs" : 21,
+              "widgetItems" : 12,
+              "widgetMs" : 123
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 9.000000000003638,
+              "providerMs" : 9.000000000003638,
+              "widgetItems" : 12,
+              "widgetMs" : 112
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 25,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 18,
+              "providerMs" : 18,
+              "widgetItems" : 12,
+              "widgetMs" : 120
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 22,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 11,
+              "providerMs" : 11,
+              "widgetItems" : 12,
+              "widgetMs" : 116
+            }
+          ],
+          "warmups" : 5
+        },
+        "edit" : {
+          "candidateCount" : 50,
+          "discardedFocusSamples" : [
+
+          ],
+          "focusDiscarded" : 0,
+          "measured" : 20,
+          "metrics" : {
+            "editMs" : {
+              "max" : 2.000000000003638,
+              "over50" : 0,
+              "p50" : 1,
+              "p95" : 2
+            },
+            "frameGapMs" : {
+              "max" : 29,
+              "over50" : 0,
+              "p50" : 18,
+              "p95" : 19
+            },
+            "providerMaxMs" : {
+              "max" : 1,
+              "over50" : 0,
+              "p50" : 0,
+              "p95" : 1
+            },
+            "providerMs" : {
+              "max" : 1,
+              "over50" : 0,
+              "p50" : 0,
+              "p95" : 1
+            },
+            "widgetMs" : {
+              "max" : 106,
+              "over50" : 20,
+              "p50" : 105,
+              "p95" : 106
+            }
+          },
+          "raw" : [
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "editMs" : 2,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 106
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 105
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 19,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103.00000000000364
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 105
+            },
+            {
+              "editMs" : 0.99999999999636202,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 104.99999999999636
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 29,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 106
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 105
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 105.00000000000364
+            },
+            {
+              "editMs" : 1.000000000003638,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 105
+            },
+            {
+              "editMs" : 2,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 106
+            },
+            {
+              "editMs" : 2.000000000003638,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 106
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 105
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 106
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 105.00000000000364
+            },
+            {
+              "editMs" : 0.99999999999636202,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104.99999999999636
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 105
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 105
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            }
+          ],
+          "warmupRaw" : [
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 29,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 14,
+              "providerMs" : 14,
+              "widgetItems" : 12,
+              "widgetMs" : 120
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104.00000000000364
+            },
+            {
+              "editMs" : 0,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 19,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104.00000000000364
+            }
+          ],
+          "warmups" : 5
+        },
+        "hot" : {
+          "candidateCount" : 50,
+          "discardedFocusSamples" : [
+
+          ],
+          "focusDiscarded" : 0,
+          "measured" : 20,
+          "metrics" : {
+            "editMs" : {
+              "max" : null,
+              "over50" : 0,
+              "p50" : null,
+              "p95" : null
+            },
+            "frameGapMs" : {
+              "max" : 20,
+              "over50" : 0,
+              "p50" : 18,
+              "p95" : 19
+            },
+            "providerMaxMs" : {
+              "max" : 1.000000000003638,
+              "over50" : 0,
+              "p50" : 0,
+              "p95" : 1
+            },
+            "providerMs" : {
+              "max" : 1.000000000003638,
+              "over50" : 0,
+              "p50" : 0,
+              "p95" : 1
+            },
+            "widgetMs" : {
+              "max" : 104,
+              "over50" : 20,
+              "p50" : 103,
+              "p95" : 104
+            }
+          },
+          "raw" : [
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 101.99999999999636
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 19,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 20,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 102
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 102
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 19,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 19,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103.00000000000364
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103.99999999999636
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 102
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103.00000000000364
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1.000000000003638,
+              "providerMs" : 1.000000000003638,
+              "widgetItems" : 12,
+              "widgetMs" : 102
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 19,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 102
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            }
+          ],
+          "warmupRaw" : [
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 8,
+              "providerMs" : 8,
+              "widgetItems" : 12,
+              "widgetMs" : 110
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1.000000000003638,
+              "providerMs" : 1.000000000003638,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 102.99999999999636
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 102
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 102
+            }
+          ],
+          "warmups" : 5
+        }
+      }
+    },
+    {
+      "bytes" : 1048576,
+      "historicalStatements" : 19783,
+      "modes" : {
+        "cold" : {
+          "candidateCount" : 50,
+          "discardedFocusSamples" : [
+
+          ],
+          "focusDiscarded" : 0,
+          "measured" : 20,
+          "metrics" : {
+            "editMs" : {
+              "max" : null,
+              "over50" : 0,
+              "p50" : null,
+              "p95" : null
+            },
+            "frameGapMs" : {
+              "max" : 109.00000000000364,
+              "over50" : 20,
+              "p50" : 84,
+              "p95" : 101
+            },
+            "providerMaxMs" : {
+              "max" : 96,
+              "over50" : 20,
+              "p50" : 73,
+              "p95" : 79
+            },
+            "providerMs" : {
+              "max" : 96,
+              "over50" : 20,
+              "p50" : 73,
+              "p95" : 79
+            },
+            "widgetMs" : {
+              "max" : 198,
+              "over50" : 20,
+              "p50" : 179.00000000000364,
+              "p95" : 190
+            }
+          },
+          "raw" : [
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 84,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 72.000000000003638,
+              "providerMs" : 72.000000000003638,
+              "widgetItems" : 12,
+              "widgetMs" : 175
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 86,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 72,
+              "providerMs" : 72,
+              "widgetItems" : 12,
+              "widgetMs" : 177
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 84,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 73,
+              "providerMs" : 73,
+              "widgetItems" : 12,
+              "widgetMs" : 180
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 86,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 73,
+              "providerMs" : 73,
+              "widgetItems" : 12,
+              "widgetMs" : 181.00000000000364
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 83,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 74,
+              "providerMs" : 74,
+              "widgetItems" : 12,
+              "widgetMs" : 180.00000000000364
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 78,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 72,
+              "providerMs" : 72,
+              "widgetItems" : 12,
+              "widgetMs" : 175.00000000000364
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 83,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 72.000000000003638,
+              "providerMs" : 72.000000000003638,
+              "widgetItems" : 12,
+              "widgetMs" : 175
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 83,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 70,
+              "providerMs" : 70,
+              "widgetItems" : 12,
+              "widgetMs" : 173.00000000000364
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 85,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 74.000000000003638,
+              "providerMs" : 74.000000000003638,
+              "widgetItems" : 12,
+              "widgetMs" : 177
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 84,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 73.000000000003638,
+              "providerMs" : 73.000000000003638,
+              "widgetItems" : 12,
+              "widgetMs" : 186
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 87,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 75,
+              "providerMs" : 75,
+              "widgetItems" : 12,
+              "widgetMs" : 178.00000000000364
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 87,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 76,
+              "providerMs" : 76,
+              "widgetItems" : 12,
+              "widgetMs" : 179.00000000000364
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 82,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 72.000000000003638,
+              "providerMs" : 72.000000000003638,
+              "widgetItems" : 12,
+              "widgetMs" : 182.00000000000364
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 109.00000000000364,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 75.000000000003638,
+              "providerMs" : 75.000000000003638,
+              "widgetItems" : 12,
+              "widgetMs" : 177
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 83,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 72,
+              "providerMs" : 72,
+              "widgetItems" : 12,
+              "widgetMs" : 190
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 101,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 96,
+              "providerMs" : 96,
+              "widgetItems" : 12,
+              "widgetMs" : 198
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 92,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 79,
+              "providerMs" : 79,
+              "widgetItems" : 12,
+              "widgetMs" : 184
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 83,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 71,
+              "providerMs" : 71,
+              "widgetItems" : 12,
+              "widgetMs" : 177
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 81,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 71,
+              "providerMs" : 71,
+              "widgetItems" : 12,
+              "widgetMs" : 182
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 87,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 75,
+              "providerMs" : 75,
+              "widgetItems" : 12,
+              "widgetMs" : 186
+            }
+          ],
+          "warmupRaw" : [
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 91,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 83,
+              "providerMs" : 83,
+              "widgetItems" : 12,
+              "widgetMs" : 187
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 89,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 78,
+              "providerMs" : 78,
+              "widgetItems" : 12,
+              "widgetMs" : 180
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 81,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 69,
+              "providerMs" : 69,
+              "widgetItems" : 12,
+              "widgetMs" : 178
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 83,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 72,
+              "providerMs" : 72,
+              "widgetItems" : 12,
+              "widgetMs" : 176
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 83.999999999996362,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 72.999999999996362,
+              "providerMs" : 72.999999999996362,
+              "widgetItems" : 12,
+              "widgetMs" : 178.99999999999636
+            }
+          ],
+          "warmups" : 5
+        },
+        "edit" : {
+          "candidateCount" : 50,
+          "discardedFocusSamples" : [
+
+          ],
+          "focusDiscarded" : 0,
+          "measured" : 20,
+          "metrics" : {
+            "editMs" : {
+              "max" : 2,
+              "over50" : 0,
+              "p50" : 1,
+              "p95" : 1.000000000007276
+            },
+            "frameGapMs" : {
+              "max" : 40,
+              "over50" : 0,
+              "p50" : 18,
+              "p95" : 19
+            },
+            "providerMaxMs" : {
+              "max" : 1.000000000007276,
+              "over50" : 0,
+              "p50" : 0,
+              "p95" : 1.000000000007276
+            },
+            "providerMs" : {
+              "max" : 1.000000000007276,
+              "over50" : 0,
+              "p50" : 0,
+              "p95" : 1.000000000007276
+            },
+            "widgetMs" : {
+              "max" : 106.99999999999272,
+              "over50" : 20,
+              "p50" : 105,
+              "p95" : 106
+            }
+          },
+          "raw" : [
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 106
+            },
+            {
+              "editMs" : 2,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 106
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 106
+            },
+            {
+              "editMs" : 0.99999999999272404,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 106.99999999999272
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104.00000000000728
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 105
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 105
+            },
+            {
+              "editMs" : 1.000000000007276,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0.99999999999272404,
+              "providerMs" : 0.99999999999272404,
+              "widgetItems" : 12,
+              "widgetMs" : 106
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1.000000000007276,
+              "providerMs" : 1.000000000007276,
+              "widgetItems" : 12,
+              "widgetMs" : 106
+            },
+            {
+              "editMs" : 1.000000000007276,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0.99999999999272404,
+              "providerMs" : 0.99999999999272404,
+              "widgetItems" : 12,
+              "widgetMs" : 106
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 40,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 106
+            },
+            {
+              "editMs" : 0,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 19,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 106
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 105
+            },
+            {
+              "editMs" : 1.000000000007276,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "editMs" : 0,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1.000000000007276,
+              "providerMs" : 1.000000000007276,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            }
+          ],
+          "warmupRaw" : [
+            {
+              "editMs" : 2,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 88,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 77,
+              "providerMs" : 77,
+              "widgetItems" : 12,
+              "widgetMs" : 184
+            },
+            {
+              "editMs" : 1.000000000007276,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1.000000000007276,
+              "providerMs" : 1.000000000007276,
+              "widgetItems" : 12,
+              "widgetMs" : 105
+            },
+            {
+              "editMs" : 1,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 105
+            },
+            {
+              "editMs" : 2,
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 106.00000000000728
+            }
+          ],
+          "warmups" : 5
+        },
+        "hot" : {
+          "candidateCount" : 50,
+          "discardedFocusSamples" : [
+
+          ],
+          "focusDiscarded" : 0,
+          "measured" : 20,
+          "metrics" : {
+            "editMs" : {
+              "max" : null,
+              "over50" : 0,
+              "p50" : null,
+              "p95" : null
+            },
+            "frameGapMs" : {
+              "max" : 34,
+              "over50" : 0,
+              "p50" : 18,
+              "p95" : 19
+            },
+            "providerMaxMs" : {
+              "max" : 1.000000000007276,
+              "over50" : 0,
+              "p50" : 0.99999999999272404,
+              "p95" : 1
+            },
+            "providerMs" : {
+              "max" : 1.000000000007276,
+              "over50" : 0,
+              "p50" : 0.99999999999272404,
+              "p95" : 1
+            },
+            "widgetMs" : {
+              "max" : 105,
+              "over50" : 20,
+              "p50" : 103.99999999999272,
+              "p95" : 105
+            }
+          },
+          "raw" : [
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0.99999999999272404,
+              "providerMs" : 0.99999999999272404,
+              "widgetItems" : 12,
+              "widgetMs" : 105
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 102
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 102
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 34,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1.000000000007276,
+              "providerMs" : 1.000000000007276,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104.00000000000728
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 105
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0.99999999999272404,
+              "providerMs" : 0.99999999999272404,
+              "widgetItems" : 12,
+              "widgetMs" : 103.99999999999272
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 19,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 1,
+              "providerMs" : 1,
+              "widgetItems" : 12,
+              "widgetMs" : 104
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 104.00000000000728
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 102
+            }
+          ],
+          "warmupRaw" : [
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 80,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 71,
+              "providerMs" : 71,
+              "widgetItems" : 12,
+              "widgetMs" : 174
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 17,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 102
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 103
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 101.99999999999272
+            },
+            {
+              "focusedAtWidget" : true,
+              "frameGapMs" : 18,
+              "providerCalls" : 1,
+              "providerItems" : 50,
+              "providerMaxMs" : 0,
+              "providerMs" : 0,
+              "widgetItems" : 12,
+              "widgetMs" : 102
+            }
+          ],
+          "warmups" : 5
+        }
+      }
+    }
+  ],
+  "editorConfiguration" : {
+    "minimap" : false,
+    "occurrencesHighlight" : "off",
+    "quickSuggestions" : false,
+    "suggestOnTriggerCharacters" : false
+  },
+  "fixture" : {
+    "columnsPerTable" : 50,
+    "dialect" : "mysql",
+    "expectedCandidates" : 50,
+    "tables" : 1000
+  },
+  "focusPolicy" : "Native window activation and Monaco text focus before each sample, outside timing; at most 5 explicitly unfocused samples retried per size\/mode; focused timeout is a failure",
+  "longTaskApiSupported" : false,
+  "longTasks" : [
+
+  ],
+  "memoryApiSupported" : false,
+  "nativeEnvironment" : {
+    "os" : "Version 26.5.2 (Build 25F84)",
+    "webKitBundleVersion" : "21624.2.5.11.8",
+    "webKitShortVersion" : "21624"
+  },
+  "platform" : "MacIntel",
+  "recordedAt" : "2026-10-08T09:13:02.875Z",
+  "source" : "real Monaco + registerSqlCompletionProvider in isolated WKWebView",
+  "timingDefinitions" : {
+    "candidateCount" : "provider return suggestions length",
+    "editMs" : "synchronous Monaco applyEdits including onDidChangeContent callbacks",
+    "frameGapMs" : "largest requestAnimationFrame interval during trigger; not a Long Task API entry; can miss a task before the first frame",
+    "providerMaxMs" : "longest single synchronous provider call during sample",
+    "providerMs" : "sum of synchronous provideCompletionItems calls during sample",
+    "widgetItems" : "visible DOM rows; virtualized, not total candidate count",
+    "widgetMs" : "cold\/hot: trigger to first visible row; edit: applyEdits start to first visible row"
+  },
+  "userAgent" : "Mozilla\/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit\/605.1.15 (KHTML, like Gecko)"
+}

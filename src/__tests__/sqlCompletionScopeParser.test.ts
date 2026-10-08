@@ -1,11 +1,33 @@
 import { describe, expect, it } from "vitest";
-import { parseSqlQueryBlocks } from "../utils/sqlCompletionScopeParser";
+import {
+  parseSqlQueryBlocks,
+  parseSqlQueryBlocksFromTokens,
+} from "../utils/sqlCompletionScopeParser";
 import type { SqlDialect } from "../utils/sqlCompletion";
+import { tokenizeSql } from "../utils/sqlCompletionTokenizer";
 
 const parse = (sql: string, dialect: SqlDialect = "postgres") =>
   parseSqlQueryBlocks(sql, { start: 0, end: sql.length }, dialect);
 
 describe("parseSqlQueryBlocks", () => {
+  it.each([
+    "WITH c AS (SELECT id FROM users) SELECT * FROM c",
+    "SELECT * FROM (SELECT id FROM users) d WHERE EXISTS (SELECT 1 FROM orders)",
+    "SELECT id FROM users UNION ALL SELECT id FROM orders ORDER BY id",
+    "UPDATE users SET id = 1",
+    "INSERT INTO users(id) SELECT id FROM orders",
+    "SELECT * FROM (SELECT id FROM users",
+  ])("token 入口与文本入口解析一致：%s", (body) => {
+    const sql = `SELECT 0; ${body}`;
+    const statement = { start: sql.indexOf(body), end: sql.length };
+    expect(
+      parseSqlQueryBlocksFromTokens(
+        tokenizeSql(sql, "postgres"),
+        statement,
+        "postgres"
+      )
+    ).toEqual(parseSqlQueryBlocks(sql, statement, "postgres"));
+  });
   it("解析 CTE、派生表和表达式子查询的独立边界", () => {
     const sql =
       "WITH c(x) AS (SELECT u.id FROM users u) SELECT d.x FROM (SELECT x FROM c) d WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = d.x)";

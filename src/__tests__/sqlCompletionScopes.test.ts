@@ -1,8 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import type { SqlDialect, SqlSchema } from "../utils/sqlCompletion";
-import { analyzeSqlCompletion } from "../utils/sqlCompletionContext";
+import {
+  analyzeSqlCompletion,
+  analyzeSqlCompletionTokens,
+} from "../utils/sqlCompletionContext";
 import { resolveSqlCompletionScopes } from "../utils/sqlCompletionScopes";
 import { buildSqlMetadataIndex } from "../utils/sqlCompletionMetadataIndex";
+import { parseSqlQueryBlocksFromTokens } from "../utils/sqlCompletionScopeParser";
+import { generateSqlCompletionCandidates } from "../utils/sqlCompletionCandidates";
+import { findSqlStatement, tokenizeSql } from "../utils/sqlCompletionTokenizer";
+import * as tokenizer from "../utils/sqlCompletionTokenizer";
 import {
   completionKey,
   completionSchema,
@@ -36,6 +43,131 @@ function resolve(
 }
 
 describe("SQL 查询作用域合成", () => {
+  it("类型契约要求文本或预解析语法输入", () => {
+    type Input = Parameters<typeof resolveSqlCompletionScopes>[0];
+    type MissingSource = Omit<Input, "sql" | "syntax">;
+    type AcceptsMissingSource = MissingSource extends Input ? true : false;
+    expectTypeOf<AcceptsMissingSource>().toEqualTypeOf<false>();
+  });
+  it.each([
+    "WITH c AS (SELECT id FROM users) SELECT c.| FROM c",
+    "SELECT d.| FROM (SELECT id FROM users) d",
+    "SELECT id FROM users UNION ALL SELECT | FROM orders",
+    "UPDATE users SET id = |",
+    "INSERT INTO users(id, |) VALUES (1, 2)",
+    "SELECT * FROM (SELECT | FROM orders",
+  ])("预解析语法保持作用域和候选一致：%s", (marked) => {
+    const { context: expected, sql, offset, index } = resolve(marked);
+    const tokens = tokenizeSql(sql, "postgres");
+    const statement = findSqlStatement(tokens, offset, sql.length);
+    const blocks = parseSqlQueryBlocksFromTokens(tokens, statement, "postgres");
+    const base = analyzeSqlCompletionTokens({
+      tokens,
+      statement,
+      offset,
+      dialect: "postgres",
+    });
+    base.defaultNamespace = "app";
+    const actual = resolveSqlCompletionScopes({
+      offset,
+      context: base,
+      index,
+      syntax: { tokens, blocks },
+    });
+    expect(actual).toEqual(expected);
+    expect(generateSqlCompletionCandidates(actual, index)).toEqual(
+      generateSqlCompletionCandidates(expected, index)
+    );
+  });
+
+  it("相同预解析语法换入新元数据索引时使用新列", () => {
+    const sql = "SELECT u.| FROM users u".replace("|", "");
+    const offset = sql.indexOf("u.") + 2;
+    const tokens = tokenizeSql(sql, "postgres");
+    const statement = findSqlStatement(tokens, offset, sql.length);
+    const syntax = {
+      tokens,
+      blocks: parseSqlQueryBlocksFromTokens(tokens, statement, "postgres"),
+    };
+    const base = analyzeSqlCompletionTokens({
+      tokens,
+      statement,
+      offset,
+      dialect: "postgres",
+    });
+    base.defaultNamespace = "app";
+    const first = buildSqlMetadataIndex(
+      {
+        databases: ["app"],
+        tables: [{ name: "users" }],
+        columns: [{ table: "users", name: "old_field" }],
+      },
+      { ...completionKey, dialect: "postgres" }
+    );
+    const second = buildSqlMetadataIndex(
+      {
+        databases: ["app"],
+        tables: [{ name: "users" }],
+        columns: [{ table: "users", name: "new_field" }],
+      },
+      { ...completionKey, dialect: "postgres" }
+    );
+    const oldLabels = generateSqlCompletionCandidates(
+      resolveSqlCompletionScopes({
+        offset,
+        context: base,
+        index: first,
+        syntax,
+      }),
+      first
+    ).map((c) => c.label);
+    const newLabels = generateSqlCompletionCandidates(
+      resolveSqlCompletionScopes({
+        offset,
+        context: base,
+        index: second,
+        syntax,
+      }),
+      second
+    ).map((c) => c.label);
+    expect(oldLabels).toContain("u.old_field");
+    expect(newLabels).toContain("u.new_field");
+    expect(newLabels).not.toContain("u.old_field");
+  });
+
+  it("提供预解析语法后不再次调用完整分词器", () => {
+    const sql = "SELECT u.id FROM users u WHERE u.";
+    const offset = sql.length;
+    const tokens = tokenizeSql(sql, "postgres");
+    const statement = findSqlStatement(tokens, offset, sql.length);
+    const blocks = parseSqlQueryBlocksFromTokens(tokens, statement, "postgres");
+    const context = analyzeSqlCompletionTokens({
+      tokens,
+      statement,
+      offset,
+      dialect: "postgres",
+    });
+    context.defaultNamespace = "app";
+    const index = buildSqlMetadataIndex(completionSchema, {
+      ...completionKey,
+      dialect: "postgres",
+    });
+    const spy = vi.spyOn(tokenizer, "tokenizeSql");
+    try {
+      const result = resolveSqlCompletionScopes({
+        offset,
+        context,
+        index,
+        syntax: { tokens, blocks },
+      });
+      expect(result.slot).toBe("column");
+      expect(spy).not.toHaveBeenCalled();
+      resolveSqlCompletionScopes({ sql, offset, context, index });
+      expect(spy).toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
   it("混合 CTE 和跨 schema 物理表时保留 JOIN 语法置信度", () => {
     const schema: SqlSchema = {
       databases: ["sales"],

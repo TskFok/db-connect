@@ -29,6 +29,8 @@ export function registerSqlEditorCompletion(
   const registerModel = () => {
     endExplicitSession();
     provider?.dispose();
+    provider = undefined;
+    if (disposed) return;
     const model = editor.getModel();
     if (!model) return;
     provider = registerSqlCompletionProvider(
@@ -123,6 +125,7 @@ export function registerSqlEditorCompletion(
     dispose() {
       disposed = true;
       provider?.dispose();
+      provider = undefined;
       modelChange.dispose();
       focus.dispose();
       blur.dispose();

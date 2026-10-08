@@ -61,13 +61,30 @@ export function parseSqlQueryBlocks(
   statement: { start: number; end: number },
   dialect: SqlDialect
 ): ParsedQueryBlock[] {
-  const tokens = tokenizeSql(sql.slice(statement.start, statement.end), dialect)
-    .filter((t) => t.kind !== "comment" && t.text !== ";")
-    .map((t) => ({
-      ...t,
-      start: t.start + statement.start,
-      end: t.end + statement.start,
-    }));
+  const tokens = tokenizeSql(
+    sql.slice(statement.start, statement.end),
+    dialect
+  ).map((t) => ({
+    ...t,
+    start: t.start + statement.start,
+    end: t.end + statement.start,
+  }));
+  return parseSqlQueryBlocksFromTokens(tokens, statement, dialect);
+}
+
+/** Parse full-document tokens within a statement without re-tokenizing SQL. */
+export function parseSqlQueryBlocksFromTokens(
+  all: readonly SqlToken[],
+  statement: { start: number; end: number },
+  dialect: SqlDialect
+): ParsedQueryBlock[] {
+  const tokens = all.filter(
+    (t) =>
+      t.start >= statement.start &&
+      t.end <= statement.end &&
+      t.kind !== "comment" &&
+      t.text !== ";"
+  );
   if (!["SELECT", "WITH"].includes(word(tokens[0]))) return [];
   const pairs = new Map<number, number>();
   const stack: number[] = [];

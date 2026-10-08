@@ -10,7 +10,8 @@ import type {
   SqlCompletionCacheKey,
   SqlMetadataIndex,
 } from "./sqlCompletionTypes";
-import { analyzeSqlCompletion } from "./sqlCompletionContext";
+import { analyzeSqlCompletionTokens } from "./sqlCompletionContext";
+import { createSqlCompletionDocumentCache } from "./sqlCompletionDocumentCache";
 import { resolveSqlCompletionScopes } from "./sqlCompletionScopes";
 import { generateSqlCompletionCandidates } from "./sqlCompletionCandidates";
 import { buildSqlMetadataIndex } from "./sqlCompletionMetadataIndex";
@@ -391,6 +392,72 @@ export function registerSqlCompletionProvider(
 ): Monaco.IDisposable {
   let disposed = false;
   let requestSequence = 0;
+  type Document = {
+    model: Monaco.editor.ITextModel;
+    cache: ReturnType<typeof createSqlCompletionDocumentCache>;
+    version: number;
+    dialect: SqlDialect;
+    subscriptions: Monaco.IDisposable[];
+  };
+  let document: Document | undefined;
+  const releaseDocument = () => {
+    const previous = document;
+    document = undefined;
+    requestSequence++;
+    if (!previous) return;
+    for (const subscription of previous.subscriptions) subscription.dispose();
+    previous.cache.dispose();
+  };
+  const resetDocument = (current: Document, dialect = current.dialect) => {
+    current.version = current.model.getVersionId();
+    current.dialect = dialect;
+    current.cache.reset(current.model.getValue(), current.version, dialect);
+  };
+  const bindDocument = (
+    model: Monaco.editor.ITextModel,
+    dialect: SqlDialect
+  ) => {
+    if (document?.model !== model) {
+      releaseDocument();
+      const version = model.getVersionId();
+      const current: Document = {
+        model,
+        cache: createSqlCompletionDocumentCache(
+          model.getValue(),
+          version,
+          dialect
+        ),
+        version,
+        dialect,
+        subscriptions: [],
+      };
+      document = current;
+      current.subscriptions.push(
+        model.onDidChangeContent((event) => {
+          if (document !== current) return;
+          const version = model.getVersionId();
+          // 已重建至最新模型版本时，迟到的旧事件不能再次应用旧坐标。
+          if (current.version === version) return;
+          if (
+            event.isFlush ||
+            event.versionId !== version ||
+            !current.cache.applyChanges(event.changes, event.versionId)
+          ) {
+            resetDocument(current);
+          } else current.version = event.versionId;
+        }),
+        model.onWillDispose(() => {
+          if (document === current) releaseDocument();
+        })
+      );
+    } else if (
+      document.version !== model.getVersionId() ||
+      document.dialect !== dialect
+    ) {
+      resetDocument(document, dialect);
+    }
+    return document!;
+  };
   const registration = monaco.languages.registerCompletionItemProvider("sql", {
     triggerCharacters: [" ", ".", ",", "(", "\n"],
     provideCompletionItems(model, position, _completionContext, token) {
@@ -398,21 +465,28 @@ export function registerSqlCompletionProvider(
       if (
         disposed ||
         token.isCancellationRequested ||
+        model.isDisposed() ||
         model.uri.toString() !== modelUri
       )
         return empty;
-      const sequence = ++requestSequence;
       const binding = getBinding();
-      if (!binding) return empty;
+      if (!binding) {
+        releaseDocument();
+        return empty;
+      }
+      const currentDocument = bindDocument(model, binding.key.dialect);
+      const sequence = ++requestSequence;
       const version = model.getVersionId();
       const revision = binding.revision;
       const sessionId = binding.sessionId;
       const keyId = sqlCompletionKeyId(binding.key);
-      binding.requestRefresh?.(() => {
+      const isCurrent = () => {
         const current = getBinding();
         return (
           !disposed &&
           sequence === requestSequence &&
+          document === currentDocument &&
+          document.model === model &&
           !token.isCancellationRequested &&
           !model.isDisposed() &&
           model.getVersionId() === version &&
@@ -420,11 +494,14 @@ export function registerSqlCompletionProvider(
           current.sessionId === sessionId &&
           sqlCompletionKeyId(current.key) === keyId
         );
-      });
-      const sql = model.getValue();
+      };
+      binding.requestRefresh?.(isCurrent);
+      if (!isCurrent()) return empty;
       const offset = model.getOffsetAt(position);
-      let context = analyzeSqlCompletion({
-        sql,
+      const syntax = currentDocument.cache.getStatement(offset);
+      let context = analyzeSqlCompletionTokens({
+        tokens: syntax.tokens,
+        statement: syntax.statement,
         offset,
         dialect: binding.key.dialect,
       });
@@ -445,7 +522,7 @@ export function registerSqlCompletionProvider(
               binding.key
             );
       context.defaultNamespace = index.key.database;
-      context = resolveSqlCompletionScopes({ sql, offset, context, index });
+      context = resolveSqlCompletionScopes({ syntax, offset, context, index });
       const snapshot = binding.foreignKeys;
       const foreignKeys =
         snapshot &&
@@ -465,8 +542,11 @@ export function registerSqlCompletionProvider(
         function: kinds.Function,
         relation: kinds.Module,
       };
-      const opener = sql[context.edit.start];
+      const opener = syntax.tokens.find(
+        (item) => item.start === context.edit.start
+      )?.text[0];
       const quoted = opener === '"' || opener === "`" || opener === "[";
+      if (!isCurrent()) return empty;
       return {
         incomplete: true,
         suggestions: candidates.map((candidate) => ({
@@ -493,6 +573,7 @@ export function registerSqlCompletionProvider(
   return {
     dispose() {
       disposed = true;
+      releaseDocument();
       registration.dispose();
     },
   };

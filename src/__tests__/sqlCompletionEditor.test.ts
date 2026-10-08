@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type * as Monaco from "monaco-editor";
 import { registerSqlEditorCompletion } from "../utils/sqlCompletionEditor";
 import { buildSqlMetadataIndex } from "../utils/sqlCompletionMetadataIndex";
+import { createSqlCompletionModel } from "./fixtures/sqlCompletionModel";
 
 function setup(sql = "SELECT ") {
   const key = {
@@ -47,14 +48,10 @@ function setup(sql = "SELECT ") {
   };
   let provider!: Monaco.languages.CompletionItemProvider;
   const dispose = vi.fn();
-  const model = {
-    uri: { toString: () => "editor:a" },
-    getVersionId: () => 1,
-    getValue: () => sql,
-    getOffsetAt: () => sql.length,
-    getPositionAt: (offset: number) => ({ lineNumber: 1, column: offset + 1 }),
-    isDisposed: () => false,
-  };
+  const fixture = createSqlCompletionModel(sql, "editor:a");
+  const model = fixture.model;
+  let currentModel: Monaco.editor.ITextModel | null = model;
+  let modelChange = () => {};
   const dom = document.createElement("div");
   dom.innerHTML = '<div class="suggest-widget visible"></div>';
   let explicitAction: Monaco.editor.IActionDescriptor | undefined;
@@ -68,12 +65,15 @@ function setup(sql = "SELECT ") {
       blur = listener;
       return { dispose: vi.fn() };
     },
-    getModel: () => model,
+    getModel: () => currentModel,
     getPosition: () => ({ lineNumber: 1, column: sql.length + 1 }),
     hasTextFocus: () => true,
     getDomNode: () => dom,
     trigger: vi.fn(),
-    onDidChangeModel: () => ({ dispose: vi.fn() }),
+    onDidChangeModel: (listener: () => void) => {
+      modelChange = listener;
+      return { dispose: vi.fn() };
+    },
     onDidFocusEditorText: () => ({ dispose: vi.fn() }),
   };
   const monaco = {
@@ -98,13 +98,18 @@ function setup(sql = "SELECT ") {
   const token = { isCancellationRequested: false };
   const run = (triggerKind = 0) =>
     provider.provideCompletionItems(
-      model as unknown as Monaco.editor.ITextModel,
+      currentModel!,
       editor.getPosition() as Monaco.Position,
       { triggerKind },
       token as Monaco.CancellationToken
     ) as Monaco.languages.CompletionList;
   run();
   return {
+    subscriptions: fixture.subscriptions,
+    switchModel(next: Monaco.editor.ITextModel | null) {
+      currentModel = next;
+      modelChange();
+    },
     finish,
     registration,
     editor,
@@ -187,5 +192,38 @@ describe("编辑器显式关系补全会话", () => {
     expect(s.run().suggestions.some((item) => item.kind === 2)).toBe(true);
     s.blur();
     expect(s.run().suggestions.some((item) => item.kind === 2)).toBe(false);
+  });
+});
+
+describe("编辑器模型订阅释放", () => {
+  it("换模型和无模型时同步释放旧缓存，反复重绑不会累积订阅", () => {
+    const s = setup();
+    expect(s.subscriptions()).toBe(2);
+    const fixtures = Array.from({ length: 10 }, () =>
+      createSqlCompletionModel("SELECT ", "editor:a")
+    );
+    for (const fixture of fixtures) {
+      s.switchModel(fixture.model);
+      s.run();
+    }
+    expect(s.subscriptions()).toBe(0);
+    expect(
+      fixtures.reduce((count, item) => count + item.subscriptions(), 0)
+    ).toBe(2);
+    s.switchModel(null);
+    expect(fixtures.every((item) => item.subscriptions() === 0)).toBe(true);
+    const disposed = s.dispose.mock.calls.length;
+    s.registration.dispose();
+    expect(s.dispose).toHaveBeenCalledTimes(disposed);
+  });
+  it("模型切换后元数据慢回复不能重新打开旧菜单", async () => {
+    const s = setup();
+    const fixture = createSqlCompletionModel("SELECT ", "editor:a");
+    s.switchModel(fixture.model);
+    s.finish(true);
+    await Promise.resolve();
+    expect(s.editor.trigger).not.toHaveBeenCalled();
+    s.registration.dispose();
+    expect(s.subscriptions() + fixture.subscriptions()).toBe(0);
   });
 });

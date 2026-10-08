@@ -1,0 +1,93 @@
+{
+  "date": "2026-09-30",
+  "documentUtf16Length": 1068282,
+  "statements": 19783,
+  "editCount": 400,
+  "gcPerObservation": 5,
+  "environment": {
+    "node": "v25.5.0",
+    "v8": "14.1.146.11-node.18",
+    "jscExecutable": "/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc",
+    "jscVersion": "21624.2.5.11.8",
+    "jscShortVersion": "21624",
+    "macOS": "26.5.2"
+  },
+  "nodeHeapUsedBytes": {
+    "baseline": {
+      "before": 23662976,
+      "created": 39990360,
+      "edit100": 146886016,
+      "edit200": 253716528,
+      "edit300": 360547496,
+      "edit400": 467378040,
+      "settled": 467378248,
+      "disposed": 23772832
+    },
+    "fixed": {
+      "before": 23655688,
+      "created": 40299424,
+      "edit100": 40366792,
+      "edit200": 40366904,
+      "edit300": 40367424,
+      "edit400": 40367568,
+      "settled": 40367776,
+      "disposed": 23767432
+    },
+    "repositoryRegression": {
+      "before": 6491296,
+      "created": 19965280,
+      "edit100": 20036536,
+      "edit200": 20036648,
+      "edit300": 20037184,
+      "edit400": 20037328,
+      "settled": 20037536,
+      "disposed": 6602520
+    }
+  },
+  "jscMemoryFootprintCurrentBytes": {
+    "baseline": {
+      "before": 6178240,
+      "created": 73500224,
+      "edit100": 170804928,
+      "edit200": 278267776,
+      "edit300": 385468480,
+      "edit400": 492702016,
+      "settled": 492357952,
+      "disposed": 492357952
+    },
+    "prefixSliceCopyRejected": {
+      "before": 6112704,
+      "created": 76678720,
+      "edit100": 174425792,
+      "edit200": 281855872,
+      "edit300": 389220416,
+      "edit400": 495716672,
+      "disposed": 495716672
+    },
+    "splitJoinFixed1200": {
+      "before": 6014336,
+      "created": 96634496,
+      "edit100": 179652352,
+      "edit200": 180995904,
+      "edit300": 182601536,
+      "edit400": 183273280,
+      "edit500": 183797568,
+      "edit600": 183256896,
+      "edit700": 183256896,
+      "edit800": 183437120,
+      "edit900": 184125248,
+      "edit1000": 184600384,
+      "edit1100": 184174400,
+      "edit1200": 184174400,
+      "settled": 184174400,
+      "disposed": 184174400
+    }
+  },
+  "notes": [
+    "Node heapUsed and JSC MemoryFootprint use different accounting; do not compare their absolute levels.",
+    "JSC footprint includes allocator and JIT storage and did not immediately decrease on disposal. Fixed implementation reaches a plateau; original grows with edit count.",
+    "The final JSC UTF-16 check preserves lone high and low surrogates and deletion inside a surrogate pair.",
+    "Temporary compilation loader overhead explains the higher Node baseline compared with the repository rolldown regression.",
+    "repositoryRegression records the final single-object token construction; the independent fixed loader comparison predates that allocation simplification."
+  ]
+}

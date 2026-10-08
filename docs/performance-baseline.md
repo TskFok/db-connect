@@ -225,3 +225,108 @@ cargo test --manifest-path src-tauri/Cargo.toml table_pagination
 | Clippy | 仍为未改动 `sqlserver_objects.rs:629` 的既有 `type_complexity` |
 
 并发 DDL、刷新接管后再次失效、断线、切换连接、关闭重开同名表及旧请求 finally 均有确定性回归。独立审查发现的问题完成红绿修复并通过限定复审。MySQL 8 重叠授权的有效回归使用不含通配字符的精确库名；早期含未转义下划线的探针被排除，没有当作有效失败证据。
+
+
+## 04：长文档 SQL 补全（2026-09-30）
+
+### 夹具与 Node 测量边界
+
+使用同一台 macOS arm64、Node v25.5.0、已安装的 Rolldown，将实际分析器、作用域绑定、候选生成和文档缓存打包为非压缩 ESM。旧实现只读提交 `b550decd62af94f3cd8003f8277845c845d8a25e`，新实现读取工作区。两组分进程顺序执行，正式采样时不并行运行全量测试或构建；没有强制 GC。
+
+预建 1,000 表、每表 50 列的索引。固定 49 B 活跃语句位于末尾，历史语句每条 53 B（含换行），100 KiB/1 MiB 分别包含 1,931/19,783 条历史语句，以空格补齐目标 UTF-16 长度。本夹具为 ASCII，字节数等于 UTF-16 长度；各档都返回 50 项相同内容和顺序的列候选。
+
+每种大小、每种路径热身 5 次后取 20 个样本，p50/p95 分别取排序后第 10/19 项。冷组包含文档扫描、首次查询块解析与完整候选计算；热组复用同版本语法；编辑组交替在末尾插入/删除一个字符，计时包含 `applyChanges` 与候选计算。索引构建不计时。**这些数字不包含 Monaco 模型、界面、WebView、IPC 或数据库。** 旧实现每次完整解析，冷/热/编辑三组原始值均已保存；下表旧列展示同版本重复补全，便于与原计划基线比较。
+
+### Node 结果
+
+单位毫秒，单元格为 **p50 / p95**。原始样本与环境见 [Node 补全证据](performance/sql-completion-2026-09-30.json)。
+
+| 文档 | 旧热补全 | 新冷初始化及补全 | 新热补全 | 新末尾编辑及补全 |
+| --- | ---: | ---: | ---: | ---: |
+| 49 B | 0.176 / 0.284 | 0.278 / 1.041 | 0.166 / 0.534 | 0.165 / 0.323 |
+| 100 KiB | 5.100 / 5.629 | 7.091 / 8.450 | 0.135 / 0.412 | 0.146 / 0.805 |
+| 1 MiB | 56.870 / 61.889 | 69.992 / 74.535 | 0.114 / 0.119 | 0.247 / 0.304 |
+
+1 MiB 热补全和末尾编辑的 p95 均小于 15 ms；49 B 相对旧路径的冷/热/编辑 p95 绝对退化分别为 0.688/0.250/0.016 ms，均小于 1 ms。1 MiB 首次初始化仍需完整扫描并分配语句、token，p50/p95 为 69.992/74.535 ms，旧冷组为 57.640/63.567 ms；冷路径没有获得与热路径相同的收益，不能把热路径结论应用于首次打开文档。
+
+缓存每个模型只保存当前文本版本，语句内 token 使用局部 UTF-16 坐标，查询块 LRU 最多 32 项。末尾编辑不扫描历史语句，也不复制历史语句索引；中部编辑仍会调整后缀语句起点，字符串拼接/展平也可能涉及全文。删除字符串或注释闭合符导致词法状态无法收敛时，安全重扫到文末。
+
+### 复现
+
+```sh
+node scripts/performance/sql-completion-benchmark.mjs \
+  --ref b550decd62af94f3cd8003f8277845c845d8a25e \
+  --output /private/tmp/sql-completion-before.json
+node scripts/performance/sql-completion-benchmark.mjs \
+  --output /private/tmp/sql-completion-after.json
+npm test -- src/__tests__/sqlCompletionDocumentPerformance.test.ts src/__tests__/sqlCompletionPerformance.test.ts
+```
+
+墙钟数据仅记录，不作为 CI 门禁。CI 断言同版本额外全文分词/扫描为零，1 MiB 末尾编辑仅扫描活跃语句，三档候选内容等价，100 次完整热补全不会新增元数据请求。
+
+
+### 字符串存储资源回归
+
+审查发现初版 `token.text` 为全文切片，V8 与 JavaScriptCore 可由长 token 的字符串背板保留整个旧文档；依次编辑不同语句时，虽然逻辑上只有当前文本版本，实际内存仍会按编辑次数线性增加。最终实现只在新扫描 token 写入缓存时按 UTF-16 单元构造独立字符串；查询块复用和普通读取不重复复制。该复制保留孤立代理项，未采用只在 V8 有效、在 JSC 无效的前缀拼接后切片技巧。上表已在此最终实现上重新采样，包含新增复制成本。
+
+资源夹具为 1,068,282 个 UTF-16 单元、19,783 条语句，连续在 400 条不同语句中等长替换一个 26 字符标识符。每个采样点强制 GC 五次，测 Node heapUsed；它不是进程 RSS 或 WebView 堆。修复前同一仓库脚本的堆为创建后 21.75 MiB、400 次后 429.35 MiB，触发资源断言失败。最终实现独立复测为 **19.04 → 19.11 MiB**，dispose 后回到 **6.30 MiB**（创建前 6.19 MiB）。脚本断言连续编辑后相对创建后增长小于 16 MiB，dispose 后相对基线增长小于 8 MiB，专门防止旧版本线性保留。
+
+本机 JavaScriptCore CLI 另对实际缓存依赖进行对照：旧实现 400 次后的 footprint 约 493 MB 且线性增长；修复后 400 次约 183 MB，扩展至 1,200 次仍约 184 MB。footprint 包含 JIT 和分配器，GC/dispose 不保证立即归还进程内存，故不能将其与 V8 heapUsed 混用，也不是完整 Tauri 应用的峰值。环境与原始字节见 [多引擎内存证据](performance/sql-completion-memory-review-2026-09-30.json)，最终仓库脚本数据并入 [Node 证据](performance/sql-completion-2026-09-30.json)。
+
+```sh
+node --expose-gc scripts/performance/sql-completion-cache-memory.mjs
+```
+
+### 集成验证
+
+最终资源修复后的验证已于 2026-09-30 完成；后续 WebView 验收只修改独立测量工具及文档。
+
+| 检查 | 结果 |
+| --- | --- |
+| 前端全量 `npm test -- --maxWorkers=2` | 149 文件、1,978 项通过 |
+| Rust 全量 `npm run test:rust` | 771 项通过、18 项默认忽略；本地协议替身已允许监听，未启用真实数据库测试 |
+| `npm run build` | 通过；既有大 chunk 和无效动态导入提示保留 |
+| 修改的 TS、Node 脚本定向 ESLint / Prettier | 通过 |
+| Rust 格式 / 差异空白 | 通过 |
+| 全仓 ESLint | 未改动的 `scripts/release.mjs:203,211` 和 `scripts/release.node-test.mjs:382` 仍有 3 项既有错误 |
+| Clippy | 未改动的 `src-tauri/src/db/sqlserver_objects.rs:629` 仍有既有 `type_complexity` |
+
+实现边界、差分验证和独立审查记录见 [04 实施计划](superpowers/plans/2026-09-30-performance-04-sql-completion.md)。
+
+### WKWebView 补验（2026-10-08）
+
+在 macOS 26.5.2（25F84）、原生 WebKit `21624.2.5.11.8` 的独立 WKWebView 中运行真实 Monaco 和生产 `registerSqlCompletionProvider`。使用上述三档文档和合成的 1,000 表/50,000 列 MySQL 元数据，窗口为 1200×800，Vite 开发模式，不连接数据库。原始环境、全部有效样本、热身及失焦样本见 [WebView 补全证据](performance/sql-completion-webview-2026-09-30.json)。文件名沿用专项计划日期，实际采样时间保存在 `recordedAt`。
+
+各档冷/热/编辑组均先热身 5 次，再保留 20 次有效测量，共 225 次有效触发。每次必须返回 50 项候选，并观察到 `.suggest-widget.visible` 内真实列表行；虚拟列表 DOM 行数不等于候选总数。计时前完成原生窗口聚焦握手，仅明确失焦的样本允许每组最多 5 次重试；本轮 49 B 热组丢弃 1 次失焦超时，其余组为 0，丢弃原因和原始样本均保留。焦点有效时的超时、错误候选数量和 JavaScript 异常均使脚本失败。
+
+菜单延迟单位毫秒，单元格为 **p50 / p95**：
+
+| 文档 | 冷初始化至菜单出现 | 热补全至菜单出现 | 末尾编辑至菜单出现 |
+| --- | ---: | ---: | ---: |
+| 49 B | 103 / 104 | 103 / 104 | 104 / 106 |
+| 100 KiB | 111 / 114 | 103 / 104 | 105 / 106 |
+| 1 MiB | 179 / 190 | 104 / 105 | 105 / 106 |
+
+冷组每次重新创建模型/provider，计时从补全触发开始，包含语法缓存首次扫描，**不包含 Monaco 模型创建或应用启动**。热组复用同版本；编辑组从 `applyEdits` 前开始，包含内容事件中的缓存更新，再触发菜单。编辑测量删除末尾一个字符，恢复字符在该次计时结束后完成。菜单时间包含 Monaco 调度与 DOM 更新，不能直接与 Node 计算链时间等同；本次没有旧版本的 WebView 对照，不据此推算界面加速倍数。
+
+同步阶段另行测量，以下为 **p95 / 最大值**（毫秒）：
+
+| 文档 | 冷 provider 单次调用 | 热 provider 单次调用 | 编辑后 provider 单次调用 | 同步 applyEdits |
+| --- | ---: | ---: | ---: | ---: |
+| 49 B | 2 / 2 | 1 / 1 | 1 / 1 | 2 / 2 |
+| 100 KiB | 11 / 11 | 1 / 1 | 1 / 1 | 2 / 2 |
+| 1 MiB | 79 / 96 | 1 / 1 | 1 / 1 | 1 / 2 |
+
+此 WebView 时钟样本呈约 1 ms 粒度，原始 0 ms 表示低于可分辨粒度，不能解读为零成本。1 MiB 冷组的 **20/20 个单次同步 provider 调用均超过 50 ms**，是可复现的主线程阻塞证据；热组和编辑组的已测同步阶段没有超过该阈值。`longtask` 和 `performance.memory` API 均不受此 WKWebView 支持，RAF 最大间隔只作为辅助信息，不能据此排除全部渲染阶段长任务，也不能把约 100 ms 的菜单等待当作一个连续长任务。
+
+夹具关闭 quick suggestions、字符自动触发、minimap 及 occurrences highlight，使用显式补全触发。关闭 occurrences highlight 避免反复销毁模型时无关的单词高亮延迟任务产生未捕获取消异常，未忽略全局异常。本结果属于独立 WKWebView 开发页，不代表打包后的完整 Tauri 应用；长单条 SQL、必须扫描至文末的词法编辑和完整应用峰值堆未在这组三档夹具中测量。
+
+冷路径达到原计划的后续设计触发条件，已在 [04 计划的 Worker 后续任务](superpowers/plans/2026-09-30-performance-04-sql-completion.md#worker-后续设计任务待开展) 登记；本次保持同步增量缓存实现，未引入 Worker。
+
+复现需要 macOS、已安装的 Swift 编译器和项目依赖；运行时保持测试窗口在前台，脚本退出会清理其自身进程：
+
+```sh
+bash scripts/performance/sql-completion-webview.sh /private/tmp/sql-completion-webview.json
+```
+
+原始数据已通过独立重算复核。启动脚本要求本次 Vite 进程存活且日志确认成功监听，再访问页面；端口占用替身回归确认脚本以状态 2 退出，没有误连旧服务或启动 WebView。

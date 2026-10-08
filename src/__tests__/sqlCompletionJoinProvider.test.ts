@@ -59,9 +59,11 @@ function setup(marked: string) {
   };
   const model = {
     uri: { toString: () => "join-model" },
-    getValue: () => sql,
+    getValue: vi.fn(() => sql),
     getVersionId: () => 1,
     isDisposed: () => false,
+    onDidChangeContent: () => ({ dispose() {} }),
+    onWillDispose: () => ({ dispose() {} }),
     getOffsetAt: () => offset,
     getPositionAt: positionAt,
     setValue: vi.fn(),
@@ -113,6 +115,34 @@ const relations = (list: Monaco.languages.CompletionList) =>
   list.suggestions.filter((item) => item.kind === 2);
 
 describe("JOIN 外键关系 provider", () => {
+  it("SQL 不变时新连接代次和外键快照立即替换 JOIN 建议，复用语法缓存", () => {
+    const s = setup("SELECT * FROM orders o JOIN customers c ON |");
+    expect(relations(s.run())[0]?.insertText).toBe(
+      '"o"."customer_id" = "c"."id"'
+    );
+    const nextKey = { ...key, connectionRevision: 1 };
+    const binding = s.binding();
+    s.setBinding({
+      ...binding,
+      key: nextKey,
+      revision: 1,
+      index: { ...binding.index!, key: nextKey },
+      foreignKeys: {
+        key: nextKey,
+        result: {
+          status: "ready",
+          foreignKeys: [
+            { ...ready.foreignKeys[0], columns: ["new_customer_id"] },
+          ],
+        },
+      },
+    });
+    expect(relations(s.run())[0]?.insertText).toBe(
+      '"o"."new_customer_id" = "c"."id"'
+    );
+    expect(s.model.getValue).toHaveBeenCalledTimes(1);
+    s.registration.dispose();
+  });
   it("显式补全返回完整条件，接受时仅替换当前前缀，不主动改写模型", () => {
     const s = setup("SELECT * FROM orders o\nJOIN customers c ON cus|");
     const item = relations(s.run())[0];

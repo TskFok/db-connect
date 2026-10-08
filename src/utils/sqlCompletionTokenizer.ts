@@ -12,9 +12,24 @@ const identifierPart = /[\p{L}\p{Nl}\p{N}\p{M}_$]/u;
 /** Raw text and offsets deliberately retain UTF-16 coordinates used by Monaco. */
 export function tokenizeSql(sql: string, dialect: SqlDialect): SqlToken[] {
   const tokens: SqlToken[] = [];
-  let i = 0;
+  scanSqlTokens(sql, dialect, 0, (token) => {
+    tokens.push(token);
+  });
+  return tokens;
+}
+
+/** Scan from a known ordinary lexical checkpoint, retaining full line context.
+ * Returning false stops at the emitted token; strings/comments are consumed whole.
+ */
+export function scanSqlTokens(
+  sql: string,
+  dialect: SqlDialect,
+  startOffset: number,
+  onToken: (token: SqlToken) => boolean | void
+): void {
+  let i = startOffset;
   const push = (start: number, kind: SqlToken["kind"], quoted = false) =>
-    tokens.push({ kind, text: sql.slice(start, i), start, end: i, quoted });
+    onToken({ kind, text: sql.slice(start, i), start, end: i, quoted });
   while (i < sql.length) {
     if (/\s/.test(sql[i])) {
       i++;
@@ -30,7 +45,7 @@ export function tokenizeSql(sql: string, dialect: SqlDialect): SqlToken[] {
       (ch === "#" && dialect === "mysql")
     ) {
       while (i < sql.length && sql[i] !== "\n" && sql[i] !== "\r") i++;
-      push(start, "comment");
+      if (push(start, "comment") === false) return;
       continue;
     }
     if (sql.startsWith("/*", i)) {
@@ -48,7 +63,7 @@ export function tokenizeSql(sql: string, dialect: SqlDialect): SqlToken[] {
           i += 2;
         } else i++;
       }
-      push(start, "comment");
+      if (push(start, "comment") === false) return;
       continue;
     }
     const dollar =
@@ -58,7 +73,7 @@ export function tokenizeSql(sql: string, dialect: SqlDialect): SqlToken[] {
     if (dollar) {
       const end = sql.indexOf(dollar, i + dollar.length);
       i = end < 0 ? sql.length : end + dollar.length;
-      push(start, "string", true);
+      if (push(start, "string", true) === false) return;
       continue;
     }
     const bracket =
@@ -90,7 +105,7 @@ export function tokenizeSql(sql: string, dialect: SqlDialect): SqlToken[] {
           i += Math.min(2, sql.length - i);
         else i++;
       }
-      push(start, string ? "string" : "identifier", true);
+      if (push(start, string ? "string" : "identifier", true) === false) return;
       continue;
     }
     if (/\d/.test(ch)) {
@@ -101,7 +116,7 @@ export function tokenizeSql(sql: string, dialect: SqlDialect): SqlToken[] {
         if (/[+-]/.test(sql[i])) i++;
         while (/\d/.test(sql[i] ?? "")) i++;
       }
-      push(start, "number");
+      if (push(start, "number") === false) return;
       continue;
     }
     const cp = String.fromCodePoint(sql.codePointAt(i)!);
@@ -121,25 +136,28 @@ export function tokenizeSql(sql: string, dialect: SqlDialect): SqlToken[] {
           sql.slice(sql.lastIndexOf("\n", start - 1) + 1, start)
         ) &&
         /^[\t ]*(?:\r?\n|$)/.test(sql.slice(i));
-      push(
-        start,
-        go ? "punctuation" : KEYWORDS.has(word) ? "keyword" : "identifier"
-      );
+      if (
+        push(
+          start,
+          go ? "punctuation" : KEYWORDS.has(word) ? "keyword" : "identifier"
+        ) === false
+      )
+        return;
       continue;
     }
     i++;
-    if ("(),.;".includes(ch)) push(start, "punctuation");
-    else {
+    if ("(),.;".includes(ch)) {
+      if (push(start, "punctuation") === false) return;
+    } else {
       if (
         ["<=", ">=", "<>", "!=", "||", "::", ":="].includes(
           sql.slice(start, i + 1)
         )
       )
         i++;
-      push(start, "operator");
+      if (push(start, "operator") === false) return;
     }
   }
-  return tokens;
 }
 
 export function findSqlStatement(

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SQL completion WKWebView benchmark</title>
+    <style>
+      html,
+      body,
+      #editor {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="editor"></div>
+    <script>
+      window.addEventListener("error", (event) => {
+        window.webkit?.messageHandlers?.benchmark?.postMessage({
+          type: "error",
+          message: event.message,
+          stack: event.error?.stack,
+        });
+      });
+      window.addEventListener("unhandledrejection", (event) => {
+        window.webkit?.messageHandlers?.benchmark?.postMessage({
+          type: "error",
+          message: String(event.reason),
+          stack: event.reason?.stack,
+        });
+      });
+    </script>
+    <script
+      type="module"
+      src="/scripts/performance/sql-completion-webview.ts"
+    ></script>
+  </body>
+</html>

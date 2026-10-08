@@ -46,6 +46,22 @@ export function analyzeSqlCompletion(input: {
   const offset = Math.max(0, Math.min(input.offset, sql.length));
   const all = tokenizeSql(sql, dialect);
   const statement = findSqlStatement(all, offset, sql.length);
+  return analyzeSqlCompletionTokens({
+    tokens: all,
+    statement,
+    offset,
+    dialect,
+  });
+}
+
+/** Consume already-tokenized full-document SQL with UTF-16 document offsets. */
+export function analyzeSqlCompletionTokens(input: {
+  tokens: readonly SqlToken[];
+  statement: { start: number; end: number };
+  offset: number;
+  dialect: SqlDialect;
+}): SqlCompletionContext {
+  const { tokens: all, statement, offset, dialect } = input;
   const tokens = all.filter(
     (t) =>
       t.start >= statement.start &&

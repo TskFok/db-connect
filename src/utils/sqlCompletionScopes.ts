@@ -1,5 +1,8 @@
 import type { SqlDialect } from "./sqlCompletion";
-import { analyzeSqlCompletion } from "./sqlCompletionContext";
+import {
+  analyzeSqlCompletion,
+  analyzeSqlCompletionTokens,
+} from "./sqlCompletionContext";
 import {
   resolveSqlName,
   sqlIdentifierName,
@@ -21,6 +24,7 @@ import type {
   RelationSymbol,
   SqlCompletionContext,
   SqlMetadataIndex,
+  SqlToken,
 } from "./sqlCompletionTypes";
 
 interface CteDefinition {
@@ -33,13 +37,29 @@ const unknownProjection = (): ProjectionInference => ({
 });
 
 /** SQL 文本和当前批量索引的纯计算：既不请求元数据，也不执行 SQL。 */
-export function resolveSqlCompletionScopes(input: {
-  sql: string;
-  offset: number;
-  context: SqlCompletionContext;
-  index: SqlMetadataIndex;
-}): SqlCompletionContext {
-  const { sql, offset, context, index } = input;
+export function resolveSqlCompletionScopes(
+  input: {
+    offset: number;
+    context: SqlCompletionContext;
+    index: SqlMetadataIndex;
+  } & (
+    | {
+        sql: string;
+        syntax?: {
+          tokens: readonly SqlToken[];
+          blocks: readonly ParsedQueryBlock[];
+        };
+      }
+    | {
+        sql?: string;
+        syntax: {
+          tokens: readonly SqlToken[];
+          blocks: readonly ParsedQueryBlock[];
+        };
+      }
+  )
+): SqlCompletionContext {
+  const { sql, offset, context, index, syntax } = input;
   const result: SqlCompletionContext = {
     ...context,
     statement: { ...context.statement },
@@ -54,7 +74,9 @@ export function resolveSqlCompletionScopes(input: {
     })),
   };
   try {
-    const blocks = parseSqlQueryBlocks(sql, context.statement, context.dialect);
+    const blocks = syntax
+      ? syntax.blocks
+      : parseSqlQueryBlocks(sql ?? "", context.statement, context.dialect);
     // UPDATE/INSERT/DELETE 仍沿用一期目标列和赋值槽位分析。
     if (!blocks.length) return result;
     const dialect = context.dialect;
@@ -485,11 +507,18 @@ export function resolveSqlCompletionScopes(input: {
         ? (active.clauses.find((clause) => clause.name === "select")?.start ??
           active.range.start)
         : active.range.start;
-      const local = analyzeSqlCompletion({
-        sql: sql.slice(localStart, active.range.end),
-        offset: offset - localStart,
-        dialect,
-      });
+      const local = syntax
+        ? analyzeSqlCompletionTokens({
+            tokens: syntax.tokens,
+            statement: { start: localStart, end: active.range.end },
+            offset,
+            dialect,
+          })
+        : analyzeSqlCompletion({
+            sql: (sql ?? "").slice(localStart, active.range.end),
+            offset: offset - localStart,
+            dialect,
+          });
       result.clause = local.clause;
       result.slot = local.slot;
       result.operator = local.operator;
