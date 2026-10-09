@@ -1,5 +1,5 @@
 import { Checkbox, Empty, Spin, theme as antdTheme } from "antd";
-import type { ColumnType } from "antd/es/table";
+import type { TableRowSource } from "./tableRowSource";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   memo,
@@ -27,13 +27,18 @@ export interface VirtualDataTableRowSelection {
   columnWidth?: number;
 }
 
+export interface VirtualDataTableColumn {
+  key: string;
+  title: ReactNode;
+  width?: number;
+  ellipsis?: boolean;
+  onHeaderCell?: () => { onResize?: (width: number) => void };
+  renderCell: (rowIndex: number) => ReactNode;
+}
+
 export interface VirtualDataTableProps {
-  /** 列定义；与现有 antd ColumnType 保持兼容（render/title/width/key/onHeaderCell） */
-  columns: ColumnType<Record<string, unknown>>[];
-  /** 行数据 */
-  dataSource: Record<string, unknown>[];
-  /** 取行 key，需与 rowSelection.selectedRowKeys 中的值一致 */
-  rowKey: (record: Record<string, unknown>, index: number) => string;
+  columns: VirtualDataTableColumn[];
+  rowSource: TableRowSource;
   loading?: boolean;
   /** 表格主体（不含表头）的可用高度 */
   height: number;
@@ -48,7 +53,7 @@ export interface VirtualDataTableProps {
   /** 外部渲染依赖变化时用于穿透 React.memo 的内部修订值 */
   renderRevision?: unknown;
   /** 自定义行 className（与当前实现的 row 样式覆盖） */
-  rowClassName?: (record: Record<string, unknown>, index: number) => string;
+  rowClassName?: (index: number) => string;
   /** 用于附加额外属性，比如 data-testid */
   testId?: string;
   /** 本次挂载要恢复的滚动位置 */
@@ -65,24 +70,24 @@ interface ResolvedColumn {
   /** 列宽调节回调（来自 onHeaderCell({...,onResize}) 或显式 props） */
   onResize?: (newWidth: number) => void;
   /** 单元格渲染函数 */
-  render: (record: Record<string, unknown>, rowIndex: number) => ReactNode;
+  render: (rowIndex: number) => ReactNode;
   /** 是否启用文本省略（默认 true，避免内容撑开 cell 高度） */
   ellipsis: boolean;
   /** 是否为内部行选择列；不参与列宽调节也不可隐藏 */
   isSelection?: boolean;
 }
 
-/** 统一从 antd ColumnType 中解析出渲染所需信息 */
+/** 统一解析按索引渲染的列定义 */
 function resolveColumn(
-  col: ColumnType<Record<string, unknown>>,
+  col: VirtualDataTableColumn,
   defaultColWidth: number
 ): ResolvedColumn {
-  const key = String(col.key ?? col.dataIndex ?? Math.random());
+  const key = col.key;
   const width = typeof col.width === "number" ? col.width : defaultColWidth;
   let onResize: ((newWidth: number) => void) | undefined;
   if (typeof col.onHeaderCell === "function") {
     try {
-      const props = col.onHeaderCell({} as never) as
+      const props = col.onHeaderCell() as
         | { onResize?: (w: number) => void }
         | undefined;
       onResize = props?.onResize;
@@ -90,31 +95,12 @@ function resolveColumn(
       onResize = undefined;
     }
   }
-  const dataIndex =
-    typeof col.dataIndex === "string" || typeof col.dataIndex === "number"
-      ? col.dataIndex
-      : undefined;
   return {
     key,
     width,
-    title: col.title as ReactNode,
+    title: col.title,
     onResize,
-    render: (record, rowIndex) => {
-      if (typeof col.render === "function") {
-        const value =
-          dataIndex !== undefined ? record[dataIndex as string] : undefined;
-        const out = col.render(value, record, rowIndex);
-        // antd 的 render 返回值可能是 RenderedCell（带 children/props），这里仅取其 children 渲染
-        if (out && typeof out === "object" && "children" in out) {
-          return (out as { children?: ReactNode }).children ?? null;
-        }
-        return out as ReactNode;
-      }
-      if (dataIndex !== undefined) {
-        return record[dataIndex as string] as ReactNode;
-      }
-      return null;
-    },
+    render: col.renderCell,
     ellipsis: col.ellipsis !== false,
   };
 }
@@ -158,10 +144,7 @@ function ColumnResizer({
       const onMouseMove = (moveEvent: MouseEvent) => {
         const delta = moveEvent.clientX - startX;
         const newWidth = Math.round(
-          Math.max(
-            MIN_COL_WIDTH,
-            Math.min(MAX_COL_WIDTH, startWidth + delta)
-          )
+          Math.max(MIN_COL_WIDTH, Math.min(MAX_COL_WIDTH, startWidth + delta))
         );
         if (newWidth === nextWidth) return;
         nextWidth = newWidth;
@@ -223,12 +206,11 @@ function ColumnResizer({
  * - 单一横向滚动容器，header 与 body 共用，通过 sticky 让表头跟随纵向滚动。
  * - 行虚拟化：rowVirtualizer 监听容器纵向滚动。
  * - 列虚拟化：columnVirtualizer 监听容器横向滚动；header 与 body 共享同一个 virtualizer。
- * - 兼容当前 TableData 的 ColumnType 形态，使 antd 风格的列定义（含 render / onHeaderCell）可直接接入。
+ * - 按行索引读取二维页快照，仅渲染可见行列。
  */
 function VirtualDataTableInner({
   columns,
-  dataSource,
-  rowKey,
+  rowSource,
   loading,
   height,
   rowHeight = DEFAULT_ROW_HEIGHT,
@@ -252,8 +234,10 @@ function VirtualDataTableInner({
   const handleResizePreview = useCallback(
     (columnKey: string, width: number | null) => {
       setResizePreview((current) => {
-        if (width === null) return current?.columnKey === columnKey ? null : current;
-        if (current?.columnKey === columnKey && current.width === width) return current;
+        if (width === null)
+          return current?.columnKey === columnKey ? null : current;
+        if (current?.columnKey === columnKey && current.width === width)
+          return current;
         return { columnKey, width };
       });
     },
@@ -281,11 +265,14 @@ function VirtualDataTableInner({
 
   // 拖动预览仅作用于本表，避免每帧触发持久化和父级列定义重建。
   const resolvedColumns = useMemo(
-    () => resizePreview
-      ? baseColumns.map((column) => column.key === resizePreview.columnKey
-        ? { ...column, width: resizePreview.width }
-        : column)
-      : baseColumns,
+    () =>
+      resizePreview
+        ? baseColumns.map((column) =>
+            column.key === resizePreview.columnKey
+              ? { ...column, width: resizePreview.width }
+              : column
+          )
+        : baseColumns,
     [baseColumns, resizePreview]
   );
 
@@ -296,7 +283,7 @@ function VirtualDataTableInner({
 
   // 行虚拟化
   const rowVirtualizer = useVirtualizer({
-    count: dataSource.length,
+    count: rowSource.rowCount,
     getScrollElement: () => containerRef.current,
     estimateSize: () => rowHeight,
     overscan: 6,
@@ -366,26 +353,39 @@ function VirtualDataTableInner({
   const visibleColumns = columnVirtualizer.getVirtualItems();
   const visibleRows = rowVirtualizer.getVirtualItems();
 
-  // 全选状态计算
-  const allDataKeys = useMemo(
-    () => dataSource.map((r, i) => rowKey(r, i)),
-    [dataSource, rowKey]
-  );
-  const allSelected =
-    rowSelection != null &&
-    allDataKeys.length > 0 &&
-    allDataKeys.every((k) => selectedKeySet.has(k));
-  const indeterminate =
-    rowSelection != null &&
-    allDataKeys.some((k) => selectedKeySet.has(k)) &&
-    !allSelected;
+  const rowSelectionEnabled = rowSelection != null;
+  // 空选择不扫描整页；滚动不会重算全选状态。
+  const selectionState = useMemo(() => {
+    if (
+      !rowSelectionEnabled ||
+      selectedKeySet.size === 0 ||
+      rowSource.rowCount === 0
+    ) {
+      return { allSelected: false, indeterminate: false };
+    }
+    let selectedCount = 0;
+    for (let index = 0; index < rowSource.rowCount; index++) {
+      if (selectedKeySet.has(rowSource.getRowKey(index))) selectedCount++;
+    }
+    return {
+      allSelected: selectedCount === rowSource.rowCount,
+      indeterminate: selectedCount > 0 && selectedCount < rowSource.rowCount,
+    };
+  }, [rowSource, selectedKeySet, rowSelectionEnabled]);
+  const { allSelected, indeterminate } = selectionState;
 
   const handleToggleAll = useCallback(
     (checked: boolean) => {
       if (!rowSelection) return;
-      rowSelection.onChange(checked ? allDataKeys : []);
+      rowSelection.onChange(
+        checked
+          ? Array.from({ length: rowSource.rowCount }, (_, index) =>
+              rowSource.getRowKey(index)
+            )
+          : []
+      );
     },
-    [rowSelection, allDataKeys]
+    [rowSelection, rowSource]
   );
 
   const handleToggleRow = useCallback(
@@ -402,7 +402,7 @@ function VirtualDataTableInner({
     [rowSelection]
   );
 
-  const isEmpty = !loading && dataSource.length === 0;
+  const isEmpty = !loading && rowSource.rowCount === 0;
 
   // 把 antd token 暴露成 CSS 变量，供 App.css 中的 hover/zebra/selected 规则取用，
   // 主题切换时（algorithm: dark <-> default）token 自动重算，CSS 变量也自动跟随。
@@ -543,15 +543,16 @@ function VirtualDataTableInner({
           {/* 表体：所有可见行 × 可见列 */}
           {!isEmpty &&
             visibleRows.map((vRow) => {
-              const record = dataSource[vRow.index];
-              if (!record) return null;
-              const key = rowKey(record, vRow.index);
+              if (vRow.index >= rowSource.rowCount) return null;
+              const key = rowSource.getRowKey(vRow.index);
               const selected = selectedKeySet.has(key);
               const isOdd = vRow.index % 2 === 1;
-              const rowExtraClass = rowClassName?.(record, vRow.index) ?? "";
+              const rowExtraClass = rowClassName?.(vRow.index) ?? "";
               const rowClass = [
                 "virtual-data-table-row",
-                isOdd ? "virtual-data-table-row--odd" : "virtual-data-table-row--even",
+                isOdd
+                  ? "virtual-data-table-row--odd"
+                  : "virtual-data-table-row--even",
                 selected ? "virtual-data-table-row--selected" : "",
                 rowExtraClass,
               ]
@@ -603,7 +604,7 @@ function VirtualDataTableInner({
                               whiteSpace: col.ellipsis ? "nowrap" : "normal",
                             }}
                           >
-                            {col.render(record, vRow.index)}
+                            {col.render(vRow.index)}
                           </div>
                         )}
                       </div>
@@ -628,7 +629,10 @@ function VirtualDataTableInner({
               }}
             >
               {emptyText ?? (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无数据" />
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description="暂无数据"
+                />
               )}
             </div>
           )}

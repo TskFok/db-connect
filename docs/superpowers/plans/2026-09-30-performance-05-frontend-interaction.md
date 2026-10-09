@@ -1,6 +1,6 @@
 # 前端交互性能优化实施计划
 
-> **面向执行代理：** 必须使用 `superpowers:subagent-driven-development`（推荐）或 `superpowers:executing-plans` 逐任务执行；使用复选框跟踪步骤。本次仅生成计划，不实施。
+> **面向执行代理：** 必须使用 `superpowers:subagent-driven-development`（推荐）或 `superpowers:executing-plans` 逐任务执行；使用复选框跟踪步骤。原计划于 2026-09-30 编写，2026-10-08 用户授权实施，2026-10-09 继续验证。
 
 **目标：** 降低大页表格转换、结构对比展示、侧栏拖动与初始界面加载的前端成本，同时保持编辑、选择、复制和同步确认语义。
 
@@ -12,7 +12,7 @@
 
 ## 全局约束
 
-- 本次仅编写计划；实施需用户后续授权，不自动 commit、push 或发布。
+- 用户已授权实施；本次在原 master 分支修改，不自动 commit、push 或发布。
 - 默认在当前分支修改；用户未明确要求时不得新建分支。
 - 禁止在循环遍历中查询 SQL；本计划中的数据遍历仅操作已返回的内存数据。
 - 保留主表双向虚拟化、SQL 编辑器懒加载、结果分页、延迟大字段读取和已实现的订阅隔离。
@@ -49,20 +49,20 @@
 - `VirtualDataTable` 改收 `rowSource: TableRowSource`；列提供 `renderCell(rowIndex: number): ReactNode` 并保留 `key/title/width/ellipsis/onHeaderCell`；行样式回调改收行索引。
 - 不把该接口推广到 SQL 编辑器的 Ant Table；只有现有主表及其测试需要迁移。
 
-- [ ] **步骤 1：补充读取规模和行身份回归测试。**
+- [x] **步骤 1：补充读取规模和行身份回归测试。**
       合成 10,000 行×200 列，在固定虚拟视口下用计数 getter 记录非主键读取；断言初始化不枚举全部 2,000,000 个单元格，远处未显示列未被读取。
       断言复合主键键值与旧 `buildRowSelectionKey` 一致；主键缺失时仍回退为 scope/page/row；排序、切页后的选中清理遵循现有规则。
       断言 `materializeRows([2, 7], ['name'])` 仅含指定业务列、主键及行元数据，不修改二维数组，也不将 pending 新值写回原始值。
-- [ ] **步骤 2：运行新增测试，确认缺失接口/全量读取断言失败。**
+- [x] **步骤 2：运行新增测试，确认缺失接口/全量读取断言失败。**
       命令：`npx vitest run src/__tests__/tableRowSource.test.ts src/__tests__/VirtualDataTable.test.tsx`。
-- [ ] **步骤 3：实现索引数据源并接入虚拟表。**
+- [x] **步骤 3：实现索引数据源并接入虚拟表。**
       列名索引构建一次；可见单元格直接读数组；允许 O(行数×主键列数) 建立稳定键，禁止为每行创建包含所有业务列的对象。
       行选择集合和全选/半选计算仅依赖行键及选择集合；空集合直接返回，滚动不再次扫描整页。
-- [ ] **步骤 4：适配记录消费者并固定延迟值语义。**
+- [x] **步骤 4：适配记录消费者并固定延迟值语义。**
       删除只读取选中行主键；复制只物化选中行及所需列；当前页导出只在点击后物化；不改导出编码实现。
       单元格编辑继续使用完整原值和 pending 覆盖显示；延迟值按既有批量接口补齐，保留页面快照与卸载失效检查。
       增加“复制期间切页拒绝旧响应”“隐藏字段复制完整值”“Tab 导航、全选/取消、复合主键批量删除无误定位”的断言。
-- [ ] **步骤 5：运行回归并记录前后成本。**
+- [x] **步骤 5：运行回归并记录前后成本。**（Node保留堆与独立WKWebView已测；全部分配字节未测。）
       命令：`npx vitest run src/__tests__/tableRowSource.test.ts src/__tests__/VirtualDataTable.test.tsx src/__tests__/VirtualDataTableResize.test.tsx src/__tests__/TableDataSelection.test.tsx src/__tests__/TableDataDeferred.test.tsx src/__tests__/copyAsInsert.test.ts`。
       在相同 WebView/视口下比较 100/1,000/10,000 行和 20/200 列的换页、切回、滚动；记录 p95、分配量、非主键读取次数。
 
@@ -83,19 +83,19 @@
 - 各列表使用独立页码；预览 `plan_fingerprint` 或结果身份改变时重置，搜索/筛选改变时重置对比页码；结果缩小时夹紧页码。
 - 操作关联使用 `Map<string, DatabaseSyncOperation>`，构建 O(操作数)，查询 O(1)；完整汇总直接基于原始数组计算。
 
-- [ ] **步骤 1：补充跨页选择和挂载数量测试。**
+- [x] **步骤 1：补充跨页选择和挂载数量测试。**
       构造 1,001 张差异表，断言首屏只挂载 50 条外层数据行；在第 1/2 页选择后两者都保留；“选择全部可同步表”仍覆盖所有合格表。
       关闭删除开关后跨页目标独有表均从选择中移除；搜索、清空、结果替换不会出现空的越界页。
       构造 1,001 个同步操作和多行 SQL，断言只挂载当前 20 张卡片，SQL 文本完整、顺序不变，风险/阻塞总数仍来自全量结果。
-- [ ] **步骤 2：运行测试，确认当前全量 DOM 实现失败。**
+- [x] **步骤 2：运行测试，确认当前全量 DOM 实现失败。**
       命令：`npx vitest run src/__tests__/DatabaseCompareResults.test.tsx src/__tests__/DatabaseSyncPreviewModal.test.tsx`。
-- [ ] **步骤 3：加入受控分页并限定展开区域。**
+- [x] **步骤 3：加入受控分页并限定展开区域。**
       对比保留 `preserveSelectedRowKeys`；页切换收起非当前页展开内容，展开字段表也分页。同步列表先 slice，再格式化和渲染当前页。
       分页不触发数据库请求；全局确认、执行禁用、风险提示和失败位置必须始终可见，不以“已浏览全部页”新增执行条件。
-- [ ] **步骤 4：优化结果关联并添加流程回归断言。**
+- [x] **步骤 4：优化结果关联并添加流程回归断言。**
       建立操作索引供失败详情、已执行语句和未执行操作共用；断言显示原始 SQL 序号，未找到操作时仍显示 ID。
       断言分页不能改变确认回调次数、计划指纹、已选表集合或执行锁；迟到的旧预览不能覆盖新计划。
-- [ ] **步骤 5：验证正确性和大列表成本。**
+- [x] **步骤 5：验证正确性和大列表成本。**（真实AntD键盘测试与独立WKWebView测量完成。）
       命令：`npx vitest run src/__tests__/DatabaseCompareResults.test.tsx src/__tests__/DatabaseSyncPreviewModal.test.tsx src/__tests__/DatabaseCompareModal.test.tsx`。
       用 10,000 张差异表、1,000 个多行 SQL 操作记录首屏和换页 React Profiler 提交耗时；同时检查键盘分页和展开区域可访问性。
 
@@ -117,19 +117,19 @@
 - 预览修改侧栏元素的 width/flex-basis；失焦或卸载取消，不持久化，失焦时恢复已提交宽度。
 - App 使用单字段 selector 或 `useShallow` 订阅现有必要字段；不新增全局拖动状态，不改连接 store 的业务动作。
 
-- [ ] **步骤 1：添加动画帧与持久化调用次数测试。**
+- [x] **步骤 1：添加动画帧与持久化调用次数测试。**
       同一帧发送 100 次 mousemove，断言预览合并为一次、`onCommit` 尚未调用；mouseup 发生在 rAF 前也提交最后宽度一次。
       断言边界固定为 200/480，未移动不提交；window blur 或卸载后事件与待执行帧无副作用，blur 恢复起始宽度。
       对真实 settings persist 的 storage 写入做 spy，清除初始化记录后断言一次完成拖动仅一次写入、相同宽度零写入。
-- [ ] **步骤 2：运行测试，确认现有高频持久化问题被复现。**
+- [x] **步骤 2：运行测试，确认现有高频持久化问题被复现。**
       命令：`npx vitest run src/__tests__/useSidebarResize.test.tsx src/__tests__/AppStateSubscriptions.test.tsx src/__tests__/settingsStore.test.ts`。
-- [ ] **步骤 3：实现帧预览和终止路径。**
+- [x] **步骤 3：实现帧预览和终止路径。**
       开始拖动缓存已提交宽度/坐标；mousemove 只更新 ref 并排一个 rAF；mouseup 清理后只提交变化的最终值。
       恢复 body cursor/user-select，清理 window 监听；防止重入拖动和已取消 rAF 再次覆盖 React 提交值。
-- [ ] **步骤 4：收窄订阅并钉住隔离行为。**
+- [x] **步骤 4：收窄订阅并钉住隔离行为。**
       用 Profiler 验证未消费的 listTableSettings/windowBounds 变更不提交 App；连接 loading/error 等原本需要展示的变化仍响应。
       拖动预览不提交 App React 树；容器尺寸变化仍允许既有 ResizeObserver 与 Monaco automaticLayout 正常工作。
-- [ ] **步骤 5：执行回归与交互录制。**
+- [x] **步骤 5：执行回归与交互录制。**（独立WKWebView记录程序事件与原生窗口缩放；完整Tauri真实鼠标操作未测。）
       命令：`npx vitest run src/__tests__/useSidebarResize.test.tsx src/__tests__/AppStateSubscriptions.test.tsx src/__tests__/settingsStore.test.ts src/__tests__/SqlStateSubscriptions.test.tsx`。
       在表格与 SQL 编辑器两种界面各拖动 2 秒，统计持久化次数、App 提交次数与长任务；复核外部窗口缩放、恢复设置。
 
@@ -152,19 +152,19 @@
 - `node scripts/report-initial-js.mjs dist --json` 输出 `htmlReferencedBytes`、`initialStaticBytes`、`dynamicJsBytes` 与逐文件明细；文件按路径去重。
 - `htmlReferencedBytes` 只计 HTML module script/modulepreload；`initialStaticBytes` 再遍历 manifest 的静态 imports；dynamicImports 另列，不混入初始体积。
 
-- [ ] **步骤 1：建立资源统计与延迟入口测试。**
+- [x] **步骤 1：建立资源统计与延迟入口测试。**
       Node fixture 覆盖重复 preload、静态依赖链和动态 chunk：同文件只计一次，动态块只出现在按需集合。
       UI 测试断言首次启动没有调用可选模块 loader；打开后加载，加载期间可关闭，拒绝时只有局部错误；重新打开可重新尝试。
       断言对比同步正在执行时不能因外层懒加载包装被卸载；例程/事件标签激活后加载且高度重测正常。
-- [ ] **步骤 2：运行测试确认入口尚未隔离。**
+- [x] **步骤 2：运行测试确认入口尚未隔离。**
       命令：`node --test scripts/report-initial-js.node-test.mjs`；`npx vitest run src/__tests__/AppLazyFeatures.test.tsx src/__tests__/DatabaseOverview.test.tsx`。
-- [ ] **步骤 3：实现资源报告，重建实施前基线。**
+- [x] **步骤 3：实现资源报告，重建实施前基线。**
       先启用 manifest 并加入报告脚本，运行 `npm run build` 和 `node scripts/report-initial-js.mjs dist --json`；保存两种初始口径及按需块明细。
       标注机器、版本和构建配置；不把 gzip、磁盘字节数或开发服务器响应时间称作 Tauri 冷启动时间。
-- [ ] **步骤 4：实现有明确入口的懒加载。**
+- [x] **步骤 4：实现有明确入口的懒加载。**
       删除低频组件对应静态导入，在功能入口局部 Suspense；不要重复拆分已有 Monaco、Mermaid、Excel 动态块。
       检查现有 antd manual chunk 是否仍把低频依赖带入入口；只有测得额外收益且无重复依赖才调整 chunk 策略，不能靠重命名块宣称优化。
-- [ ] **步骤 5：验证资源归属与所有入口。**
+- [x] **步骤 5：验证资源归属与所有入口。**（自动化入口、失败重试、实例保留及资源闭包已验证；完整Tauri人工逐入口操作未录制。）
       命令：`node --test scripts/report-initial-js.node-test.mjs`；`npx vitest run src/__tests__/AppLazyFeatures.test.tsx src/__tests__/DatabaseOverview.test.tsx src/__tests__/ProjectIntroTrigger.test.tsx src/__tests__/DatabaseCompareModal.test.tsx`。
       命令：`npm run build`；`node scripts/report-initial-js.mjs dist --json`；手动逐一打开功能，检查加载/失败/关闭和第二次打开。
 
@@ -172,7 +172,63 @@
 
 ## 交付检查
 
-- [ ] 四个任务分别形成可评审差异；用户后续授权实施时才执行命令，不自动提交。
-- [ ] 最终运行 `npx tsc --noEmit`、上述定向测试及一次 `npm run build`；不重复运行已通过且未受改动影响的全量检查。
-- [ ] 报告功能回归、DOM/读取次数、拖动写入次数、构建字节数和实测耗时；未测指标明确标记未测。
-- [ ] 任一任务未满足语义约束时仅回滚该任务，不用降低分页保护、删测试或改变数据库操作语义换取性能。
+- [x] 四个任务分别形成可评审差异；按用户授权实施，不自动提交。
+- [x] 最终运行 `npx tsc --noEmit`、上述定向测试及一次 `npm run build`；不重复运行已通过且未受改动影响的全量检查。
+- [x] 报告功能回归、DOM/读取次数、拖动写入次数、构建字节数和实测耗时；未测指标明确标记未测。
+- [x] 任一任务未满足语义约束时仅回滚该任务，不用降低分页保护、删测试或改变数据库操作语义换取性能。
+
+
+## 2026-10-09 执行记录
+
+实现已覆盖四项任务，未改数据库协议、SQL 执行、结果缓存预算、Excel 编码、持久化 schema 或运行时依赖。保留原分支，未提交或推送。
+
+| 工作项 | 已有证据 | 验证边界 |
+| --- | --- | --- |
+| 索引行源 | 6 文件 82 项回归通过；初始化仅读主键，复制/导出按操作物化；跨页失效、隐藏字段、Tab、复合主键删除通过 | Node 数字矩阵的新增保留堆不等于全部分配量或 WebView 内存 |
+| 对比/同步分页 | 3 文件 81 项回归通过；外层/字段每页50、操作及结果列表每页20；选择/汇总/原始SQL序号保持全量 | 单个操作内部完整SQL仍全部展示；不执行真实同步DDL |
+| 侧栏拖动 | 5 文件45项回归通过；100次同帧移动预览一次，预览零存储写入/零App提交，松手一次写入；取消/不变零写入 | 真实界面及独立WebView测量另记，不能把隔离Profiler当成整应用耗时 |
+| 懒加载/资源报告 | 实际入口模块加载计数、关闭/失败重试、成功后实例保留已测试；独立资源报告fixture通过 | 构建字节减少不代表冷启动时长；已修复并回归成功导入后渲染异常无法关闭的问题 |
+
+### 已运行检查
+
+- 完整前端回归首轮：155 文件中154通过；2025测试中2024通过。唯一失败是新增复合主键删除测试仍加载旧两列页缓存；修正夹具同步页缓存后，任务1六文件82项均通过。最后一次整仓复验结果见下方终验记录。
+- `npm run build`：通过；保留既有动态导入无效及大chunk提示。
+- `npm run test:rust`：首轮13个本机协议替身测试被沙箱禁止监听端口；允许隔离loopback监听后771通过、18默认忽略。
+- `npm run fmt:rust`：通过。
+- `npm run lint`：3条既有错误，位于未改的 `scripts/release.mjs:203/211`（缺少cause）与 `scripts/release.node-test.mjs:382`（URL未声明）。
+- `npm run lint:rust`：未改的 `src-tauri/src/db/sqlserver_objects.rs:629` 仍有既有 `type_complexity` 错误。
+
+性能数据及复现入口汇总到 [性能验证基线](../../performance-baseline.md)；原始构建数据保留在 [初始JS证据](../../performance/frontend-initial-js-2026-10-09.json)，行源独立Node样本保留在 [行源证据](../../performance/table-row-source-2026-10-08.json)。
+
+
+### 独立审查与修复
+
+四项任务均经过独立规格/质量审查。两项具体问题已补失败回归后修复：成功导入后组件渲染抛错时，错误弹窗原先无法关闭；现在关闭失败尝试后重开会创建新lazy和错误边界，健康实例仍保留。Node和WKWebView基准原先固定取当前HEAD；现在默认绑定记录的旧实现SHA，可显式选择基线，提交新实现后仍能复现。Node无效ref明确失败且不写输出；WK脚本拒绝覆盖已有临时基线文件，只清理本次创建的文件与进程。
+
+修复回归：4文件17测试、`npx tsc --noEmit`、资源Node fixture、默认/显式基线各36个冒烟样本通过。正式240个Node样本和WKWebView正式结果未被冒烟覆盖。
+
+### 测量结果及限制
+
+- Node生产行源：10000×200初始化p95 234.348→5.181ms，GC后新增保留堆中位数124790152→1063064字节（下降99.15%）。**全部分配字节未测；不能把保留堆口径当作原70%分配量目标已验收。**
+- 独立WKWebView：同视口、每组30次，10000×200换页p95 237→48ms、切回223→64ms、滚动83→67ms；计时包含两个rAF等待。部分小矩阵p95未改善，全部结果均保留。开发模式夹具不包含完整TableData/Tauri/数据库/IPC。
+- WKWebView实际挂载：虚拟表首屏29行×13列；对比外层与字段50行，各同步列表20项。键盘分页自动化在真实AntD/jsdom中验证。
+- 表格/Monaco分别约2秒拖动：外壳预览提交0、存储写入0，松手均1次写入/1次外壳提交；表格子树仍因尺寸观察产生4次提交。失焦/不变宽度零写入，原生窗口缩放布局通过。rAF间隔p95均18ms，WebKit不支持longtask API，所以不宣称长任务为0。
+- 最终初始JS：1722159→1685055字节（-37104，-2.15%），静态闭包未增加。详细口径及复现命令见性能基线。
+- 尚未测量：全部分配字节及其70%降幅、完整Tauri真实鼠标/启动恢复/连接切换、原生呈现延迟、Tauri冷启动。没有用降低选择/同步/编辑保护或删测试换取性能。
+
+
+### 最终验收命令（2026-10-09）
+
+| 检查 | 最终结果 |
+| --- | --- |
+| `npm test -- --maxWorkers=2` | 155文件、2029测试全部通过；153.41s（测试运行耗时，不是性能样本） |
+| `npx tsc --noEmit` | 通过，无诊断 |
+| `npm run build` | 通过，保留既有大chunk/无效动态导入警告 |
+| `node --test scripts/report-initial-js.node-test.mjs` | 1/1通过 |
+| 全部本次修改/新增TS、TSX、mjs文件的ESLint | 通过，无错误或警告 |
+| `npm run test:rust`（允许本机临时监听） | 771通过、18默认忽略，未运行真实业务库测试 |
+| `npm run fmt:rust` / `git diff --check` | 通过 |
+| 新WK夹具独立tsc、ESLint、`bash -n`、临时文件冲突保护 | 通过；冲突时退出2，原文件SHA不变 |
+| 独立分项审查及最终整体审查 | 通过，两个P2修复经复审关闭，无新增明确缺陷 |
+
+全仓 `npm run lint` 和 `npm run lint:rust` 的既有错误仍如前述保留，没有把定向ESLint通过写成全仓lint通过。当前仍为原 `master` 分支，未自动提交、推送或发布。本专项代码与分层验证交付完成；上述未测项继续保留，不把所有测量目标标为已达标。

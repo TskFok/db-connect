@@ -1,0 +1,592 @@
+{
+  "baselineRef": "498fa79d5789b91c957120c27f77c44829d06e4c",
+  "beforeDate": "2026-10-08",
+  "afterDate": "2026-10-09",
+  "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "architecture": "arm64",
+  "node": "v25.5.0",
+  "build": "npm run build (Vite production/minified, manifest enabled, unchanged manualChunks)",
+  "units": "uncompressed on-disk bytes; not cold-start timing",
+  "before": {
+    "htmlReferencedBytes": 1722159,
+    "initialStaticBytes": 1722159,
+    "dynamicJsBytes": 7373529,
+    "files": {
+      "htmlReferenced": [
+        {
+          "path": "assets/antd-Dvyo41AD.js",
+          "bytes": 1272740
+        },
+        {
+          "path": "assets/core-w4ZWUd33.js",
+          "bytes": 1026
+        },
+        {
+          "path": "assets/dnd-o42dynpw.js",
+          "bytes": 43142
+        },
+        {
+          "path": "assets/image-_YOOawHv.js",
+          "bytes": 607
+        },
+        {
+          "path": "assets/index-CP0HxfXd.js",
+          "bytes": 403560
+        },
+        {
+          "path": "assets/rolldown-runtime-aKtaBQYM.js",
+          "bytes": 1084
+        }
+      ],
+      "initialStatic": [
+        {
+          "path": "assets/antd-Dvyo41AD.js",
+          "bytes": 1272740
+        },
+        {
+          "path": "assets/core-w4ZWUd33.js",
+          "bytes": 1026
+        },
+        {
+          "path": "assets/dnd-o42dynpw.js",
+          "bytes": 43142
+        },
+        {
+          "path": "assets/image-_YOOawHv.js",
+          "bytes": 607
+        },
+        {
+          "path": "assets/index-CP0HxfXd.js",
+          "bytes": 403560
+        },
+        {
+          "path": "assets/rolldown-runtime-aKtaBQYM.js",
+          "bytes": 1084
+        }
+      ],
+      "dynamicJs": [
+        {
+          "path": "assets/CreateTableSql-B7N-oGGW.js",
+          "bytes": 2223
+        },
+        {
+          "path": "assets/ForeignKeyList-DlAxrYdG.js",
+          "bytes": 13058
+        },
+        {
+          "path": "assets/IndexList-BOLEmgO1.js",
+          "bytes": 11177
+        },
+        {
+          "path": "assets/SqlEditor-D3F-aH9_.js",
+          "bytes": 288428
+        },
+        {
+          "path": "assets/Tableau10-zeYkaWlF.js",
+          "bytes": 176
+        },
+        {
+          "path": "assets/TriggerList-DUpyjCAB.js",
+          "bytes": 10834
+        },
+        {
+          "path": "assets/arc-D_Qgp6oG.js",
+          "bytes": 3501
+        },
+        {
+          "path": "assets/array-BifhSqXX.js",
+          "bytes": 107
+        },
+        {
+          "path": "assets/blockDiagram-868be97b-CNE_pd_T.js",
+          "bytes": 36008
+        },
+        {
+          "path": "assets/c4Diagram-3f4bdde3-CziiZ-dE.js",
+          "bytes": 67596
+        },
+        {
+          "path": "assets/channel-CJnPryRi.js",
+          "bytes": 116
+        },
+        {
+          "path": "assets/classDiagram-f62afe4f-Cnemyx8x.js",
+          "bytes": 9161
+        },
+        {
+          "path": "assets/classDiagram-v2-604399ef-BJikaWR-.js",
+          "bytes": 4572
+        },
+        {
+          "path": "assets/clone-COvCvhwa.js",
+          "bytes": 94
+        },
+        {
+          "path": "assets/createText-aed3d8b3-BBh8XJHn.js",
+          "bytes": 59000
+        },
+        {
+          "path": "assets/dagre-DnwFJ-77.js",
+          "bytes": 30704
+        },
+        {
+          "path": "assets/dpi-CiRKKWwQ.js",
+          "bytes": 2063
+        },
+        {
+          "path": "assets/edges-b2856ca0-CZMbiarU.js",
+          "bytes": 33627
+        },
+        {
+          "path": "assets/erDiagram-5d81789a-CV2QjT5S.js",
+          "bytes": 30277
+        },
+        {
+          "path": "assets/flowDb-185abca5-CuRPCfI8.js",
+          "bytes": 46209
+        },
+        {
+          "path": "assets/flowDiagram-1629c991-086-1Ul4.js",
+          "bytes": 21608
+        },
+        {
+          "path": "assets/flowDiagram-v2-1d953310-Df5f_jld.js",
+          "bytes": 610
+        },
+        {
+          "path": "assets/flowchart-elk-definition-6df44142-jAQ1UEr1.js",
+          "bytes": 1443167
+        },
+        {
+          "path": "assets/ganttDiagram-3b0b3873-BTfziOz0.js",
+          "bytes": 55255
+        },
+        {
+          "path": "assets/gitGraphDiagram-f01e8bc2-Cw2B_qtX.js",
+          "bytes": 38325
+        },
+        {
+          "path": "assets/graphlib-B9R5OBT7.js",
+          "bytes": 17716
+        },
+        {
+          "path": "assets/index-9bae90f3-35j0ykzD.js",
+          "bytes": 11764
+        },
+        {
+          "path": "assets/infoDiagram-a29d40f1-BWyGj4QD.js",
+          "bytes": 8567
+        },
+        {
+          "path": "assets/init-D6jRqBbL.js",
+          "bytes": 146
+        },
+        {
+          "path": "assets/journeyDiagram-95396277-DuvCEqZk.js",
+          "bytes": 21327
+        },
+        {
+          "path": "assets/katex-B11obVnJ.js",
+          "bytes": 257181
+        },
+        {
+          "path": "assets/line-BHrftn98.js",
+          "bytes": 950
+        },
+        {
+          "path": "assets/linear-BPaJTiux.js",
+          "bytes": 10111
+        },
+        {
+          "path": "assets/mermaid-934da031-D7-PveLp.js",
+          "bytes": 249006
+        },
+        {
+          "path": "assets/mermaid.core-CCvUj6dK.js",
+          "bytes": 167
+        },
+        {
+          "path": "assets/mindmap-definition-e4c1d938-OD2htxIi.js",
+          "bytes": 533846
+        },
+        {
+          "path": "assets/monacoSetup-BezYEAFk.js",
+          "bytes": 3642856
+        },
+        {
+          "path": "assets/ordinal-hYBb2elL.js",
+          "bytes": 1174
+        },
+        {
+          "path": "assets/path-BWPyau1x.js",
+          "bytes": 2314
+        },
+        {
+          "path": "assets/pieDiagram-c941bede-gdoEnHi5.js",
+          "bytes": 14748
+        },
+        {
+          "path": "assets/quadrantDiagram-cf8b8fe0-C-TmUdbr.js",
+          "bytes": 28688
+        },
+        {
+          "path": "assets/requirementDiagram-53bda41b-aBrIF_0B.js",
+          "bytes": 24207
+        },
+        {
+          "path": "assets/sankeyDiagram-c3ef121a-vwM2bVJ2.js",
+          "bytes": 20740
+        },
+        {
+          "path": "assets/sequenceDiagram-82a5b84f-D_aII0jb.js",
+          "bytes": 83184
+        },
+        {
+          "path": "assets/sql-NEE52Syq.js",
+          "bytes": 8840
+        },
+        {
+          "path": "assets/stateDiagram-43e79a5f-DeuqWMra.js",
+          "bytes": 10097
+        },
+        {
+          "path": "assets/stateDiagram-v2-2041ed4f-C5gVAtsH.js",
+          "bytes": 4597
+        },
+        {
+          "path": "assets/styles-455b33cd-rYXt9Qhi.js",
+          "bytes": 26051
+        },
+        {
+          "path": "assets/styles-f932cba9-BzPv_kci.js",
+          "bytes": 9934
+        },
+        {
+          "path": "assets/styles-fcc2142b-CQ8FzC_U.js",
+          "bytes": 37350
+        },
+        {
+          "path": "assets/svgDrawCommon-148a3cd9-DdLNhdC1.js",
+          "bytes": 1330
+        },
+        {
+          "path": "assets/timeline-definition-7545f45a-JDqUx1FJ.js",
+          "bytes": 22213
+        },
+        {
+          "path": "assets/universal-D4l6EpUH.js",
+          "bytes": 68686
+        },
+        {
+          "path": "assets/window-DwSzzOMT.js",
+          "bytes": 10903
+        },
+        {
+          "path": "assets/xychartDiagram-3f383b91-CMcFMX3b.js",
+          "bytes": 36940
+        }
+      ]
+    }
+  },
+  "after": {
+    "htmlReferencedBytes": 1685055,
+    "initialStaticBytes": 1685055,
+    "dynamicJsBytes": 7417652,
+    "files": {
+      "htmlReferenced": [
+        {
+          "path": "assets/antd-Dvyo41AD.js",
+          "bytes": 1272740
+        },
+        {
+          "path": "assets/core-w4ZWUd33.js",
+          "bytes": 1026
+        },
+        {
+          "path": "assets/dnd-o42dynpw.js",
+          "bytes": 43142
+        },
+        {
+          "path": "assets/image-_YOOawHv.js",
+          "bytes": 607
+        },
+        {
+          "path": "assets/index-p460khbW.js",
+          "bytes": 366456
+        },
+        {
+          "path": "assets/rolldown-runtime-aKtaBQYM.js",
+          "bytes": 1084
+        }
+      ],
+      "initialStatic": [
+        {
+          "path": "assets/antd-Dvyo41AD.js",
+          "bytes": 1272740
+        },
+        {
+          "path": "assets/core-w4ZWUd33.js",
+          "bytes": 1026
+        },
+        {
+          "path": "assets/dnd-o42dynpw.js",
+          "bytes": 43142
+        },
+        {
+          "path": "assets/image-_YOOawHv.js",
+          "bytes": 607
+        },
+        {
+          "path": "assets/index-p460khbW.js",
+          "bytes": 366456
+        },
+        {
+          "path": "assets/rolldown-runtime-aKtaBQYM.js",
+          "bytes": 1084
+        }
+      ],
+      "dynamicJs": [
+        {
+          "path": "assets/CreateTableSql-Cw1zfGcw.js",
+          "bytes": 2225
+        },
+        {
+          "path": "assets/DatabaseCompareModal-C-D1M_Lc.js",
+          "bytes": 29778
+        },
+        {
+          "path": "assets/EventList-CltbvvYF.js",
+          "bytes": 4339
+        },
+        {
+          "path": "assets/ForeignKeyList-DYjKxrLM.js",
+          "bytes": 13062
+        },
+        {
+          "path": "assets/IndexList-DqtBBAzK.js",
+          "bytes": 11179
+        },
+        {
+          "path": "assets/ProjectIntroModal-CKpWxl6v.js",
+          "bytes": 3777
+        },
+        {
+          "path": "assets/RoutineList-BVLFnx5_.js",
+          "bytes": 4701
+        },
+        {
+          "path": "assets/ShortcutsHelpModal-CQU9rMCB.js",
+          "bytes": 1511
+        },
+        {
+          "path": "assets/SqlEditor-D7GYDoje.js",
+          "bytes": 288433
+        },
+        {
+          "path": "assets/Tableau10-zeYkaWlF.js",
+          "bytes": 176
+        },
+        {
+          "path": "assets/TriggerList-Disb1M6x.js",
+          "bytes": 10836
+        },
+        {
+          "path": "assets/arc-BlP4S1fb.js",
+          "bytes": 3501
+        },
+        {
+          "path": "assets/array-BifhSqXX.js",
+          "bytes": 107
+        },
+        {
+          "path": "assets/blockDiagram-868be97b-aFJGYLpN.js",
+          "bytes": 36008
+        },
+        {
+          "path": "assets/c4Diagram-3f4bdde3-B3Y9Mele.js",
+          "bytes": 67596
+        },
+        {
+          "path": "assets/channel-PukdPdi4.js",
+          "bytes": 116
+        },
+        {
+          "path": "assets/classDiagram-f62afe4f-xXX53ToQ.js",
+          "bytes": 9161
+        },
+        {
+          "path": "assets/classDiagram-v2-604399ef-BoLTZk6U.js",
+          "bytes": 4572
+        },
+        {
+          "path": "assets/clone-DDS6ZrNJ.js",
+          "bytes": 94
+        },
+        {
+          "path": "assets/createText-aed3d8b3-DcXH-W1M.js",
+          "bytes": 59000
+        },
+        {
+          "path": "assets/dagre-D2DONZMP.js",
+          "bytes": 30704
+        },
+        {
+          "path": "assets/dpi-CiRKKWwQ.js",
+          "bytes": 2063
+        },
+        {
+          "path": "assets/edges-b2856ca0-Bk07c_FD.js",
+          "bytes": 33627
+        },
+        {
+          "path": "assets/erDiagram-5d81789a-B3QJJOpg.js",
+          "bytes": 30277
+        },
+        {
+          "path": "assets/flowDb-185abca5-CpR444e2.js",
+          "bytes": 46209
+        },
+        {
+          "path": "assets/flowDiagram-1629c991-CjSsrFNN.js",
+          "bytes": 21608
+        },
+        {
+          "path": "assets/flowDiagram-v2-1d953310-Ua3NQOrW.js",
+          "bytes": 610
+        },
+        {
+          "path": "assets/flowchart-elk-definition-6df44142-BTajWTT0.js",
+          "bytes": 1443167
+        },
+        {
+          "path": "assets/ganttDiagram-3b0b3873-UGkoZbsx.js",
+          "bytes": 55255
+        },
+        {
+          "path": "assets/gitGraphDiagram-f01e8bc2-CSqTvKF1.js",
+          "bytes": 38325
+        },
+        {
+          "path": "assets/graphlib-BeMeLboh.js",
+          "bytes": 17716
+        },
+        {
+          "path": "assets/index-9bae90f3-epryOxKO.js",
+          "bytes": 11764
+        },
+        {
+          "path": "assets/infoDiagram-a29d40f1-B_o9Qs30.js",
+          "bytes": 8567
+        },
+        {
+          "path": "assets/init-D6jRqBbL.js",
+          "bytes": 146
+        },
+        {
+          "path": "assets/journeyDiagram-95396277-Bt0HNSsT.js",
+          "bytes": 21327
+        },
+        {
+          "path": "assets/katex-B11obVnJ.js",
+          "bytes": 257181
+        },
+        {
+          "path": "assets/line-DGLXpN1T.js",
+          "bytes": 950
+        },
+        {
+          "path": "assets/linear-ClPFRitB.js",
+          "bytes": 10111
+        },
+        {
+          "path": "assets/mermaid-934da031-Dcbo94y8.js",
+          "bytes": 249007
+        },
+        {
+          "path": "assets/mermaid.core-DokI_W2s.js",
+          "bytes": 167
+        },
+        {
+          "path": "assets/mindmap-definition-e4c1d938-BOQKKLHc.js",
+          "bytes": 533846
+        },
+        {
+          "path": "assets/monacoSetup-cRDRjj7o.js",
+          "bytes": 3642857
+        },
+        {
+          "path": "assets/ordinal-hYBb2elL.js",
+          "bytes": 1174
+        },
+        {
+          "path": "assets/path-BWPyau1x.js",
+          "bytes": 2314
+        },
+        {
+          "path": "assets/pieDiagram-c941bede-CIdCb332.js",
+          "bytes": 14748
+        },
+        {
+          "path": "assets/quadrantDiagram-cf8b8fe0-DPlY200i.js",
+          "bytes": 28688
+        },
+        {
+          "path": "assets/requirementDiagram-53bda41b-CBsB9bZM.js",
+          "bytes": 24207
+        },
+        {
+          "path": "assets/sankeyDiagram-c3ef121a-U5QFupWK.js",
+          "bytes": 20740
+        },
+        {
+          "path": "assets/sequenceDiagram-82a5b84f-Dd5LcYLF.js",
+          "bytes": 83184
+        },
+        {
+          "path": "assets/sql-NEE52Syq.js",
+          "bytes": 8840
+        },
+        {
+          "path": "assets/stateDiagram-43e79a5f-B0MUQy_m.js",
+          "bytes": 10097
+        },
+        {
+          "path": "assets/stateDiagram-v2-2041ed4f-B-iwEcih.js",
+          "bytes": 4597
+        },
+        {
+          "path": "assets/styles-455b33cd-VDVNrNx2.js",
+          "bytes": 26051
+        },
+        {
+          "path": "assets/styles-f932cba9-xxck5VR8.js",
+          "bytes": 9934
+        },
+        {
+          "path": "assets/styles-fcc2142b-BqsW2C8F.js",
+          "bytes": 37350
+        },
+        {
+          "path": "assets/svgDrawCommon-148a3cd9-5ZbhKWe0.js",
+          "bytes": 1330
+        },
+        {
+          "path": "assets/timeline-definition-7545f45a-CBmQmHHF.js",
+          "bytes": 22213
+        },
+        {
+          "path": "assets/universal-D4l6EpUH.js",
+          "bytes": 68686
+        },
+        {
+          "path": "assets/window-DZobmwAd.js",
+          "bytes": 10903
+        },
+        {
+          "path": "assets/xychartDiagram-3f383b91-CNIaQ0Ae.js",
+          "bytes": 36940
+        }
+      ]
+    }
+  }
+}

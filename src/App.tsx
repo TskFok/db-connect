@@ -1,5 +1,6 @@
+import { DeferredFeature } from "./components/common/DeferredFeatureBoundary";
 import { useShallow } from "zustand/react/shallow";
-import { useEffect, useCallback, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { DiffOutlined } from "@ant-design/icons";
 import { Button, Layout, message } from "antd";
 import { ConnectionList } from "./components/connection/ConnectionList";
@@ -11,13 +12,11 @@ import { TableTabsBar } from "./components/table/TableTabsBar";
 import { SqlEditor } from "./components/sql/SqlEditorLazy";
 import { ErrorBoundary } from "./components/common/ErrorBoundary";
 import { GlobalLoadingBar } from "./components/common/GlobalLoadingBar";
-import { ProjectIntroModal } from "./components/common/ProjectIntroModal";
 import { ProjectIntroTrigger } from "./components/common/ProjectIntroTrigger";
-import { ShortcutsHelpModal } from "./components/common/ShortcutsHelpModal";
 import { ThemeToggle } from "./components/common/ThemeToggle";
 import { IdleTimeoutSetting } from "./components/common/IdleTimeoutSetting";
 import { WindowLaunchSetting } from "./components/common/WindowLaunchSetting";
-import { DatabaseCompareModal } from "./components/databaseCompare/DatabaseCompareModal";
+import { useSidebarResize } from "./hooks/useSidebarResize";
 import { useIdleDisconnect } from "./hooks/useIdleDisconnect";
 import { useWindowLaunchState } from "./hooks/useWindowLaunchState";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
@@ -32,6 +31,19 @@ import {
   SIDEBAR_WIDTH_MIN,
   SIDEBAR_WIDTH_MAX,
 } from "./stores/settingsStore";
+
+const loadProjectIntro = () =>
+  import("./components/common/ProjectIntroModal").then((module) => ({
+    default: module.ProjectIntroModal,
+  }));
+const loadShortcutsHelp = () =>
+  import("./components/common/ShortcutsHelpModal").then((module) => ({
+    default: module.ShortcutsHelpModal,
+  }));
+const loadDatabaseCompare = () =>
+  import("./components/databaseCompare/DatabaseCompareModal").then(
+    (module) => ({ default: module.DatabaseCompareModal })
+  );
 
 const { Content, Footer } = Layout;
 
@@ -77,7 +89,16 @@ function AppInner() {
     error,
     clearError,
     loadSavedConnections,
-  } = useConnectionStore();
+  } = useConnectionStore(
+    useShallow((s) => ({
+      activeConnection: s.activeConnection,
+      showConnectionForm: s.showConnectionForm,
+      loading: s.loading,
+      error: s.error,
+      clearError: s.clearError,
+      loadSavedConnections: s.loadSavedConnections,
+    }))
+  );
 
   const {
     selectedDatabase,
@@ -101,32 +122,18 @@ function AppInner() {
     }))
   );
 
-  const { sidebarWidth, setSidebarWidth } = useSettingsStore();
-  const resizeStartX = useRef<number>(0);
-  const resizeStartW = useRef<number>(280);
+  const sidebarWidth = useSettingsStore((s) => s.sidebarWidth);
+  const setSidebarWidth = useSettingsStore((s) => s.setSidebarWidth);
+  const { siderRef, onMouseDown: handleResizeStart } = useSidebarResize({
+    width: sidebarWidth,
+    minWidth: SIDEBAR_WIDTH_MIN,
+    maxWidth: SIDEBAR_WIDTH_MAX,
+    onCommit: setSidebarWidth,
+  });
 
   const [messageApi, contextHolder] = message.useMessage();
   const [introVisible, setIntroVisible] = useState(false);
   const [compareVisible, setCompareVisible] = useState(false);
-
-  const handleResizeStart = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      resizeStartX.current = e.clientX;
-      resizeStartW.current = sidebarWidth;
-      const onMove = (e: MouseEvent) => {
-        const delta = e.clientX - resizeStartX.current;
-        setSidebarWidth(resizeStartW.current + delta);
-      };
-      const onUp = () => {
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
-      };
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
-    },
-    [sidebarWidth, setSidebarWidth]
-  );
 
   useWindowLaunchState();
 
@@ -239,21 +246,46 @@ function AppInner() {
       <GlobalLoadingBar loading={isGlobalLoading} />
 
       {/* 快捷键帮助弹窗 */}
-      <ShortcutsHelpModal
-        open={shortcutsVisible}
+      <DeferredFeature
+        active={shortcutsVisible}
+        loader={loadShortcutsHelp}
         onClose={() => setShortcutsVisible(false)}
-      />
-      <ProjectIntroModal
-        open={introVisible}
+        modal
+      >
+        {(Feature) => (
+          <Feature
+            open={shortcutsVisible}
+            onClose={() => setShortcutsVisible(false)}
+          />
+        )}
+      </DeferredFeature>
+      <DeferredFeature
+        active={introVisible}
+        loader={loadProjectIntro}
         onClose={() => setIntroVisible(false)}
-      />
-      <DatabaseCompareModal
-        open={compareVisible}
+        modal
+      >
+        {(Feature) => (
+          <Feature open={introVisible} onClose={() => setIntroVisible(false)} />
+        )}
+      </DeferredFeature>
+      <DeferredFeature
+        active={compareVisible}
+        loader={loadDatabaseCompare}
         onClose={() => setCompareVisible(false)}
-      />
+        modal
+      >
+        {(Feature) => (
+          <Feature
+            open={compareVisible}
+            onClose={() => setCompareVisible(false)}
+          />
+        )}
+      </DeferredFeature>
 
       {/* 左侧边栏（可拖拽调整宽度） */}
       <div
+        ref={siderRef}
         className="app-resizable-sider"
         style={{
           flex: `0 0 ${sidebarWidth}px`,

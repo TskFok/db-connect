@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  act,
+} from "@testing-library/react";
 import { TableData } from "../components/table/TableData";
 import { resetTableSlotHeightModuleCacheForTests } from "../components/table/tableDataUtils";
 import { TableContent } from "../components/table/TableContent";
@@ -182,7 +188,10 @@ const commentsSnapshot = {
 
 function switchToTable(
   table: "users" | "posts" | "comments",
-  structure: typeof usersStructure | typeof postsStructure | typeof commentsStructure
+  structure:
+    | typeof usersStructure
+    | typeof postsStructure
+    | typeof commentsStructure
 ) {
   useDatabaseStore.setState({
     selectedTable: table,
@@ -192,7 +201,8 @@ function switchToTable(
       table_type: "TABLE",
       engine: "InnoDB",
       rows: 2,
-      data_length: 0, index_length: null,
+      data_length: 0,
+      index_length: null,
       comment: "",
     },
   });
@@ -227,7 +237,8 @@ describe("TableData 行勾选隔离", () => {
     }
 
     vi.spyOn(window, "getComputedStyle").mockImplementation((elt: Element) => {
-      const style = elt instanceof HTMLElement ? elt.style : ({} as CSSStyleDeclaration);
+      const style =
+        elt instanceof HTMLElement ? elt.style : ({} as CSSStyleDeclaration);
       return {
         ...style,
         getPropertyValue: vi.fn(() => ""),
@@ -256,7 +267,8 @@ describe("TableData 行勾选隔离", () => {
         table_type: "TABLE",
         engine: "InnoDB",
         rows: 2,
-        data_length: 0, index_length: null,
+        data_length: 0,
+        index_length: null,
         comment: "",
       },
       tableContentActiveTab: "data",
@@ -310,6 +322,119 @@ describe("TableData 行勾选隔离", () => {
     resetTableSlotHeightModuleCacheForTests();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("排序保留仍存在的主键选择，切页清除不存在的行", async () => {
+    const { container } = render(<TableData />);
+    await screen.findByText("Alice");
+    fireEvent.click(
+      container.querySelector(".virtual-data-table-row .ant-checkbox-input")!
+    );
+    act(() =>
+      useTableDataStore.setState({
+        rows: [
+          [2, "Bob"],
+          [1, "Alice"],
+        ],
+        sortFields: [{ column: "id", order: "DESC" }],
+      })
+    );
+    const inputs = container.querySelectorAll<HTMLInputElement>(
+      ".virtual-data-table-row .ant-checkbox-input"
+    );
+    expect(inputs[0]).not.toBeChecked();
+    expect(inputs[1]).toBeChecked();
+    act(() => useTableDataStore.setState({ page: 2, rows: [[3, "新页"]] }));
+    await waitFor(() =>
+      expect(
+        container.querySelector(".virtual-data-table-row .ant-checkbox-input")
+      ).not.toBeChecked()
+    );
+    expect(
+      useTableDataStore.getState().rowSelectionCache["conn-1|mydb|users"] ?? []
+    ).toEqual([]);
+  });
+
+  it("全选、取消和复合主键批量删除保持完整定位", async () => {
+    useDatabaseStore.setState({
+      tableStructure: [
+        usersStructure[0],
+        { ...usersStructure[0], name: "region" },
+        usersStructure[1],
+      ],
+    });
+    const compoundSnapshot = {
+      ...usersSnapshot,
+      columns: ["id", "region", "name"],
+      rows: [
+        [1, "西", "Alice"],
+        [1, "东", "Bob"],
+      ],
+    };
+    useTableDataStore.setState({
+      ...compoundSnapshot,
+      tableDataCache: { "conn-1|mydb|users": compoundSnapshot },
+    });
+    mockApi.deleteRows.mockResolvedValue(2);
+    const { container } = render(<TableData />);
+    await screen.findByText("Alice");
+    const selectAll = screen.getByRole("checkbox", { name: "全选当前页" });
+    fireEvent.click(selectAll);
+    expect(
+      Array.from(
+        container.querySelectorAll<HTMLInputElement>(
+          ".virtual-data-table-row .ant-checkbox-input"
+        )
+      ).every((input) => input.checked)
+    ).toBe(true);
+    fireEvent.click(selectAll);
+    expect(
+      Array.from(
+        container.querySelectorAll<HTMLInputElement>(
+          ".virtual-data-table-row .ant-checkbox-input"
+        )
+      ).every((input) => !input.checked)
+    ).toBe(true);
+    fireEvent.click(selectAll);
+    fireEvent.click(screen.getByRole("button", { name: "删除选中的 2 行" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^删\s*除$/ }));
+    await waitFor(() =>
+      expect(mockApi.deleteRows).toHaveBeenCalledWith(
+        "conn-1",
+        "mydb",
+        "users",
+        [
+          { id: 1, region: "西" },
+          { id: 1, region: "东" },
+        ]
+      )
+    );
+  });
+
+  it("Tab 编辑导航按可见列和原始行索引保存修改", async () => {
+    const { container } = render(<TableData />);
+    await screen.findByText("Alice");
+    fireEvent.doubleClick(container.querySelector('[data-cell-key="0:id"]')!);
+    const firstInput = screen.getByRole("textbox");
+    fireEvent.keyDown(firstInput, { key: "Tab" });
+    const nextInput = screen.getByRole("textbox");
+    expect(nextInput).toHaveValue("Alice");
+    fireEvent.change(nextInput, { target: { value: "新名字" } });
+    fireEvent.keyDown(nextInput, { key: "Tab", shiftKey: true });
+    const changes = useTableDataStore
+      .getState()
+      .getPendingChangesForTable("conn-1", "mydb", "users");
+    expect(Array.from(changes.values())).toEqual([
+      expect.objectContaining({
+        rowKey: 0,
+        colName: "name",
+        oldValue: "Alice",
+        newValue: "新名字",
+        primaryKeys: { id: 1 },
+      }),
+    ]);
+    expect(useTableDataStore.getState().rows[0][1]).toBe("Alice");
+    expect(screen.getByRole("textbox")).toHaveValue("1");
   });
 
   it("切换表后恢复各表的纵向和横向滚动位置", () => {
@@ -373,7 +498,9 @@ describe("TableData 行勾选隔离", () => {
 
     const getBodyCheckboxes = () =>
       Array.from(
-        container.querySelectorAll(".virtual-data-table-row .ant-checkbox-input")
+        container.querySelectorAll(
+          ".virtual-data-table-row .ant-checkbox-input"
+        )
       ) as HTMLInputElement[];
 
     await waitFor(() => {
@@ -393,10 +520,14 @@ describe("TableData 行勾选隔离", () => {
     });
 
     await waitFor(() => {
-      expect(screen.queryByLabelText("删除选中的 1 行")).not.toBeInTheDocument();
+      expect(
+        screen.queryByLabelText("删除选中的 1 行")
+      ).not.toBeInTheDocument();
     });
 
-    expect(getBodyCheckboxes().every((checkbox) => !checkbox.checked)).toBe(true);
+    expect(getBodyCheckboxes().every((checkbox) => !checkbox.checked)).toBe(
+      true
+    );
 
     act(() => switchToTable("users", usersStructure));
 
@@ -425,7 +556,9 @@ describe("TableData 行勾选隔离", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Alicia")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /提交修改/ })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /提交修改/ })
+      ).toBeInTheDocument();
     });
 
     act(() => switchToTable("posts", postsStructure));
@@ -456,7 +589,9 @@ describe("TableData 行勾选隔离", () => {
           .getPendingChangesForTable("conn-1", "mydb", "users").size
       ).toBe(1);
       expect(screen.getByText("Alicia")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /提交修改/ })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /提交修改/ })
+      ).toBeInTheDocument();
     });
   });
 
@@ -500,7 +635,9 @@ describe("TableData 行勾选隔离", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Alicia")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /提交修改/ })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /提交修改/ })
+      ).toBeInTheDocument();
     });
 
     act(() => switchToTable("posts", postsStructure));
@@ -519,7 +656,9 @@ describe("TableData 行勾选隔离", () => {
     await waitFor(() => {
       expect(screen.getByLabelText("查看筛选后的查询 SQL")).toBeInTheDocument();
       expect(screen.getByText("Alicia")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /提交修改/ })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /提交修改/ })
+      ).toBeInTheDocument();
     });
     view.unmount();
   });
@@ -540,7 +679,8 @@ describe("TableData 行勾选隔离", () => {
         table_type: "TABLE" as const,
         engine: "InnoDB",
         rows: 2,
-        data_length: 0, index_length: null,
+        data_length: 0,
+        index_length: null,
         comment: "",
       },
       "mydb|posts": {
@@ -548,7 +688,8 @@ describe("TableData 行勾选隔离", () => {
         table_type: "TABLE" as const,
         engine: "InnoDB",
         rows: 2,
-        data_length: 0, index_length: null,
+        data_length: 0,
+        index_length: null,
         comment: "",
       },
     };
@@ -558,10 +699,7 @@ describe("TableData 行勾选隔离", () => {
         "conn-1": {
           ...emptyConnState(),
           tables: {
-            mydb: [
-              tableInfos["mydb|users"],
-              tableInfos["mydb|posts"],
-            ],
+            mydb: [tableInfos["mydb|users"], tableInfos["mydb|posts"]],
           },
           openTabs: [
             { type: "table", database: "mydb", table: "users" },
@@ -627,7 +765,9 @@ describe("TableData 行勾选隔离", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Alicia")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /提交修改/ })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /提交修改/ })
+      ).toBeInTheDocument();
       expect(
         useTableDataStore
           .getState()
@@ -661,7 +801,9 @@ describe("TableData 行勾选隔离", () => {
           .getPendingChangesForTable("conn-1", "mydb", "users").size
       ).toBe(1);
       expect(screen.getByText("Alicia")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /提交修改/ })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /提交修改/ })
+      ).toBeInTheDocument();
     });
   });
 
@@ -687,7 +829,9 @@ describe("TableData 行勾选隔离", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Alicia")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /提交修改/ })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /提交修改/ })
+      ).toBeInTheDocument();
     });
   });
 
@@ -704,7 +848,9 @@ describe("TableData 行勾选隔离", () => {
     fireEvent.blur(input);
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /提交修改/ })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /提交修改/ })
+      ).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: /提交修改/ }));
@@ -722,7 +868,9 @@ describe("TableData 行勾选隔离", () => {
         "users",
         [{ primaryKeys: { id: 1 }, updates: { name: "Alicia" } }]
       );
-      expect(screen.queryByRole("button", { name: /提交修改/ })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /提交修改/ })
+      ).not.toBeInTheDocument();
     });
 
     expect(
@@ -737,7 +885,9 @@ describe("TableData 行勾选隔离", () => {
 
     const getBodyCheckboxes = () =>
       Array.from(
-        view.container.querySelectorAll(".virtual-data-table-row .ant-checkbox-input")
+        view.container.querySelectorAll(
+          ".virtual-data-table-row .ant-checkbox-input"
+        )
       ) as HTMLInputElement[];
 
     await waitFor(() => {
@@ -783,7 +933,9 @@ describe("TableData 行勾选隔离", () => {
     expect(screen.queryByText("Comment A")).not.toBeInTheDocument();
 
     const restoredCheckboxes = Array.from(
-      view.container.querySelectorAll(".virtual-data-table-row .ant-checkbox-input")
+      view.container.querySelectorAll(
+        ".virtual-data-table-row .ant-checkbox-input"
+      )
     ) as HTMLInputElement[];
     expect(restoredCheckboxes[0]?.checked).toBe(true);
   });
@@ -867,8 +1019,12 @@ describe("TableData 行勾选隔离", () => {
       expect(screen.getByRole("dialog")).toHaveTextContent("新增行");
     });
 
-    const dialogContent = document.querySelector(".ant-modal-content") as HTMLElement | null;
-    const dialogBody = document.querySelector(".ant-modal-body") as HTMLElement | null;
+    const dialogContent = document.querySelector(
+      ".ant-modal-content"
+    ) as HTMLElement | null;
+    const dialogBody = document.querySelector(
+      ".ant-modal-body"
+    ) as HTMLElement | null;
 
     expect(dialogContent).not.toBeNull();
     expect(dialogBody).not.toBeNull();

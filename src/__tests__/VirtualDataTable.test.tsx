@@ -1,37 +1,93 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/react";
-import type { ColumnType } from "antd/es/table";
+import type { VirtualDataTableColumn } from "../components/table/VirtualDataTable";
+import {
+  createTableRowSource,
+  type TableRowSource,
+} from "../components/table/tableRowSource";
 import { VirtualDataTable } from "../components/table/VirtualDataTable";
 
-type Row = Record<string, unknown>;
-
-function makeColumns(count: number): ColumnType<Row>[] {
+function makeColumns(count: number): VirtualDataTableColumn[] {
   return Array.from({ length: count }, (_, i) => ({
     title: `col_${i}`,
-    dataIndex: `col_${i}`,
     key: `col_${i}`,
     width: 120,
-    render: (_v, record) => <span>{String(record[`col_${i}`] ?? "")}</span>,
+    renderCell: (rowIndex) => <span>{`v${rowIndex}_${i}`}</span>,
   }));
 }
 
-function makeRows(rowCount: number, colCount: number): Row[] {
-  return Array.from({ length: rowCount }, (_, r) => {
-    const row: Row = { _key: `r${r}` };
-    for (let c = 0; c < colCount; c++) {
-      row[`col_${c}`] = `v${r}_${c}`;
-    }
-    return row;
+function makeRows(rowCount: number, colCount: number): TableRowSource {
+  return createTableRowSource({
+    rows: Array.from({ length: rowCount }, (_, r) =>
+      Array.from({ length: colCount }, (_, c) => `v${r}_${c}`)
+    ),
+    columns: Array.from({ length: colCount }, (_, c) => `col_${c}`),
+    primaryKeyColumns: [],
+    scopeKey: "",
+    page: 1,
   });
 }
 
 describe("VirtualDataTable", () => {
+  it("10000×200 页的固定视口只读取可见单元格，滚动不重新扫描选择键", () => {
+    const readColumns = new Set<number>();
+    let reads = 0;
+    const rows = Array.from(
+      { length: 10000 },
+      (_, r) =>
+        new Proxy(
+          Array.from({ length: 200 }, (_, c) => r * 200 + c),
+          {
+            get(target, key, receiver) {
+              if (/^\d+$/.test(String(key)) && key !== "0") {
+                reads++;
+                readColumns.add(Number(key));
+              }
+              return Reflect.get(target, key, receiver);
+            },
+          }
+        )
+    );
+    const names = Array.from({ length: 200 }, (_, i) => `c${i}`);
+    const rowSource = createTableRowSource({
+      rows,
+      columns: names,
+      primaryKeyColumns: ["c0"],
+      scopeKey: "s",
+      page: 1,
+    });
+    const getRowKey = vi.spyOn(rowSource, "getRowKey");
+    const { container } = render(
+      <VirtualDataTable
+        rowSource={rowSource}
+        columns={names.map((key) => ({
+          key,
+          title: key,
+          width: 120,
+          renderCell: (index) => String(rowSource.getCell(index, key) ?? ""),
+        }))}
+        height={400}
+        rowSelection={{ selectedRowKeys: [], onChange: vi.fn() }}
+      />
+    );
+    expect(reads).toBeGreaterThan(0);
+    expect(reads).toBeLessThan(2000);
+    expect(readColumns.has(199)).toBe(false);
+    expect(getRowKey.mock.calls.length).toBeLessThan(100);
+    getRowKey.mockClear();
+    fireEvent.scroll(
+      container.querySelector(".virtual-data-table-container")!,
+      { target: { scrollTop: 3200 } }
+    );
+    expect(getRowKey.mock.calls.length).toBeLessThan(100);
+  });
+
   it("窗口变大使内容无需滚动时，恢复被夹断到零仍显示首行首列", () => {
     const columns = makeColumns(20);
     const props = {
       columns,
-      dataSource: makeRows(20, 20),
-      rowKey: (r: Row) => String(r._key),
+      rowSource: makeRows(20, 20),
+
       height: 400,
       testId: "clamped-scroll-table",
       initialScrollPosition: { top: 480, left: 1200 },
@@ -50,7 +106,10 @@ describe("VirtualDataTable", () => {
         get: () => value,
         set: (next: number) => {
           const content = table.firstElementChild as HTMLElement;
-          const max = Math.max(0, parseFloat(content.style[dimension]) - table[viewport]);
+          const max = Math.max(
+            0,
+            parseFloat(content.style[dimension]) - table[viewport]
+          );
           value = Math.max(0, Math.min(next, max));
         },
       });
@@ -67,17 +126,19 @@ describe("VirtualDataTable", () => {
 
     expect(table.scrollTop).toBe(0);
     expect(table.scrollLeft).toBe(0);
-    expect(table.querySelector('[data-row-key="r0"]')).toBeInTheDocument();
+    expect(
+      table.querySelector('[data-row-key="page=1|row=0"]')
+    ).toBeInTheDocument();
     expect(table).toHaveTextContent("v0_0");
   });
 
   it("等待目标表数据就绪后恢复滚动，后续渲染不覆盖用户的新位置", () => {
     const columns = makeColumns(20);
-    const dataSource = makeRows(100, 20);
+    const rowSource = makeRows(100, 20);
     const props = {
       columns,
-      dataSource: makeRows(1, 20),
-      rowKey: (r: Row) => String(r._key),
+      rowSource: makeRows(1, 20),
+
       height: 400,
       testId: "scroll-table",
       initialScrollPosition: { top: 960, left: 600 },
@@ -86,50 +147,50 @@ describe("VirtualDataTable", () => {
     const { getByTestId, rerender } = render(<VirtualDataTable {...props} />);
 
     rerender(
-      <VirtualDataTable {...props} dataSource={dataSource} scrollRestoreReady />
+      <VirtualDataTable {...props} rowSource={rowSource} scrollRestoreReady />
     );
     const table = getByTestId("scroll-table");
     expect(table.scrollTop).toBe(960);
     expect(table.scrollLeft).toBe(600);
-    expect(table.querySelector('[data-row-key="r30"]')).toBeInTheDocument();
+    expect(
+      table.querySelector('[data-row-key="page=1|row=30"]')
+    ).toBeInTheDocument();
 
     fireEvent.scroll(table, { target: { scrollTop: 1280, scrollLeft: 720 } });
     rerender(
       <VirtualDataTable
         {...props}
-        dataSource={[...dataSource]}
+        rowSource={rowSource}
         scrollRestoreReady
         height={450}
       />
     );
     expect(table.scrollTop).toBe(1280);
     expect(table.scrollLeft).toBe(720);
-    expect(table.querySelector('[data-row-key="r40"]')).toBeInTheDocument();
+    expect(
+      table.querySelector('[data-row-key="page=1|row=40"]')
+    ).toBeInTheDocument();
   });
 
   it("基本渲染：列头 / 数据 cell / 空数据占位", () => {
     const columns = makeColumns(3);
-    const dataSource = makeRows(2, 3);
+    const rowSource = makeRows(2, 3);
     const { container, getByText, rerender, queryByText } = render(
-      <VirtualDataTable
-        columns={columns}
-        dataSource={dataSource}
-        rowKey={(r) => String(r._key)}
-        height={400}
-      />
+      <VirtualDataTable columns={columns} rowSource={rowSource} height={400} />
     );
 
     expect(getByText("col_0")).toBeInTheDocument();
     expect(getByText("col_1")).toBeInTheDocument();
     expect(getByText("v0_0")).toBeInTheDocument();
     expect(getByText("v1_2")).toBeInTheDocument();
-    expect(container.querySelectorAll(".virtual-data-table-row").length).toBe(2);
+    expect(container.querySelectorAll(".virtual-data-table-row").length).toBe(
+      2
+    );
 
     rerender(
       <VirtualDataTable
         columns={columns}
-        dataSource={[]}
-        rowKey={(r) => String(r._key)}
+        rowSource={makeRows(0, 3)}
         height={400}
       />
     );
@@ -140,12 +201,11 @@ describe("VirtualDataTable", () => {
   it("rowSelection: 行勾选切换、全选/取消全选", () => {
     const onChange = vi.fn();
     const columns = makeColumns(2);
-    const dataSource = makeRows(3, 2);
+    const rowSource = makeRows(3, 2);
     const { container, rerender } = render(
       <VirtualDataTable
         columns={columns}
-        dataSource={dataSource}
-        rowKey={(r) => String(r._key)}
+        rowSource={rowSource}
         height={400}
         rowSelection={{ selectedRowKeys: [], onChange }}
       />
@@ -160,15 +220,21 @@ describe("VirtualDataTable", () => {
       ".virtual-data-table-header .ant-checkbox-input"
     ) as HTMLInputElement;
     fireEvent.click(headerCheckbox);
-    expect(onChange).toHaveBeenCalledWith(["r0", "r1", "r2"]);
+    expect(onChange).toHaveBeenCalledWith([
+      "page=1|row=0",
+      "page=1|row=1",
+      "page=1|row=2",
+    ]);
 
     rerender(
       <VirtualDataTable
         columns={columns}
-        dataSource={dataSource}
-        rowKey={(r) => String(r._key)}
+        rowSource={rowSource}
         height={400}
-        rowSelection={{ selectedRowKeys: ["r0", "r1", "r2"], onChange }}
+        rowSelection={{
+          selectedRowKeys: ["page=1|row=0", "page=1|row=1", "page=1|row=2"],
+          onChange,
+        }}
       />
     );
     fireEvent.click(headerCheckbox);
@@ -178,8 +244,7 @@ describe("VirtualDataTable", () => {
     rerender(
       <VirtualDataTable
         columns={columns}
-        dataSource={dataSource}
-        rowKey={(r) => String(r._key)}
+        rowSource={rowSource}
         height={400}
         rowSelection={{ selectedRowKeys: [], onChange }}
       />
@@ -188,35 +253,27 @@ describe("VirtualDataTable", () => {
       container.querySelectorAll(".virtual-data-table-row .ant-checkbox-input")
     ) as HTMLInputElement[];
     fireEvent.click(rowInputs[1]!);
-    expect(onChange).toHaveBeenCalledWith(["r1"]);
+    expect(onChange).toHaveBeenCalledWith(["page=1|row=1"]);
   });
 
   it("clientReadOnly 时（不传 rowSelection）不渲染行选择列", () => {
     const columns = makeColumns(2);
-    const dataSource = makeRows(2, 2);
+    const rowSource = makeRows(2, 2);
     const { container } = render(
-      <VirtualDataTable
-        columns={columns}
-        dataSource={dataSource}
-        rowKey={(r) => String(r._key)}
-        height={400}
-      />
+      <VirtualDataTable columns={columns} rowSource={rowSource} height={400} />
     );
     expect(
-      container.querySelectorAll(".virtual-data-table-header .ant-checkbox-input").length
+      container.querySelectorAll(
+        ".virtual-data-table-header .ant-checkbox-input"
+      ).length
     ).toBe(0);
   });
 
   it("视觉 token：容器上注入 --vdt-* CSS 变量，hover/选中等态由 CSS 驱动", () => {
     const columns = makeColumns(2);
-    const dataSource = makeRows(2, 2);
+    const rowSource = makeRows(2, 2);
     const { container } = render(
-      <VirtualDataTable
-        columns={columns}
-        dataSource={dataSource}
-        rowKey={(r) => String(r._key)}
-        height={400}
-      />
+      <VirtualDataTable columns={columns} rowSource={rowSource} height={400} />
     );
     const root = container.querySelector(
       ".virtual-data-table-container"
@@ -244,13 +301,12 @@ describe("VirtualDataTable", () => {
 
   it("视觉 token：选中行带有 --selected className，未选中不带", () => {
     const columns = makeColumns(2);
-    const dataSource = makeRows(2, 2);
+    const rowSource = makeRows(2, 2);
     const onChange = vi.fn();
     const { container, rerender } = render(
       <VirtualDataTable
         columns={columns}
-        dataSource={dataSource}
-        rowKey={(r) => String(r._key)}
+        rowSource={rowSource}
         height={400}
         rowSelection={{ selectedRowKeys: [], onChange }}
       />
@@ -262,10 +318,9 @@ describe("VirtualDataTable", () => {
     rerender(
       <VirtualDataTable
         columns={columns}
-        dataSource={dataSource}
-        rowKey={(r) => String(r._key)}
+        rowSource={rowSource}
         height={400}
-        rowSelection={{ selectedRowKeys: ["r0"], onChange }}
+        rowSelection={{ selectedRowKeys: ["page=1|row=0"], onChange }}
       />
     );
     const selectedRows = container.querySelectorAll(
@@ -273,19 +328,18 @@ describe("VirtualDataTable", () => {
     );
     expect(selectedRows.length).toBe(1);
     expect((selectedRows[0] as HTMLElement).getAttribute("data-row-key")).toBe(
-      "r0"
+      "page=1|row=0"
     );
   });
 
   it("列虚拟化：宽列数据下，仅渲染部分列而非全部 60 列", () => {
     const columns = makeColumns(60);
-    const dataSource = makeRows(10, 60);
+    const rowSource = makeRows(10, 60);
     const { container } = render(
       <div style={{ width: "1024px" }}>
         <VirtualDataTable
           columns={columns}
-          dataSource={dataSource}
-          rowKey={(r) => String(r._key)}
+          rowSource={rowSource}
           height={400}
         />
       </div>

@@ -83,7 +83,7 @@ type PersistedSettingsV0 = {
 
 export const useSettingsStore = create<SettingsState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       idleTimeoutMinutes: 15,
       sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
       listTableSettings: {},
@@ -95,12 +95,13 @@ export const useSettingsStore = create<SettingsState>()(
       },
 
       setSidebarWidth: (width: number) => {
-        set({
-          sidebarWidth: Math.min(
-            SIDEBAR_WIDTH_MAX,
-            Math.max(SIDEBAR_WIDTH_MIN, width)
-          ),
-        });
+        const normalized = Math.min(
+          SIDEBAR_WIDTH_MAX,
+          Math.max(SIDEBAR_WIDTH_MIN, width)
+        );
+        // persist 包装的 set 即使返回相同状态也写 storage，所以必须提前退出。
+        if (get().sidebarWidth === normalized) return;
+        set({ sidebarWidth: normalized });
       },
 
       setListTableColumnWidth: (

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   useSettingsStore,
   SIDEBAR_WIDTH_MIN,
@@ -20,6 +20,8 @@ describe("settingsStore", () => {
     });
   });
 
+  afterEach(() => vi.restoreAllMocks());
+
   describe("idleTimeoutMinutes", () => {
     it("应该有默认值 15 分钟", () => {
       useSettingsStore.setState({ idleTimeoutMinutes: 15 });
@@ -40,7 +42,9 @@ describe("settingsStore", () => {
   describe("sidebarWidth", () => {
     it("应该有默认宽度", () => {
       useSettingsStore.setState({ sidebarWidth: SIDEBAR_WIDTH_DEFAULT });
-      expect(useSettingsStore.getState().sidebarWidth).toBe(SIDEBAR_WIDTH_DEFAULT);
+      expect(useSettingsStore.getState().sidebarWidth).toBe(
+        SIDEBAR_WIDTH_DEFAULT
+      );
     });
 
     it("setSidebarWidth 应该更新宽度", () => {
@@ -56,6 +60,37 @@ describe("settingsStore", () => {
     it("setSidebarWidth 应限制在最大宽度内", () => {
       useSettingsStore.getState().setSidebarWidth(600);
       expect(useSettingsStore.getState().sidebarWidth).toBe(SIDEBAR_WIDTH_MAX);
+    });
+  });
+
+  describe("sidebarWidth 持久化", () => {
+    it.each([
+      [280, 280],
+      [200, 100],
+      [480, 900],
+    ])(
+      "当前 %i，输入 %i 规范化后相同不写 storage，也不通知订阅者",
+      (current, next) => {
+        useSettingsStore.setState({ sidebarWidth: current });
+        const writes = vi.spyOn(localStorage, "setItem");
+        const listener = vi.fn();
+        const unsubscribe = useSettingsStore.subscribe(listener);
+        try {
+          useSettingsStore.getState().setSidebarWidth(next);
+          expect(writes).not.toHaveBeenCalled();
+          expect(listener).not.toHaveBeenCalled();
+        } finally {
+          unsubscribe();
+        }
+      }
+    );
+
+    it("变化的宽度只持久化一次", () => {
+      const writes = vi.spyOn(localStorage, "setItem");
+      useSettingsStore.getState().setSidebarWidth(320);
+      expect(writes).toHaveBeenCalledTimes(1);
+      const state = JSON.parse(localStorage.getItem("db-connect-settings")!);
+      expect(state.state.sidebarWidth).toBe(320);
     });
   });
 
@@ -90,7 +125,11 @@ describe("settingsStore", () => {
     it("setListTableColumnWidth 应更新指定列表的列宽", () => {
       useSettingsStore
         .getState()
-        .setListTableColumnWidth(LIST_TABLE_IDS.DATABASE_TABLE_LIST, "name", 240);
+        .setListTableColumnWidth(
+          LIST_TABLE_IDS.DATABASE_TABLE_LIST,
+          "name",
+          240
+        );
       const settings =
         useSettingsStore.getState().listTableSettings[
           LIST_TABLE_IDS.DATABASE_TABLE_LIST
@@ -103,14 +142,18 @@ describe("settingsStore", () => {
         .getState()
         .setListTableColumnWidth(LIST_TABLE_IDS.ROUTINE_LIST, "name", 20);
       let settings =
-        useSettingsStore.getState().listTableSettings[LIST_TABLE_IDS.ROUTINE_LIST];
+        useSettingsStore.getState().listTableSettings[
+          LIST_TABLE_IDS.ROUTINE_LIST
+        ];
       expect(settings?.columnWidths.name).toBe(TABLE_LIST_COL_WIDTH_MIN);
 
       useSettingsStore
         .getState()
         .setListTableColumnWidth(LIST_TABLE_IDS.ROUTINE_LIST, "name", 9999);
       settings =
-        useSettingsStore.getState().listTableSettings[LIST_TABLE_IDS.ROUTINE_LIST];
+        useSettingsStore.getState().listTableSettings[
+          LIST_TABLE_IDS.ROUTINE_LIST
+        ];
       expect(settings?.columnWidths.name).toBe(TABLE_LIST_COL_WIDTH_MAX);
     });
 
@@ -136,9 +179,13 @@ describe("settingsStore", () => {
         .getState()
         .setListTableColumnWidth(LIST_TABLE_IDS.EVENT_LIST, "name", 180);
       const routine =
-        useSettingsStore.getState().listTableSettings[LIST_TABLE_IDS.ROUTINE_LIST];
+        useSettingsStore.getState().listTableSettings[
+          LIST_TABLE_IDS.ROUTINE_LIST
+        ];
       const event =
-        useSettingsStore.getState().listTableSettings[LIST_TABLE_IDS.EVENT_LIST];
+        useSettingsStore.getState().listTableSettings[
+          LIST_TABLE_IDS.EVENT_LIST
+        ];
       expect(routine?.columnWidths.name).toBe(150);
       expect(event?.columnWidths.name).toBe(180);
     });

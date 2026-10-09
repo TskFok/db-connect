@@ -1,3 +1,4 @@
+import { useShallow } from "zustand/react/shallow";
 import { useEffect, useRef } from "react";
 import { useConnectionStore } from "../stores/connectionStore";
 import { useSettingsStore } from "../stores/settingsStore";
@@ -11,10 +12,13 @@ const CHECK_INTERVAL_MS = 60_000;
  * 减少凭据驻留时间。支持多连接，对每个连接分别检测。
  */
 export function useIdleDisconnect(onDisconnected?: (message: string) => void) {
-  const { activeConnections, disconnect } = useConnectionStore();
-  const idleTimeoutMinutes = useSettingsStore(
-    (s) => s.idleTimeoutMinutes
+  const { activeConnections, disconnect } = useConnectionStore(
+    useShallow((s) => ({
+      activeConnections: s.activeConnections,
+      disconnect: s.disconnect,
+    }))
   );
+  const idleTimeoutMinutes = useSettingsStore((s) => s.idleTimeoutMinutes);
   const onDisconnectedRef = useRef(onDisconnected);
   onDisconnectedRef.current = onDisconnected;
 

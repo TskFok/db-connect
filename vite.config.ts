@@ -41,6 +41,7 @@ export default defineConfig({
   plugins: [react()],
   clearScreen: false,
   build: {
+    manifest: true,
     rollupOptions: {
       output: {
         // 拆分大依赖到独立 chunk：改善浏览器缓存命中，并配合懒加载减小首屏体积。

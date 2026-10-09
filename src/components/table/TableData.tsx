@@ -50,7 +50,6 @@ import {
   ArrowDownOutlined,
   StopOutlined,
 } from "@ant-design/icons";
-import type { ColumnsType, ColumnType } from "antd/es/table";
 import { useShallow } from "zustand/react/shallow";
 import {
   useTableDataStore,
@@ -82,10 +81,12 @@ import {
   type WhereFilterConfig,
   isStringColumnType,
 } from "../../utils/whereFilterUtils";
-import { VirtualDataTable } from "./VirtualDataTable";
 import {
-  buildRowSelectionKey,
-  collectSelectedPrimaryKeyRows,
+  VirtualDataTable,
+  type VirtualDataTableColumn,
+} from "./VirtualDataTable";
+import { createTableRowSource } from "./tableRowSource";
+import {
   primaryKeysToStableRowKey,
   buildPendingChangeKey,
   getRecordPrimaryKeys,
@@ -448,11 +449,6 @@ export function TableData() {
     ]
   );
 
-  // 固定 rowKey / rowSelection 引用，避免每次 render 生成新对象破坏 VirtualDataTable 的 memo
-  const vdtRowKey = useCallback(
-    (record: Record<string, unknown>) => String(record._selectionKey),
-    []
-  );
   const handleRowSelectionChange = useCallback(
     (keys: string[]) => setSelectedRowKeysForCurrentScope(keys),
     [setSelectedRowKeysForCurrentScope]
@@ -1223,9 +1219,21 @@ export function TableData() {
     ]
   );
 
+  const rowSource = useMemo(
+    () =>
+      createTableRowSource({
+        rows,
+        columns,
+        primaryKeyColumns,
+        scopeKey: rowSelectionScopeKey,
+        page,
+      }),
+    [rows, columns, primaryKeyColumns, rowSelectionScopeKey, page]
+  );
+
   // 构建表头列定义（memoized，不依赖 pendingChanges —— 通过 ref 访问最新值）
   const DEFAULT_COL_WIDTH = 160;
-  const allTableColumns = useMemo<ColumnsType<Record<string, unknown>>>(
+  const allTableColumns = useMemo<VirtualDataTableColumn[]>(
     () =>
       columns.map((colName) => {
         const colWidth = columnWidths[colName] ?? DEFAULT_COL_WIDTH;
@@ -1246,7 +1254,7 @@ export function TableData() {
         const isSortActive = !!sortEntry;
         const sortPriority =
           sortFields.length > 1 && sortIdx >= 0 ? sortIdx + 1 : undefined;
-        const colDef: ColumnType<Record<string, unknown>> = {
+        const colDef: VirtualDataTableColumn = {
           title: (
             <span
               style={{
@@ -1319,7 +1327,6 @@ export function TableData() {
               />
             </span>
           ),
-          dataIndex: colName,
           key: colName,
           ellipsis: true,
           width: colWidth,
@@ -1327,10 +1334,9 @@ export function TableData() {
             width: colWidth,
             onResize: handleResize(colName),
           }),
-          render: (_, record: Record<string, unknown>) => {
-            const rowKey = record._rowKey as number;
-            const cellValue = record[colName];
-            const pks = getRecordPrimaryKeys(record, primaryKeyColumns);
+          renderCell: (rowKey) => {
+            const cellValue = rowSource.getCell(rowKey, colName);
+            const pks = rowSource.getPrimaryKeys(rowKey);
             const pendingKey =
               Object.keys(pks).length > 0
                 ? buildPendingChangeKey(pks, colName)
@@ -1371,7 +1377,7 @@ export function TableData() {
                   currentDatabaseType === "mysql" && isDeferredField(cellValue)
                     ? async () => {
                         const result = await loadCompleteRowsForPage(
-                          [record],
+                          rowSource.materializeRows([rowKey], [colName]),
                           [colName]
                         );
                         return result.rows[0][colName];
@@ -1409,6 +1415,7 @@ export function TableData() {
       }),
     [
       columns,
+      rowSource,
       columnWidths,
       columnMetadataByName,
       primaryKeyColumns,
@@ -1435,26 +1442,6 @@ export function TableData() {
     [allTableColumns, hiddenColumns]
   );
 
-  // 把行数据从 array-of-arrays 转为 array-of-objects（memoized）
-  const dataSource = useMemo<Record<string, unknown>[]>(
-    () =>
-      rows.map((row, rowIdx) => {
-        const record: Record<string, unknown> = { _rowKey: rowIdx };
-        columns.forEach((col, colIdx) => {
-          record[col] = row[colIdx];
-        });
-        record._selectionKey = buildRowSelectionKey(
-          rowSelectionScopeKey,
-          primaryKeyColumns,
-          record,
-          rowIdx,
-          page
-        );
-        return record;
-      }),
-    [rows, columns, rowSelectionScopeKey, primaryKeyColumns, page]
-  );
-
   useEffect(() => {
     if (activeTableKey !== rowSelectionScopeKey) {
       return;
@@ -1463,8 +1450,11 @@ export function TableData() {
       setSelectedRowKeysForCurrentScope([]);
       return;
     }
+    if (selectedRowKeys.length === 0) return;
     const validSelectionKeys = new Set(
-      dataSource.map((row) => String(row._selectionKey))
+      Array.from({ length: rowSource.rowCount }, (_, index) =>
+        rowSource.getRowKey(index)
+      )
     );
     setSelectedRowKeysForCurrentScope((prev) => {
       const next = prev.filter((key) => validSelectionKeys.has(key));
@@ -1473,7 +1463,8 @@ export function TableData() {
   }, [
     activeTableKey,
     clientReadOnly,
-    dataSource,
+    selectedRowKeys,
+    rowSource,
     rowSelectionScopeKey,
     setSelectedRowKeysForCurrentScope,
   ]);
@@ -1626,11 +1617,19 @@ export function TableData() {
       return;
     }
     const selectedKeySet = new Set(selectedRowKeys);
-    const primaryKeyRows = collectSelectedPrimaryKeyRows(
-      dataSource,
-      primaryKeyColumns,
-      selectedKeySet
-    );
+    const primaryKeyRows: Record<string, unknown>[] = [];
+    for (
+      let index = 0;
+      index < rowSource.rowCount && selectedKeySet.size > 0;
+      index++
+    ) {
+      if (!selectedKeySet.has(rowSource.getRowKey(index))) continue;
+      const primaryKeys = rowSource.getPrimaryKeys(index);
+      if (
+        primaryKeyColumns.every((column) => primaryKeys[column] !== undefined)
+      )
+        primaryKeyRows.push(primaryKeys);
+    }
 
     if (primaryKeyRows.length === 0) return;
 
@@ -1639,29 +1638,35 @@ export function TableData() {
     messageApi.success(`删除 ${primaryKeyRows.length} 行成功`);
   };
 
-  // 关闭右键菜单
-  // 获取当前选中的行 (用于复制为 INSERT)
-  const getSelectedRows = useCallback((): Record<string, unknown>[] => {
+  // 选择扫描仅创建行索引；在实际复制时才读取所需业务列。
+  const getSelectedIndices = useCallback((): number[] => {
     if (selectedRowKeys.length === 0) return [];
-    const keySet = new Set(selectedRowKeys);
-    return dataSource.filter((r) => keySet.has(String(r._selectionKey)));
-  }, [selectedRowKeys, dataSource]);
+    const keys = new Set(selectedRowKeys);
+    const indices: number[] = [];
+    for (let index = 0; index < rowSource.rowCount; index++) {
+      if (keys.has(rowSource.getRowKey(index))) indices.push(index);
+    }
+    return indices;
+  }, [selectedRowKeys, rowSource]);
 
   const openCopyInsertModal = useCallback(() => {
-    if (getSelectedRows().length === 0) {
+    if (getSelectedIndices().length === 0) {
       messageApi.warning("请先勾选要复制的行");
       return;
     }
     setCopyInsertSelected(copyInsertColumnNames);
     setCopyInsertSearch("");
     setCopyInsertOpen(true);
-  }, [copyInsertColumnNames, getSelectedRows, messageApi]);
+  }, [copyInsertColumnNames, getSelectedIndices, messageApi]);
 
   const confirmCopyAsInsert = useCallback(async () => {
-    const selectedRows = getSelectedRows();
     const selectedCols = orderedSelectedColumns(
       copyInsertColumnNames,
       new Set(copyInsertSelected)
+    );
+    const selectedRows = rowSource.materializeRows(
+      getSelectedIndices(),
+      selectedCols
     );
     if (selectedRows.length === 0) {
       messageApi.warning("请先勾选要复制的行");
@@ -1749,7 +1754,8 @@ export function TableData() {
     copyInsertSelected,
     currentDatabaseType,
     database,
-    getSelectedRows,
+    getSelectedIndices,
+    rowSource,
     loadCompleteRowsForPage,
     messageApi,
     pendingChanges,
@@ -1759,7 +1765,10 @@ export function TableData() {
 
   // 复制为 JSON 数组：仅包含当前在列设置中显示的列（与表格可见列一致），值含未提交的单元格编辑
   const handleCopyAsJson = useCallback(async () => {
-    const selectedRows = getSelectedRows();
+    const selectedRows = rowSource.materializeRows(
+      getSelectedIndices(),
+      visibleColNames
+    );
     if (selectedRows.length === 0) {
       messageApi.warning("请先勾选要复制的行");
       return;
@@ -1802,7 +1811,8 @@ export function TableData() {
   }, [
     pinResult,
     database,
-    getSelectedRows,
+    getSelectedIndices,
+    rowSource,
     loadCompleteRowsForPage,
     messageApi,
     pendingChanges,
@@ -1817,15 +1827,18 @@ export function TableData() {
       messageApi.warning("没有可导出的列，请在列设置中至少显示一列");
       return;
     }
-    if (dataSource.length === 0) {
+    if (rowSource.rowCount === 0) {
       messageApi.warning("当前页没有数据");
       return;
     }
     const release = pinResult();
     try {
-      assertCsvRowWithinLimit(dataSource.length);
+      assertCsvRowWithinLimit(rowSource.rowCount);
       const complete = await loadCompleteRowsForPage(
-        dataSource,
+        rowSource.materializeRows(
+          Array.from({ length: rowSource.rowCount }, (_, index) => index),
+          visibleColNames
+        ),
         visibleColNames
       );
       const rows: unknown[][] = complete.rows.map((row) => {
@@ -1857,7 +1870,7 @@ export function TableData() {
     database,
     table,
     visibleColNames,
-    dataSource,
+    rowSource,
     loadCompleteRowsForPage,
     pendingChanges,
     primaryKeyColumns,
@@ -2483,8 +2496,7 @@ export function TableData() {
           <VirtualDataTable
             key={rowSelectionScopeKey || "no-table"}
             columns={tableColumns}
-            dataSource={dataSource}
-            rowKey={vdtRowKey}
+            rowSource={rowSource}
             loading={dataLoading}
             height={effectiveTableHeight}
             defaultColWidth={DEFAULT_COL_WIDTH}

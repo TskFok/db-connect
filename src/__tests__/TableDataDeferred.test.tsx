@@ -612,6 +612,52 @@ describe("TableData 大字段按需加载", () => {
     expect(getPendingChanges().size).toBe(0);
   });
 
+  it("复制期间切页拒绝旧页完整值响应", async () => {
+    let resolveRows!: (value: ReturnType<typeof fullRowsResult>) => void;
+    mockApi.queryFullRows.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveRows = resolve;
+        })
+    );
+    const { container } = render(<TableData />);
+    await selectRows(container, 1);
+    fireEvent.click(screen.getByRole("button", { name: "复制为 JSON 数组" }));
+    await waitFor(() => expect(mockApi.queryFullRows).toHaveBeenCalledTimes(1));
+    act(() =>
+      useTableDataStore.setState({ page: 2, rows: [[3, "新页", "新标题"]] })
+    );
+    await act(async () => {
+      resolveRows(fullRowsResult([[1, fullBody1]]));
+    });
+    await screen.findByText(/复制 JSON 失败.*页面已变化/);
+    expect(mockedWriteText).not.toHaveBeenCalled();
+  });
+
+  it("隐藏字段复制 INSERT 按列名批量补齐完整值", async () => {
+    useTableDataStore.setState({
+      columns: ["id", "title"],
+      rows: [[1, "标题一"]],
+    });
+    mockApi.queryFullRows.mockResolvedValue(fullRowsResult([[1, fullBody1]]));
+    const { container } = render(<TableData />);
+    await screen.findByText("标题一");
+    fireEvent.click(
+      container.querySelector(".virtual-data-table-row .ant-checkbox-input")!
+    );
+    fireEvent.click(screen.getByRole("button", { name: "复制为 INSERT 语句" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "复制为 INSERT 语句",
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: /复\s*制/ }));
+    await waitFor(() => expect(mockedWriteText).toHaveBeenCalledTimes(1));
+    expect(mockApi.queryFullRows.mock.calls).toEqual([
+      [connId, database, table, "id", [1], undefined, ["body"]],
+    ]);
+    expect(mockedWriteText.mock.calls[0][0]).toContain(fullBody1);
+    expect(mockedWriteText.mock.calls[0][0]).not.toContain(previewBody1);
+  });
+
   it("刷新后才返回的完整值不写入剪贴板", async () => {
     let resolveFullRows!: (value: ReturnType<typeof fullRowsResult>) => void;
     mockApi.queryFullRows.mockImplementation(

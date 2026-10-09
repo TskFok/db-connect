@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { readFileSync } from "node:fs";
+import { Profiler } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseSyncPreviewModal } from "../components/databaseCompare/DatabaseSyncPreviewModal";
 import type {
@@ -128,6 +129,41 @@ function renderPreview(
   overrides: Partial<React.ComponentProps<typeof DatabaseSyncPreviewModal>> = {}
 ) {
   return render(<DatabaseSyncPreviewModal {...baseProps} {...overrides} />);
+}
+
+function manyOperations(count = 1001): DatabaseSyncPreview {
+  return {
+    ...safePreview,
+    operations: Array.from({ length: count }, (_, index) => ({
+      id: `op-${index + 1}`,
+      table_name: `table_${index + 1}`,
+      kind: "create_table",
+      summary: `创建 table_${index + 1}`,
+      risk:
+        index === count - 1
+          ? "destructive"
+          : index === count - 2
+            ? "high"
+            : "normal",
+      sql: [
+        `CREATE TABLE table_${index + 1} (\n  id BIGINT\n)`,
+        `ALTER TABLE table_${index + 1} ADD PRIMARY KEY (id)`,
+      ],
+    })),
+    skipped_items: [],
+    summary: {
+      ...safePreview.summary,
+      executable_operations: count,
+      destructive_operations: 1,
+      skipped_items: 0,
+    },
+  };
+}
+
+function nextSyncPage(name: string) {
+  fireEvent.click(
+    within(screen.getByRole("navigation", { name })).getByTitle("Next Page")
+  );
 }
 
 describe("DatabaseSyncPreviewModal", () => {
@@ -607,5 +643,192 @@ describe("DatabaseSyncPreviewModal", () => {
     expect(
       screen.queryByRole("region", { name: "已成功执行的语句" })
     ).not.toBeInTheDocument();
+  });
+  it("1001 个操作只挂载 20 张卡片，保留多行 SQL 顺序和完整风险确认", () => {
+    const preview = manyOperations();
+    const onConfirm = vi.fn();
+    renderPreview({ preview, onConfirm });
+    expect(screen.getAllByRole("article")).toHaveLength(20);
+    const first = screen.getByRole("article", { name: "table_1 创建表 普通" });
+    expect(
+      Array.from(first.querySelectorAll("code"), (node) => node.textContent)
+    ).toEqual([
+      "CREATE TABLE table_1 (\n  id BIGINT\n)",
+      "ALTER TABLE table_1 ADD PRIMARY KEY (id)",
+    ]);
+    expect(screen.getByText("1001 个操作")).toBeInTheDocument();
+    expect(
+      screen.getByText("删除操作不可由本工具自动恢复")
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "我已检查以上 SQL，并理解已成功执行的 DDL 可能无法自动回滚",
+      })
+    );
+    nextSyncPage("同步操作分页");
+    expect(screen.getAllByRole("article")).toHaveLength(20);
+    expect(screen.getAllByRole("article")[0]).toHaveAccessibleName(
+      "table_21 创建表 普通"
+    );
+    expect(
+      screen.queryByRole("article", { name: "table_1 创建表 普通" })
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("计划 0123456789ab")).toBeInTheDocument();
+    const confirm = screen.getByRole("button", { name: "确认并执行删除同步" });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    expect(onConfirm).toHaveBeenCalledOnce();
+    expect(preview.operations).toHaveLength(1001);
+  });
+
+  it("阻塞和跳过列表独立分页且全量阻塞仍禁止执行", () => {
+    const items = Array.from({ length: 41 }, (_, index) => ({
+      table_name: `blocked_${index + 1}`,
+      summary: `阻塞 ${index + 1}`,
+      reason: "不支持修改",
+    }));
+    renderPreview({
+      preview: {
+        ...safePreview,
+        blockers: items,
+        skipped_items: items.map((item) => ({
+          ...item,
+          summary: `跳过 ${item.table_name}`,
+        })),
+        can_execute: false,
+        summary: { ...safePreview.summary, blockers: 41, skipped_items: 41 },
+      },
+    });
+    const blockers = screen.getByRole("region", { name: "阻塞项目" });
+    const skipped = screen.getByRole("region", { name: "已跳过项目" });
+    expect(blockers.querySelectorAll(".ant-list-item")).toHaveLength(20);
+    expect(skipped.querySelectorAll(".ant-list-item")).toHaveLength(20);
+    nextSyncPage("阻塞项目分页");
+    expect(within(blockers).getByText("阻塞 21")).toBeInTheDocument();
+    expect(within(skipped).getByText("跳过 blocked_1")).toBeInTheDocument();
+    nextSyncPage("已跳过项目分页");
+    expect(within(skipped).getByText("跳过 blocked_21")).toBeInTheDocument();
+    expect(screen.getByText("已跳过 41 项")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "确认执行" })).toBeDisabled();
+  });
+
+  it("计划指纹变化重置页码，列表缩小时夹紧且执行锁持续有效", () => {
+    const preview = manyOperations(41);
+    const { rerender } = renderPreview({ preview, executionLocked: true });
+    nextSyncPage("同步操作分页");
+    nextSyncPage("同步操作分页");
+    expect(
+      screen.getByRole("article", { name: "table_41 创建表 删除" })
+    ).toBeInTheDocument();
+    rerender(
+      <DatabaseSyncPreviewModal
+        {...baseProps}
+        preview={{ ...preview, operations: preview.operations.slice(0, 21) }}
+        executionLocked
+      />
+    );
+    expect(
+      screen.getByRole("article", { name: "table_21 创建表 普通" })
+    ).toBeInTheDocument();
+    rerender(
+      <DatabaseSyncPreviewModal
+        {...baseProps}
+        preview={{ ...preview, plan_fingerprint: "new-plan" }}
+        executionLocked
+      />
+    );
+    expect(screen.getAllByRole("article")[0]).toHaveAccessibleName(
+      "table_1 创建表 普通"
+    );
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "我已检查以上 SQL，并理解已成功执行的 DDL 可能无法自动回滚",
+      })
+    );
+    expect(
+      screen.getByRole("button", { name: "确认并执行删除同步" })
+    ).toBeDisabled();
+  });
+
+  it("失败结果独立分页且保留原 SQL 序号、缺失 ID 和全局失败位置", () => {
+    const preview = manyOperations(101);
+    const result: DatabaseSyncExecutionResult = {
+      status: "partially_succeeded",
+      completed_statements: Array.from({ length: 45 }, (_, index) => ({
+        operation_id: index === 20 ? "unknown-completed" : `op-${index + 1}`,
+        statement_index: index === 20 ? 7 : 1,
+      })),
+      failed: {
+        operation_id: "unknown-failed",
+        statement_index: 3,
+        error: "执行失败",
+      },
+      pending_operation_ids: [
+        "unknown-failed",
+        ...Array.from({ length: 45 }, (_, index) =>
+          index === 20 ? "unknown-pending" : `op-${index + 51}`
+        ),
+      ],
+      cleanup_errors: [],
+      latest_compare_result: null,
+    };
+    const { rerender } = renderPreview({ preview, executionResult: result });
+    const completed = screen.getByRole("region", { name: "已成功执行的语句" });
+    const pending = screen.getByRole("region", { name: "未执行操作" });
+    expect(completed.querySelectorAll(".ant-list-item")).toHaveLength(20);
+    expect(pending.querySelectorAll(".ant-list-item")).toHaveLength(20);
+    nextSyncPage("已成功执行的语句分页");
+    expect(
+      within(completed).getByText("unknown-completed / 第 8 条 SQL")
+    ).toBeInTheDocument();
+    expect(within(pending).getByText("table_51 / 创建表")).toBeInTheDocument();
+    nextSyncPage("未执行操作分页");
+    expect(within(pending).getByText("unknown-pending")).toBeInTheDocument();
+    expect(screen.getByText("执行在第 46 条语句停止")).toBeInTheDocument();
+    expect(screen.getByText("失败操作：unknown-failed")).toBeInTheDocument();
+    expect(screen.getByText("操作内第 4 条 SQL")).toBeInTheDocument();
+    expect(screen.getByText("未执行 45 个操作")).toBeInTheDocument();
+    rerender(
+      <DatabaseSyncPreviewModal
+        {...baseProps}
+        preview={preview}
+        executionResult={{ ...result }}
+      />
+    );
+    expect(
+      within(completed).getByText("table_1 / 创建表 / 第 2 条 SQL")
+    ).toBeInTheDocument();
+    expect(within(pending).getByText("table_51 / 创建表")).toBeInTheDocument();
+  });
+  it("一千个多行 SQL 操作的首屏和键盘换页均只挂载 20 张卡片", () => {
+    const commits: { phase: string; duration: number }[] = [];
+    render(
+      <Profiler
+        id="sync-pagination"
+        onRender={(_id, phase, duration) => commits.push({ phase, duration })}
+      >
+        <DatabaseSyncPreviewModal
+          {...baseProps}
+          preview={manyOperations(1000)}
+        />
+      </Profiler>
+    );
+    expect(screen.getAllByRole("article")).toHaveLength(20);
+    const mount = [...commits];
+    commits.length = 0;
+    const next = within(
+      screen.getByRole("navigation", { name: "同步操作分页" })
+    ).getByTitle("Next Page");
+    next.focus();
+    expect(next).toHaveFocus();
+    fireEvent.keyDown(next, { key: "Enter", keyCode: 13 });
+    expect(screen.getAllByRole("article")[0]).toHaveAccessibleName(
+      "table_21 创建表 普通"
+    );
+    expect(screen.getAllByRole("article")).toHaveLength(20);
+    console.info(
+      "任务2 Profiler：1000操作",
+      JSON.stringify({ mount, page: commits })
+    );
   });
 });

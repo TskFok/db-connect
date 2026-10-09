@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { useState } from "react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { Profiler, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseCompareResults } from "../components/databaseCompare/DatabaseCompareResults";
 import type { DatabaseCompareResult } from "../types";
@@ -71,8 +71,10 @@ const baseProps = {
 
 function ControlledResults({
   initiallySelected = [],
+  result = baseProps.result,
 }: {
   initiallySelected?: string[];
+  result?: DatabaseCompareResult;
 }) {
   const [selectedTableNames, setSelectedTableNames] =
     useState(initiallySelected);
@@ -80,11 +82,37 @@ function ControlledResults({
   return (
     <DatabaseCompareResults
       {...baseProps}
+      result={result}
       includeDrops={includeDrops}
       onIncludeDropsChange={setIncludeDrops}
       onSelectionChange={setSelectedTableNames}
       selectedTableNames={selectedTableNames}
     />
+  );
+}
+
+function manyTables(count = 1001): DatabaseCompareResult {
+  return {
+    ...compareResult(),
+    tables: Array.from({ length: count }, (_, index) => ({
+      name: `table_${String(index + 1).padStart(4, "0")}`,
+      status: index === 0 || index === 50 ? "target_only" : "source_only",
+      columns: [],
+    })),
+    summary: {
+      source_only_tables: count - 2,
+      target_only_tables: 2,
+      changed_tables: 0,
+      different_columns: 0,
+    },
+  };
+}
+
+function nextTablePage() {
+  fireEvent.click(
+    within(screen.getByRole("navigation", { name: "差异表分页" })).getByTitle(
+      "Next Page"
+    )
   );
 }
 
@@ -206,5 +234,143 @@ describe("DatabaseCompareResults", () => {
     expect(
       screen.getByRole("switch", { name: "允许删除目标端结构" })
     ).toBeDisabled();
+  });
+  it("1001 张差异表仅挂载 50 行，跨页选择和全选保持完整", () => {
+    render(<ControlledResults result={manyTables()} />);
+    expect(
+      screen.getAllByRole("checkbox", { name: /^选择 table_/ })
+    ).toHaveLength(50);
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 table_0002" }));
+    nextTablePage();
+    expect(
+      screen.queryByRole("checkbox", { name: "选择 table_0002" })
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 table_0052" }));
+    expect(screen.getByText("已选择 2 / 999 张表")).toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "差异表分页" })).getByTitle(
+        "Previous Page"
+      )
+    );
+    expect(
+      screen.getByRole("checkbox", { name: "选择 table_0002" })
+    ).toBeChecked();
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择全部可同步表" }));
+    expect(screen.getByText("已选择 999 / 999 张表")).toBeInTheDocument();
+    nextTablePage();
+    expect(
+      screen.getByRole("checkbox", { name: "选择 table_0052" })
+    ).toBeChecked();
+  });
+
+  it("关闭删除开关会移除所有页面的目标端独有表", () => {
+    render(<ControlledResults result={manyTables()} />);
+    const drops = screen.getByRole("switch", { name: "允许删除目标端结构" });
+    fireEvent.click(drops);
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 table_0001" }));
+    nextTablePage();
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 table_0051" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 table_0052" }));
+    fireEvent.click(drops);
+    expect(screen.getByText("已选择 1 / 999 张表")).toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: "选择 table_0051" })
+    ).not.toBeChecked();
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "差异表分页" })).getByTitle(
+        "Previous Page"
+      )
+    );
+    expect(
+      screen.getByRole("checkbox", { name: "选择 table_0001" })
+    ).not.toBeChecked();
+  });
+
+  it("搜索、清空、筛选和结果替换都不会保留越界页", () => {
+    const result = manyTables();
+    const { rerender } = render(
+      <DatabaseCompareResults {...baseProps} result={result} />
+    );
+    nextTablePage();
+    const search = screen.getByPlaceholderText("搜索表名");
+    fireEvent.change(search, { target: { value: "table_1001" } });
+    expect(screen.getByText("table_1001")).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "" } });
+    expect(screen.getByText("table_0001")).toBeInTheDocument();
+    nextTablePage();
+    fireEvent.click(screen.getByRole("radio", { name: "仅目标端" }));
+    expect(screen.getByText("table_0001")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "全部" }));
+    nextTablePage();
+    rerender(
+      <DatabaseCompareResults {...baseProps} result={compareResult()} />
+    );
+    expect(screen.getByText("orders")).toBeInTheDocument();
+  });
+
+  it("展开字段仅挂载当前 50 行，外层换页卸载展开内容", () => {
+    const column = compareResult().tables[1].columns[0];
+    const result = manyTables();
+    result.tables[0] = {
+      name: "table_0001",
+      status: "changed",
+      columns: Array.from({ length: 101 }, (_, index) => ({
+        ...column,
+        name: `field_${index + 1}`,
+      })),
+    };
+    const { container } = render(
+      <DatabaseCompareResults {...baseProps} result={result} />
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Expand row" }));
+    expect(
+      container.querySelectorAll(
+        ".database-compare-expanded-table .ant-table-row"
+      )
+    ).toHaveLength(50);
+    const fields = screen.getByRole("navigation", {
+      name: "table_0001 字段分页",
+    });
+    fireEvent.click(within(fields).getByTitle("Next Page"));
+    expect(screen.getByText("field_51")).toBeInTheDocument();
+    expect(screen.queryByText("field_1")).not.toBeInTheDocument();
+    nextTablePage();
+    expect(
+      container.querySelector(".database-compare-expanded-table")
+    ).toBeNull();
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "差异表分页" })).getByTitle(
+        "Previous Page"
+      )
+    );
+    expect(
+      container.querySelector(".database-compare-expanded-table")
+    ).toBeNull();
+  });
+  it("一万张差异表首屏和键盘换页均只挂载 50 行", () => {
+    const commits: { phase: string; duration: number }[] = [];
+    const { container } = render(
+      <Profiler
+        id="compare-pagination"
+        onRender={(_id, phase, duration) => commits.push({ phase, duration })}
+      >
+        <DatabaseCompareResults {...baseProps} result={manyTables(10_000)} />
+      </Profiler>
+    );
+    expect(container.querySelectorAll(".ant-table-row")).toHaveLength(50);
+    const mount = [...commits];
+    commits.length = 0;
+    const next = within(
+      screen.getByRole("navigation", { name: "差异表分页" })
+    ).getByTitle("Next Page");
+    next.focus();
+    expect(next).toHaveFocus();
+    fireEvent.keyDown(next, { key: "Enter", keyCode: 13 });
+    expect(screen.getByText("table_0051")).toBeInTheDocument();
+    expect(container.querySelectorAll(".ant-table-row")).toHaveLength(50);
+    console.info(
+      "任务2 Profiler：10000表",
+      JSON.stringify({ mount, page: commits })
+    );
   });
 });

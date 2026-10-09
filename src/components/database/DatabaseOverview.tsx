@@ -1,3 +1,6 @@
+import type { RoutineListProps } from "./RoutineList";
+import type { EventListProps } from "./EventList";
+import { DeferredFeature } from "../common/DeferredFeatureBoundary";
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import {
   Typography,
@@ -41,8 +44,6 @@ import { DatabaseSqlFileActions } from "./DatabaseSqlFileActions";
 import { isSystemDatabase } from "../../utils/systemDatabase";
 import { isConnectionGloballyReadOnly } from "../../utils/sqlFileIoUi";
 import { formatTruncateTableError } from "../../utils/truncateTableErrors";
-import { RoutineList } from "./RoutineList";
-import { EventList } from "./EventList";
 import { useClientReadOnly } from "../../hooks/useClientReadOnly";
 import { useAntTableScrollY } from "../../hooks/useAntTableScrollY";
 import { formatBytes } from "../../utils/formatBytes";
@@ -70,6 +71,11 @@ import {
   registerTableListSearchFocus,
   requestTableListSearchFocus,
 } from "../../utils/tableListSearchFocus";
+
+const loadRoutineList = () =>
+  import("./RoutineList").then((module) => ({ default: module.RoutineList }));
+const loadEventList = () =>
+  import("./EventList").then((module) => ({ default: module.EventList }));
 
 const { Title, Text } = Typography;
 
@@ -1004,7 +1010,15 @@ export function DatabaseOverview() {
                         </Title>
                         <Text type="secondary">存储过程与函数</Text>
                       </Space>
-                      <RoutineList remeasureKey={overviewListRemeasureKey} />
+                      <DeferredFeature<RoutineListProps>
+                        active={dbOverviewTab === "routines"}
+                        loader={loadRoutineList}
+                        onClose={() => setDbOverviewTab("tables")}
+                      >
+                        {(Feature) => (
+                          <Feature remeasureKey={overviewListRemeasureKey} />
+                        )}
+                      </DeferredFeature>
                     </div>
                   ),
                 },
@@ -1037,7 +1051,15 @@ export function DatabaseOverview() {
                         </Title>
                         <Text type="secondary">定时事件（EVENT）</Text>
                       </Space>
-                      <EventList remeasureKey={overviewListRemeasureKey} />
+                      <DeferredFeature<EventListProps>
+                        active={dbOverviewTab === "events"}
+                        loader={loadEventList}
+                        onClose={() => setDbOverviewTab("tables")}
+                      >
+                        {(Feature) => (
+                          <Feature remeasureKey={overviewListRemeasureKey} />
+                        )}
+                      </DeferredFeature>
                     </div>
                   ),
                 },

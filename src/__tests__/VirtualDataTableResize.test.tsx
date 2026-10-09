@@ -1,7 +1,8 @@
 import { useMemo } from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ColumnType } from "antd/es/table";
+import type { VirtualDataTableColumn } from "../components/table/VirtualDataTable";
+import { createTableRowSource } from "../components/table/tableRowSource";
 import { VirtualDataTable } from "../components/table/VirtualDataTable";
 import { useTableColumnSettingsStore } from "../stores/tableColumnSettingsStore";
 import { saveTableColumnSettings } from "../services/tauriCommands";
@@ -12,29 +13,38 @@ vi.mock("../services/tauriCommands", () => ({
   deleteTableColumnSettings: vi.fn().mockResolvedValue(undefined),
 }));
 
-const rows = [{ id: 1, name: "示例" }];
-const rowKey = () => "1";
+const rowSource = createTableRowSource({
+  rows: [[1, "示例"]],
+  columns: ["id", "name"],
+  primaryKeyColumns: ["id"],
+  scopeKey: "",
+  page: 1,
+});
 
 function PersistedTable({ table = "users", revision = 0 }) {
   const width = useTableColumnSettingsStore(
     (state) => state.settings[`conn|db|${table}`]?.columnWidths.id ?? 120
   );
-  const columns = useMemo<ColumnType<Record<string, unknown>>[]>(
+  const columns = useMemo<VirtualDataTableColumn[]>(
     () => [
       {
         key: "id",
-        dataIndex: "id",
+        renderCell: (index) => String(rowSource.getCell(index, "id")),
         title: "编号",
         width,
-        onHeaderCell: () =>
-          ({
-            onResize: (nextWidth: number) =>
-              useTableColumnSettingsStore
-                .getState()
-                .setColumnWidth("conn", "db", table, "id", nextWidth),
-          }) as React.HTMLAttributes<HTMLElement>,
+        onHeaderCell: () => ({
+          onResize: (nextWidth: number) =>
+            useTableColumnSettingsStore
+              .getState()
+              .setColumnWidth("conn", "db", table, "id", nextWidth),
+        }),
       },
-      { key: "name", dataIndex: "name", title: "名称", width: 160 },
+      {
+        key: "name",
+        renderCell: (index) => String(rowSource.getCell(index, "name")),
+        title: "名称",
+        width: 160,
+      },
     ],
     [table, width]
   );
@@ -42,8 +52,7 @@ function PersistedTable({ table = "users", revision = 0 }) {
     <VirtualDataTable
       key={table}
       columns={columns}
-      dataSource={rows}
-      rowKey={rowKey}
+      rowSource={rowSource}
       height={400}
       renderRevision={revision}
     />

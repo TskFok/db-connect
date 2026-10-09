@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Frontend interaction WKWebView benchmark</title>
+    <style>
+      html,
+      body,
+      #root {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+      }
+      #root {
+        padding: 12px;
+        box-sizing: border-box;
+      }
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0s !important;
+        transition-duration: 0s !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      for (const name of ["error", "unhandledrejection"])
+        window.addEventListener(name, (event) =>
+          window.webkit?.messageHandlers?.benchmark?.postMessage({
+            type: "error",
+            message: event.message || String(event.reason),
+            stack: event.error?.stack || event.reason?.stack,
+          })
+        );
+    </script>
+    <script
+      type="module"
+      src="/scripts/performance/frontend-interaction-webview.tsx"
+    ></script>
+  </body>
+</html>

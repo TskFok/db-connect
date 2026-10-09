@@ -2,6 +2,7 @@ import {
   Alert,
   Checkbox,
   Input,
+  Pagination,
   Result,
   Segmented,
   Statistic,
@@ -55,6 +56,53 @@ function DiffStatusTag({ status }: { status: SchemaDiffStatus }) {
   );
 }
 
+const COMPARE_PAGE_SIZE = 50;
+
+function ColumnDiffTable({
+  table,
+  columns,
+}: {
+  table: TableDiff;
+  columns: ColumnsType<ColumnDiff>;
+}) {
+  const [page, setPage] = useState(1);
+  const lastPage = Math.max(
+    1,
+    Math.ceil(table.columns.length / COMPARE_PAGE_SIZE)
+  );
+  const current = Math.min(page, lastPage);
+  useEffect(() => setPage(1), [table]);
+  useEffect(() => setPage((value) => Math.min(value, lastPage)), [lastPage]);
+
+  return (
+    <div className="database-compare-expanded-table">
+      <Table<ColumnDiff>
+        rowKey="name"
+        size="small"
+        pagination={false}
+        columns={columns}
+        dataSource={table.columns.slice(
+          (current - 1) * COMPARE_PAGE_SIZE,
+          current * COMPARE_PAGE_SIZE
+        )}
+        scroll={{ x: 1060 }}
+      />
+      {table.columns.length > COMPARE_PAGE_SIZE && (
+        <nav aria-label={`${table.name} 字段分页`}>
+          <Pagination
+            size="small"
+            current={current}
+            pageSize={COMPARE_PAGE_SIZE}
+            total={table.columns.length}
+            showSizeChanger={false}
+            onChange={setPage}
+          />
+        </nav>
+      )}
+    </div>
+  );
+}
+
 export function DatabaseCompareResults({
   result,
   disabled,
@@ -65,10 +113,14 @@ export function DatabaseCompareResults({
 }: DatabaseCompareResultsProps) {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [expandedRowKeys, setExpandedRowKeys] = useState<string[]>([]);
 
   useEffect(() => {
     setStatusFilter("all");
     setSearch("");
+    setPage(1);
+    setExpandedRowKeys([]);
   }, [result]);
 
   const eligibleNames = useMemo(
@@ -90,6 +142,30 @@ export function DatabaseCompareResults({
     () => filterTableDiffs(result.tables, statusFilter, search),
     [result.tables, search, statusFilter]
   );
+
+  const lastPage = Math.max(
+    1,
+    Math.ceil(filteredTables.length / COMPARE_PAGE_SIZE)
+  );
+  const current = Math.min(page, lastPage);
+  const pageTables = useMemo(
+    () =>
+      filteredTables.slice(
+        (current - 1) * COMPARE_PAGE_SIZE,
+        current * COMPARE_PAGE_SIZE
+      ),
+    [current, filteredTables]
+  );
+  const visibleExpandedRowKeys = expandedRowKeys.filter((name) =>
+    pageTables.some((table) => table.name === name)
+  );
+
+  useEffect(() => setPage((value) => Math.min(value, lastPage)), [lastPage]);
+
+  const resetPage = () => {
+    setPage(1);
+    setExpandedRowKeys([]);
+  };
 
   const columnColumns = useMemo<ColumnsType<ColumnDiff>>(
     () => [
@@ -160,13 +236,19 @@ export function DatabaseCompareResults({
               aria-label="搜索表名"
               allowClear
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                resetPage();
+              }}
               placeholder="搜索表名"
             />
             <Segmented<StatusFilter>
               aria-label="差异状态筛选"
               value={statusFilter}
-              onChange={setStatusFilter}
+              onChange={(value) => {
+                setStatusFilter(value);
+                resetPage();
+              }}
               options={[
                 { label: "全部", value: "all" },
                 { label: "仅源端", value: "source_only" },
@@ -241,7 +323,7 @@ export function DatabaseCompareResults({
               size="small"
               pagination={false}
               columns={tableColumns}
-              dataSource={filteredTables}
+              dataSource={pageTables}
               scroll={{ x: 520 }}
               rowSelection={{
                 columnWidth: 48,
@@ -260,21 +342,30 @@ export function DatabaseCompareResults({
                   ),
               }}
               expandable={{
+                expandedRowKeys: visibleExpandedRowKeys,
+                onExpandedRowsChange: (keys) =>
+                  setExpandedRowKeys(keys.map(String)),
                 rowExpandable: (table) => table.status === "changed",
                 expandedRowRender: (table) => (
-                  <div className="database-compare-expanded-table">
-                    <Table<ColumnDiff>
-                      rowKey="name"
-                      size="small"
-                      pagination={false}
-                      columns={columnColumns}
-                      dataSource={table.columns}
-                      scroll={{ x: 1060 }}
-                    />
-                  </div>
+                  <ColumnDiffTable table={table} columns={columnColumns} />
                 ),
               }}
             />
+            {filteredTables.length > COMPARE_PAGE_SIZE && (
+              <nav aria-label="差异表分页">
+                <Pagination
+                  size="small"
+                  current={current}
+                  pageSize={COMPARE_PAGE_SIZE}
+                  total={filteredTables.length}
+                  showSizeChanger={false}
+                  onChange={(value) => {
+                    setPage(value);
+                    setExpandedRowKeys([]);
+                  }}
+                />
+              </nav>
+            )}
           </div>
         </>
       )}

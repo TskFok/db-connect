@@ -1,3 +1,4 @@
+import { createTableRowSource } from "../components/table/tableRowSource";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   columnsMissingInsertValues,
@@ -16,6 +17,23 @@ const mockedWriteText = vi.mocked(writeText);
 describe("copyAsInsert 剪贴板集成", () => {
   beforeEach(() => {
     mockedWriteText.mockReset();
+  });
+
+  it("行源按所选列生成 INSERT，主键只参与身份不泄露进输出", () => {
+    const source = createTableRowSource({
+      rows: [[7, "原值", "不复制"]],
+      columns: ["id", "name", "secret"],
+      primaryKeyColumns: ["id"],
+      scopeKey: "s",
+      page: 1,
+    });
+    const sql = generateInsertStatements(
+      "users",
+      ["name"],
+      source.materializeRows([0], ["name"])
+    );
+    expect(sql).toBe("INSERT INTO `users` (`name`) VALUES ('原值');");
+    expect(source.getCell(0, "name")).toBe("原值");
   });
 
   it("生成 INSERT 语句后成功写入剪贴板", async () => {
