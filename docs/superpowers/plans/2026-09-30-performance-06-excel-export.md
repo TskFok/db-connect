@@ -1,6 +1,6 @@
 # Excel 导出性能实施计划
 
-> 执行说明：使用 `superpowers:subagent-driven-development` 或 `superpowers:executing-plans` 逐任务实施。当前只生成计划，不执行代码变更。
+> 执行状态：已在当前分支完成代码实现和独立审查，2026-10-10～2026-10-12 完成本机分层验收。测量口径、集成检查和待验平台见文末执行记录；未提交或推送。
 
 **目标：**用户取消保存时不生成工作簿，取消完整 Base64 中间表示，并将工作簿编码移出主线程，保留当前导出内容和类型语义。
 
@@ -70,10 +70,10 @@ Rust 命令为 `prepare_binary_export(path, state)`、`write_binary_export(reque
 
 **接口：**先建立 `exportExcelWithDialog` 的 prepare/release 契约，暂时复用已有编码写入，供后续任务替换内部实现。
 
-- [ ] 补测试并先观察失败：取消保存时 `prepare`、完整字段 API、工作簿编码、写文件均未调用；选择路径后只准备一次；prepare 抛错时不写文件。
-- [ ] 迁移 SQL、表当前页、数据库对比三个入口。点击时只记录廉价上下文；对话框返回后确认来源仍有效，固定数据/编辑快照并获取租约；来源已关闭或代次变化时提示重新发起，不能偷偷导出另一页。
-- [ ] 所有出口调用 release；重复点击受应用级忙状态保护，异常后可以重新发起导出。
-- [ ] 运行 `npm test -- src/__tests__/excelExport.test.ts src/__tests__/SqlEditorMultipleResults.test.tsx src/__tests__/TableDataDeferred.test.tsx`，增加三工作表调用方的内容回归。
+- [x] 补测试并先观察失败：取消保存时 `prepare`、完整字段 API、工作簿编码、写文件均未调用；选择路径后只准备一次；prepare 抛错时不写文件。
+- [x] 迁移 SQL、表当前页、数据库对比三个入口。点击时只记录廉价上下文；对话框返回后确认来源仍有效，固定数据/编辑快照并获取租约；来源已关闭或代次变化时提示重新发起，不能偷偷导出另一页。
+- [x] 所有出口调用 release；重复点击受应用级忙状态保护，异常后可以重新发起导出。
+- [x] 运行 `npm test -- src/__tests__/excelExport.test.ts src/__tests__/SqlEditorMultipleResults.test.tsx src/__tests__/TableDataDeferred.test.tsx`，增加三工作表调用方的内容回归。
 
 ## 任务 2：二进制 IPC 替换 Base64
 
@@ -81,11 +81,11 @@ Rust 命令为 `prepare_binary_export(path, state)`、`write_binary_export(reque
 
 **接口：**实现 `buildWorkbookBuffer` 与三个二进制导出命令；原始请求结构按已安装 Tauri 版本编译验证。参考 [Tauri 原始请求体](https://v2.tauri.app/develop/calling-rust/)。
 
-- [ ] 补失败测试：中文/空格/Windows 路径通过 JSON 登记原样保留；未知、过期、已取消和重复 ID 拒绝；二进制含 0x00/0xff 原样落盘；I/O 失败返回错误且登记已清理。
-- [ ] 实现路径登记与原始体写入。网络式请求头中不放原始中文路径，也不把 ArrayBuffer 展开成数字数组 JSON；锁仅用于领取登记，文件写入在锁外。
-- [ ] 编码返回 ArrayBuffer，移除 Excel 所有调用链中的 `btoa`、二进制字符串和 Base64 解码。全部调用方迁移后再删除无人使用的旧 helper/命令，保留仍有其他用途的文件 API。
-- [ ] 验证 XLSX 的 ZIP/XML 内容、工作表数量、列顺序和单元格类型；ZIP 魔数检查不足以证明数据正确。使用现有 ZIP 依赖或测试运行时读取，不仅比较可变时间戳导致不稳定的整文件哈希。
-- [ ] 运行 `npm test -- src/__tests__/excelExport.test.ts`、`cargo test --manifest-path src-tauri/Cargo.toml file_io`、`npm run build`。
+- [x] 补失败测试：中文/空格/Windows 路径通过 JSON 登记原样保留；未知、过期、已取消和重复 ID 拒绝；二进制含 0x00/0xff 原样落盘；I/O 失败返回错误且登记已清理。
+- [x] 实现路径登记与原始体写入。网络式请求头中不放原始中文路径，也不把 ArrayBuffer 展开成数字数组 JSON；锁仅用于领取登记，文件写入在锁外。
+- [x] 编码返回 ArrayBuffer，移除 Excel 所有调用链中的 `btoa`、二进制字符串和 Base64 解码。全部调用方迁移后再删除无人使用的旧 helper/命令，保留仍有其他用途的文件 API。
+- [x] 验证 XLSX 的 ZIP/XML 内容、工作表数量、列顺序和单元格类型；ZIP 魔数检查不足以证明数据正确。使用现有 ZIP 依赖或测试运行时读取，不仅比较可变时间戳导致不稳定的整文件哈希。
+- [x] 运行 `npm test -- src/__tests__/excelExport.test.ts`、`cargo test --manifest-path src-tauri/Cargo.toml file_io`、`npm run build`。
 
 ## 任务 3：工作簿编码移入 Worker
 
@@ -93,19 +93,19 @@ Rust 命令为 `prepare_binary_export(path, state)`、`write_binary_export(reque
 
 **接口：**实现上述消息协议；主线程不提前再构造一份归一化 sheetData，值转换和工作簿编码放在同一个 Worker 中。
 
-- [ ] 先验证当前已安装的 `write-excel-file/universal` 在生产构建 Worker 中支持 Blob/ArrayBuffer 路径；必须实际浏览器/桌面验证，jsdom mock 通过不能代替。失败时记录具体兼容问题，不自动换库。
-- [ ] 补失败测试：消息 ID 不匹配或取消后的消息不生效；成功使用 transfer list；编码抛错、终止和组件卸载均释放 Worker、忙状态和缓存租约。
-- [ ] 实现专用 Worker 的创建与 finally 清理；先创建编码产物再登记一次性写入 ID，使编码时间不消耗待写入 ID 的有效期；取消发生于登记与写入之间时调用取消命令。
-- [ ] 验证 100,000 行上限、空值、Unicode、长文本、大整数、日期和多工作表一致；导出中切换结果或触发 01 淘汰不能改变已固定快照。
-- [ ] 运行 `npm test -- src/__tests__/excelExport.test.ts src/__tests__/excelExportWorker.test.ts src/__tests__/TableDataDeferred.test.tsx` 和 `npm run build`，在真实 WebView 下检查 Worker 和 CSP 可用性。
+- [x] 先验证当前已安装的 `write-excel-file/universal` 在生产构建 Worker 中支持 Blob/ArrayBuffer 路径；必须实际浏览器/桌面验证，jsdom mock 通过不能代替。失败时记录具体兼容问题，不自动换库。
+- [x] 补失败测试：消息 ID 不匹配或取消后的消息不生效；成功使用 transfer list；编码抛错、终止和组件卸载均释放 Worker、忙状态和缓存租约。
+- [x] 实现专用 Worker 的创建与 finally 清理；先创建编码产物再登记一次性写入 ID，使编码时间不消耗待写入 ID 的有效期；取消发生于登记与写入之间时调用取消命令。
+- [x] 验证 100,000 行上限、空值、Unicode、长文本、大整数、日期和多工作表一致；导出中切换结果或触发 01 淘汰不能改变已固定快照。
+- [x] 运行 `npm test -- src/__tests__/excelExport.test.ts src/__tests__/excelExportWorker.test.ts src/__tests__/TableDataDeferred.test.tsx` 和 `npm run build`，在真实 WebView 下检查 Worker 和 CSP 可用性。
 
 ## 任务 4：性能与完整性验收
 
 **文件：**`docs/performance-baseline.md`、README 导出说明及实际受影响测试。
 
-- [ ] 固定 1 万/10 万行及宽字段夹具，分别测准备、结构化克隆、编码、IPC 和写盘耗时，记录主线程最长任务与 Rust/WebView 峰值内存。
-- [ ] 对比旧路径确认 Base64 完整表示已经消失，取消保存时零准备；记录 Worker 克隆成本，不能把主线程改善描述为内存必然下降。
-- [ ] 小文件、Unicode 路径、覆盖已有文件、无写权限、磁盘写入失败和关闭窗口场景均给出明确结果；原始体领取后的写入失败不能提示成功。
+- [ ] 固定 1 万/10 万行及宽字段夹具，分别测准备、结构化克隆、编码、IPC 和写盘耗时，记录主线程最长任务与 Rust/WebView 峰值内存。已完成分阶段测量、独立克隆与 RSS 采样；本机 WebKit 不支持 Long Tasks API，最长任务与精确瞬时峰值仍未直接测得，使用明确标注的定时器间隔和采样峰值。
+- [x] 对比旧路径确认 Base64 完整表示已经消失，取消保存时零准备；记录 Worker 克隆成本，不能把主线程改善描述为内存必然下降。
+- [x] 小文件、Unicode 路径、覆盖已有文件、无写权限、磁盘写入失败和关闭窗口场景均给出明确结果；原始体领取后的写入失败不能提示成功。
 - [ ] 运行 Rust fmt/clippy、相关前端 lint，以及总计划要求的最终集成检查；记录 Windows/macOS/Linux 哪些已验证、哪些待验。
 
 ## 审查重点
@@ -123,3 +123,22 @@ Rust 命令为 `prepare_binary_export(path, state)`、`write_binary_export(reque
 Worker 兼容性未通过时先交付路径优先及二进制传输；保留单一 `buildWorkbookBuffer` 主线程实现作为明确记录的临时回退，不恢复 Base64，也不声称 Worker 优化已完成。回退只改变编码执行位置，不改变数据来源与写入语义。
 
 若随后获准提交，建议标题：`refactor: 优化 Excel 导出内存与响应`；本计划不执行提交。
+
+
+## 2026-10-12 执行记录
+
+### 实现和审查
+
+- 三个入口已迁移到 `exportExcelWithDialog(name, prepare, signal)`。路径取消零准备，保存期间同步切页/切结果再切回也会拒绝旧代次；对比来源失效会提示重新发起。快照固定后保留列、编辑和行引用，缓存租约持续到导出结束；组件卸载及对比窗口关闭会中止尚未写入的任务。
+- Worker 直接接收原始值，负责归一化与 `write-excel-file/universal` 编码，以 transfer list 返回 `ArrayBuffer`。消息 ID 校验、迟到消息、创建失败、编码失败、取消、登记途中取消和写入错误均覆盖清理测试。后端领取写入后等待真实结果，取消不伪装成回滚。
+- Rust 用单项 `Mutex<Option<_>>` 登记 UUID 和原始路径，`Instant` 控制 5 分钟 TTL；只在领取/取消时移除，不在登记时创建或截断文件。`spawn_blocking` 锁外写盘。旧 Excel Base64 helper/命令全部删除，其他用途的文本与 Base64 功能保留。
+- 独立只读审查覆盖整个生产变更、回查/租约逻辑和真实工作簿/文件测试：无 Critical、Important 或 Minor 发现。
+- 实施调整：任务 1 的临时 Base64 编排阶段直接并入任务 2/3 的最终迁移，保留测试先失败再通过，不交付短暂存在的中间实现；最终契约不变。按计划不实施流式 XLSX、恒定内存或 SQL 文件导出重写。
+
+### 性能证据与验收边界
+
+详细指标及复现命令见 [性能基线](../../performance-baseline.md#06excel-导出2026-10-102026-10-12)，原始数据见 [生产 WKWebView 样本](../../performance/excel-export-webview-2026-10-12.json)。同机新旧比较使用固定旧提交、相同库、生产构建、3 次独立进程样本，逐一核对 XLSX 内全部 `xl/**/*.xml`，内容一致。
+
+100,000×8 输入的写盘前总耗时中位数由 1811 ms 变为 1973 ms；10 ms 定时器的最大间隔中位数由 1169 ms 降至 82 ms。宽字段采样峰值由 1507.1 MiB 增至 1615.2 MiB。单独克隆案例记录输入到达、发送方同步耗时与克隆保持期 RSS，不能将主线程改善等同于整体更快或必然降低内存。
+
+本机 WebKit 不支持 `longtask`，采样 RSS 也不能捕获所有瞬时峰值，故任务 4 第一项保留未完全勾选。Windows/Linux 实机、实际磁盘满、完整主应用窗口关闭期间的 OS 行为仍须补验；组件卸载/取消与实际 I/O 返回错误已有自动化验证。主线程临时回退未启用。

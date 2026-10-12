@@ -1,0 +1,799 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-12T02:35:43.669Z",
+  "repetitions": 5,
+  "cases": [
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 1.656041,
+      "iteration": 1,
+      "roundTripMs": 3,
+      "rustProcessingMs": 1.343959
+    },
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 0.812916,
+      "iteration": 2,
+      "roundTripMs": 2,
+      "rustProcessingMs": 1.187084
+    },
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 0.77725,
+      "iteration": 3,
+      "roundTripMs": 2,
+      "rustProcessingMs": 1.22275
+    },
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 1.485916,
+      "iteration": 4,
+      "roundTripMs": 4,
+      "rustProcessingMs": 2.514084
+    },
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 1.8925829999999717,
+      "iteration": 5,
+      "roundTripMs": 2.9999999999999716,
+      "rustProcessingMs": 1.107417
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 4.082625,
+      "iteration": 1,
+      "roundTripMs": 13,
+      "rustProcessingMs": 8.917375
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 3.2647499999999994,
+      "iteration": 2,
+      "roundTripMs": 13,
+      "rustProcessingMs": 9.73525
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 4.283208,
+      "iteration": 3,
+      "roundTripMs": 12,
+      "rustProcessingMs": 7.716792
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 4.250500000000001,
+      "iteration": 4,
+      "roundTripMs": 14,
+      "rustProcessingMs": 9.7495
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 4.144666999999998,
+      "iteration": 5,
+      "roundTripMs": 14,
+      "rustProcessingMs": 9.855333000000002
+    }
+  ],
+  "cspViolations": [],
+  "diskCases": [
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 0.878792,
+      "iteration": 1
+    },
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 0.804708,
+      "iteration": 2
+    },
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 1.689125,
+      "iteration": 3
+    },
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 0.951583,
+      "iteration": 4
+    },
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 6.1413329999999995,
+      "iteration": 5
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 10.027084,
+      "iteration": 1
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 8.623040999999999,
+      "iteration": 2
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 9.88525,
+      "iteration": 3
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 6.32275,
+      "iteration": 4
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 8.458625000000001,
+      "iteration": 5
+    }
+  ],
+  "errors": {
+    "missingDirectoryError": "写入文件失败: No such file or directory (os error 2)",
+    "permissionError": "写入文件失败: Permission denied (os error 13)"
+  },
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+  "validations": {
+    "cancelledIdRejected": true,
+    "cancelledWritePreservesFile": true,
+    "ioFailureReportedAndRegistrationCleared": true,
+    "overwriteTruncates": true,
+    "permissionFailureReportedAndRegistrationCleared": true,
+    "rawZeroAndFFBytes": true,
+    "repeatedIdRejected": true,
+    "unicodeAndSpacePath": true,
+    "permissionFailurePreservesFile": true
+  },
+  "worker": {
+    "arrayBufferReceived": true,
+    "byteLength": 3546,
+    "protocol": "tauri:",
+    "writtenThroughProductionCommand": true,
+    "productionAsset": "excelExport.worker-BBBJPQfl.js",
+    "productionAssetSha256": "495044015b1ce67956587671c8b5d8cac912cf30ce1c1c8ab5f1589940c928e1",
+    "workbookSha256": "63346e159ad359620d688548f01cac2d414d87af7590eb897b3e4c82ef1c41cb",
+    "twoWorksheetXMLAndValuesVerified": true
+  },
+  "environment": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cargoProfile": "debug",
+    "tauriVersion": "2.11.3",
+    "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; worker-src 'self' blob:",
+    "runDirectory": "/tmp/excel-export-tauri.hL6KMF",
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)"
+  },
+  "methodology": {
+    "transport": "真实 Tauri WKWebView 原始 ArrayBuffer IPC；包装命令直接调用生产 file_io::write_binary_export",
+    "fixture": "1 MiB/10 MiB 固定合成字节，index mod 256；每种大小先热身一次，复用缓冲区并覆盖同一中文/空格临时路径",
+    "rustProcessingMs": "Rust Instant 包围真实生产命令，含请求校验、登记领取、Vec 克隆、spawn_blocking 排队和 fs::write；无 fsync，不是隔离的纯写盘耗时",
+    "ipcWaitingAndOverheadMs": "前端 performance.now 调用往返持续时间减 Rust 处理持续时间；包含调度、传输及响应处理，不跨进程相减时间戳",
+    "diskMicrobenchmark": "独立微基准：预先分配填充同尺寸 Vec，在 spawn_blocking 内用 Instant 仅包围同一 std::fs::write API，覆盖另一临时文件；不含排队/分配、不含 fsync，不是生产命令内部阶段拆解",
+    "isolation": "独立临时 Context、最小 AppState、无痕 WebView；不启动主应用、不加载连接管理器或用户数据库配置"
+  },
+  "memory": {
+    "method": "ps 每 20ms 采样；候选 WebContent 通过运行后新 PID 识别，归属是启发式，峰值是采样下界；不是 JS 堆/全部分配字节",
+    "samplingError": null,
+    "measuredSampleCount": 3,
+    "sampledPeakRustProcessRSSBytes": 157745152,
+    "sampledPeakCandidateWebContentRSSBytes": 86147072,
+    "samples": [
+      {
+        "phase": "setup",
+        "timestampMs": 6521.149625,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 6562.3645,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 6604.708792,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 6647.144125,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 6688.285125,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 6729.909792,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 6771.304625,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 6812.035958,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 6854.219292,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 6916.5905,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 6958.427667,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 7000.610167,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 7043.193292,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 7085.111667,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 7127.294917,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 7168.950458,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 7210.895458,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 7252.692083,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 7294.584167,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 7336.494375,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 7379.216292,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 7420.177417,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 7461.581333,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 7503.198042,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 7544.229708,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 7585.249875,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 7626.754917,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 7669.132375,
+        "rustProcessRSSBytes": 7503872,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 7709.994125,
+        "rustProcessRSSBytes": 18219008,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 7751.784667,
+        "rustProcessRSSBytes": 38535168,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 7794.169458,
+        "rustProcessRSSBytes": 68272128,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 7835.673625,
+        "rustProcessRSSBytes": 79675392,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 7898.887958,
+        "rustProcessRSSBytes": 86245376,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 7960.90875,
+        "rustProcessRSSBytes": 92995584,
+        "candidateWebContentRSSBytes": 9535488,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 8026.920833,
+        "rustProcessRSSBytes": 104398848,
+        "candidateWebContentRSSBytes": 11403264,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 8110.529125,
+        "rustProcessRSSBytes": 108085248,
+        "candidateWebContentRSSBytes": 29589504,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 8173.662667,
+        "rustProcessRSSBytes": 109625344,
+        "candidateWebContentRSSBytes": 40845312,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "measure",
+        "timestampMs": 8236.470792,
+        "rustProcessRSSBytes": 113639424,
+        "candidateWebContentRSSBytes": 60145664,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "verify",
+        "timestampMs": 8278.918625,
+        "rustProcessRSSBytes": 115490816,
+        "candidateWebContentRSSBytes": 60211200,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "warmup",
+        "timestampMs": 8386.01775,
+        "rustProcessRSSBytes": 157679616,
+        "candidateWebContentRSSBytes": 86097920,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "verify",
+        "timestampMs": 8427.405417,
+        "rustProcessRSSBytes": 157679616,
+        "candidateWebContentRSSBytes": 86081536,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "verify",
+        "timestampMs": 8470.029833,
+        "rustProcessRSSBytes": 157679616,
+        "candidateWebContentRSSBytes": 86081536,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "verify",
+        "timestampMs": 8511.268333,
+        "rustProcessRSSBytes": 157679616,
+        "candidateWebContentRSSBytes": 86081536,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "verify",
+        "timestampMs": 8552.265625,
+        "rustProcessRSSBytes": 157663232,
+        "candidateWebContentRSSBytes": 86081536,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "measure",
+        "timestampMs": 8593.306833,
+        "rustProcessRSSBytes": 157663232,
+        "candidateWebContentRSSBytes": 86097920,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "verify",
+        "timestampMs": 8632.982542,
+        "rustProcessRSSBytes": 157663232,
+        "candidateWebContentRSSBytes": 86097920,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "verify",
+        "timestampMs": 8674.234792,
+        "rustProcessRSSBytes": 157663232,
+        "candidateWebContentRSSBytes": 86114304,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "verify",
+        "timestampMs": 8714.280958,
+        "rustProcessRSSBytes": 157679616,
+        "candidateWebContentRSSBytes": 86114304,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "verify",
+        "timestampMs": 8756.016417,
+        "rustProcessRSSBytes": 157679616,
+        "candidateWebContentRSSBytes": 86114304,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "verify",
+        "timestampMs": 8797.674,
+        "rustProcessRSSBytes": 165068800,
+        "candidateWebContentRSSBytes": 86114304,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "verify",
+        "timestampMs": 8839.463542,
+        "rustProcessRSSBytes": 157696000,
+        "candidateWebContentRSSBytes": 86130688,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "verify",
+        "timestampMs": 8881.674083,
+        "rustProcessRSSBytes": 157696000,
+        "candidateWebContentRSSBytes": 86130688,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "measure",
+        "timestampMs": 8923.697708,
+        "rustProcessRSSBytes": 157745152,
+        "candidateWebContentRSSBytes": 86147072,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "verify",
+        "timestampMs": 8965.15525,
+        "rustProcessRSSBytes": 157745152,
+        "candidateWebContentRSSBytes": 86147072,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "verify",
+        "timestampMs": 9006.596833,
+        "rustProcessRSSBytes": 157745152,
+        "candidateWebContentRSSBytes": 86147072,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "verify",
+        "timestampMs": 9048.158792,
+        "rustProcessRSSBytes": 157745152,
+        "candidateWebContentRSSBytes": 86147072,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "verify",
+        "timestampMs": 9089.35175,
+        "rustProcessRSSBytes": 157745152,
+        "candidateWebContentRSSBytes": 86147072,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "disk-benchmark",
+        "timestampMs": 9131.700958,
+        "rustProcessRSSBytes": 157827072,
+        "candidateWebContentRSSBytes": 86179840,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "disk-benchmark",
+        "timestampMs": 9173.773958,
+        "rustProcessRSSBytes": 157827072,
+        "candidateWebContentRSSBytes": 86196224,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "disk-benchmark",
+        "timestampMs": 9215.6555,
+        "rustProcessRSSBytes": 157827072,
+        "candidateWebContentRSSBytes": 86196224,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "disk-benchmark",
+        "timestampMs": 9257.303917,
+        "rustProcessRSSBytes": 157827072,
+        "candidateWebContentRSSBytes": 86196224,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "disk-benchmark",
+        "timestampMs": 9298.323917,
+        "rustProcessRSSBytes": 157827072,
+        "candidateWebContentRSSBytes": 86196224,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "disk-benchmark",
+        "timestampMs": 9340.8825,
+        "rustProcessRSSBytes": 157827072,
+        "candidateWebContentRSSBytes": 86196224,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "disk-benchmark",
+        "timestampMs": 9381.146917,
+        "rustProcessRSSBytes": 157827072,
+        "candidateWebContentRSSBytes": 86196224,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "disk-benchmark",
+        "timestampMs": 9422.83525,
+        "rustProcessRSSBytes": 157827072,
+        "candidateWebContentRSSBytes": 86196224,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "disk-benchmark",
+        "timestampMs": 9464.2655,
+        "rustProcessRSSBytes": 157827072,
+        "candidateWebContentRSSBytes": 86196224,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "disk-benchmark",
+        "timestampMs": 9506.172458,
+        "rustProcessRSSBytes": 157843456,
+        "candidateWebContentRSSBytes": 86196224,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "disk-benchmark",
+        "timestampMs": 9548.020625,
+        "rustProcessRSSBytes": 157843456,
+        "candidateWebContentRSSBytes": 86196224,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "disk-benchmark",
+        "timestampMs": 9589.906917,
+        "rustProcessRSSBytes": 157843456,
+        "candidateWebContentRSSBytes": 86196224,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "disk-benchmark",
+        "timestampMs": 9632.319917,
+        "rustProcessRSSBytes": 157843456,
+        "candidateWebContentRSSBytes": 86196224,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "disk-benchmark",
+        "timestampMs": 9673.120375,
+        "rustProcessRSSBytes": 157843456,
+        "candidateWebContentRSSBytes": 86196224,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "disk-benchmark",
+        "timestampMs": 9714.287917,
+        "rustProcessRSSBytes": 157843456,
+        "candidateWebContentRSSBytes": 86196224,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "disk-benchmark",
+        "timestampMs": 9755.9175,
+        "rustProcessRSSBytes": 157843456,
+        "candidateWebContentRSSBytes": 86196224,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "disk-benchmark",
+        "timestampMs": 9798.00475,
+        "rustProcessRSSBytes": 157843456,
+        "candidateWebContentRSSBytes": 86196224,
+        "candidateWebContentPids": [
+          42472
+        ]
+      },
+      {
+        "phase": "disk-benchmark",
+        "timestampMs": 9839.444458,
+        "rustProcessRSSBytes": 157827072,
+        "candidateWebContentRSSBytes": 86196224,
+        "candidateWebContentPids": [
+          42472
+        ]
+      }
+    ]
+  },
+  "unmeasured": [
+    "完整主应用交互/窗口关闭",
+    "Windows/Linux 实机",
+    "生产命令内部纯写盘阶段和 fsync",
+    "磁盘满和物理磁盘故障",
+    "采样间瞬时峰值与精确 WebContent 进程归属",
+    "Release 构建性能"
+  ]
+}

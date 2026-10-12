@@ -63,8 +63,7 @@ import { normalizeDatabaseType } from "../../utils/connectionConfig";
 import { getDatabaseCapabilities } from "../../utils/databaseCapabilities";
 import {
   assertCsvRowWithinLimit,
-  buildQueryResultWorkbookBase64,
-  saveExcelWithDialog,
+  exportExcelWithDialog,
 } from "../../utils/excelExport";
 import { listDangerousSqlStatements } from "../../utils/dangerousSql";
 import { supportsExplainAnalyze } from "../../utils/mysqlVersion";
@@ -227,6 +226,27 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     (tabId ? tabExecutionId : currentExecutionIdRef.current)?.startsWith(
       EXPLAIN_REQUEST_PREFIX
     );
+
+  const exportGenerationRef = useRef(0);
+  const exportControllersRef = useRef(new Set<AbortController>());
+  useLayoutEffect(() => {
+    exportGenerationRef.current += 1;
+  }, [
+    result,
+    activeStatement,
+    activeResultIndex,
+    connId,
+    currentDb,
+    tabId,
+    executing,
+  ]);
+  useEffect(() => {
+    const controllers = exportControllersRef.current;
+    return () => {
+      for (const controller of controllers) controller.abort();
+      controllers.clear();
+    };
+  }, []);
 
   const handleResultTabChange = useCallback(
     (key: string) => {
@@ -965,24 +985,70 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
       message.warning("没有可导出的查询结果");
       return;
     }
-    const release = activeStatement?.cacheKey
-      ? resultCacheController.pin(activeStatement.cacheKey)
-      : () => {};
+    const generation = exportGenerationRef.current;
+    const controller = new AbortController();
+    exportControllersRef.current.add(controller);
+    const sourceExecution = tabId
+      ? useDatabaseStore.getState().sqlTabExecutions[tabId]
+      : undefined;
+    let sourceChanged = false;
+    const isCurrentSource = (
+      state: ReturnType<typeof useDatabaseStore.getState>
+    ) =>
+      !tabId ||
+      (state.activeConnId === connId &&
+        state.sqlTabResults[tabId] === tabResult &&
+        state.sqlTabExecutions[tabId] === sourceExecution);
+    // 订阅同步变更，避免保存返回与 React 提交之间的窗口漏掉切换后又切回。
+    const unsubscribe = useDatabaseStore.subscribe((state) => {
+      if (!isCurrentSource(state)) sourceChanged = true;
+    });
     try {
-      assertCsvRowWithinLimit(result.rows.length);
-      const b64 = await buildQueryResultWorkbookBase64(
-        result.columns,
-        result.rows,
-        "query_result"
+      const ok = await exportExcelWithDialog(
+        "query_result.xlsx",
+        async () => {
+          if (
+            controller.signal.aborted ||
+            sourceChanged ||
+            !isCurrentSource(useDatabaseStore.getState()) ||
+            generation !== exportGenerationRef.current ||
+            activeStatement?.retention === "evicted" ||
+            !result.rows?.length
+          ) {
+            throw new Error("查询结果已变化，请重新发起导出");
+          }
+          unsubscribe();
+          assertCsvRowWithinLimit(result.rows.length);
+          const release = activeStatement?.cacheKey
+            ? resultCacheController.pin(activeStatement.cacheKey)
+            : () => {};
+          try {
+            // 固定整个已保留结果，不受结果表分页及后续缓存行引用替换影响。
+            return {
+              sheets: [
+                {
+                  sheet: "query_result",
+                  data: [result.columns!, ...result.rows],
+                },
+              ],
+              release,
+            };
+          } catch (error) {
+            release();
+            throw error;
+          }
+        },
+        controller.signal
       );
-      const ok = await saveExcelWithDialog("query_result.xlsx", b64);
-      if (ok) message.success("已导出结果为 Excel");
+      if (ok && !controller.signal.aborted)
+        message.success("已导出结果为 Excel");
     } catch (e) {
-      message.error(String(e));
+      if (!controller.signal.aborted) message.error(String(e));
     } finally {
-      release();
+      unsubscribe();
+      exportControllersRef.current.delete(controller);
     }
-  }, [result, resultEvicted, activeStatement?.cacheKey]);
+  }, [result, resultEvicted, activeStatement, tabId, connId, tabResult]);
 
   // 只挂载当前标签的表格，分页与导出始终使用当前语句的结果。
   const resultContent = (

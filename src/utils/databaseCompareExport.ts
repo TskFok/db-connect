@@ -4,11 +4,7 @@ import {
   formatColumnSideValues,
   formatSchemaDiffStatus,
 } from "./databaseCompare";
-import {
-  buildWorkbookBase64,
-  saveExcelWithDialog,
-  type ExcelSheetData,
-} from "./excelExport";
+import { exportExcelWithDialog, type ExcelSheetData } from "./excelExport";
 
 const INVALID_FILENAME_CHARACTER = /[<>:"/\\|?*]/;
 // 两侧均为 4 字节 Unicode 字符时，完整文件名仍控制在 240 UTF-8 字节内。
@@ -91,18 +87,22 @@ export function buildDatabaseCompareWorkbookSheets(
   return [summary, tables, columns];
 }
 
-export function buildDatabaseCompareWorkbookBase64(
-  result: DatabaseCompareResult
-): Promise<string> {
-  return buildWorkbookBase64(buildDatabaseCompareWorkbookSheets(result));
-}
-
 export async function saveDatabaseCompareWorkbook(
-  result: DatabaseCompareResult
+  result: DatabaseCompareResult,
+  options: { signal?: AbortSignal; isCurrent?: () => boolean } = {}
 ): Promise<boolean> {
-  const workbookBase64 = await buildDatabaseCompareWorkbookBase64(result);
-  return saveExcelWithDialog(
+  return exportExcelWithDialog(
     buildDatabaseCompareFilename(result),
-    workbookBase64
+    async () => {
+      if (options.signal?.aborted || options.isCurrent?.() === false) {
+        throw new Error("对比结果已变化，请重新发起导出");
+      }
+      // 对比结果不可变；同步构造三个矩阵即固定本次导出的输入。
+      return {
+        sheets: buildDatabaseCompareWorkbookSheets(result),
+        release: () => {},
+      };
+    },
+    options.signal
   );
 }

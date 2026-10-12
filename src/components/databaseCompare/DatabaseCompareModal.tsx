@@ -92,6 +92,7 @@ export function DatabaseCompareModal({
   const comparePendingRef = useRef(false);
   const activeCompareRequestId = useRef<number | null>(null);
   const exportId = useRef(0);
+  const exportControllersRef = useRef(new Set<AbortController>());
   const previewRequestId = useRef(0);
   const executionRequestId = useRef(0);
   const activeSyncPlanIdentity = useRef<string | null>(null);
@@ -113,8 +114,11 @@ export function DatabaseCompareModal({
 
   useEffect(() => {
     isMountedRef.current = true;
+    const controllers = exportControllersRef.current;
     return () => {
       isMountedRef.current = false;
+      for (const controller of controllers) controller.abort();
+      controllers.clear();
       stopSyncProgressListener();
     };
   }, [stopSyncProgressListener]);
@@ -150,6 +154,7 @@ export function DatabaseCompareModal({
   }, [resetSyncState]);
 
   const resetState = useCallback(() => {
+    for (const controller of exportControllersRef.current) controller.abort();
     sourceLoadId.current += 1;
     targetLoadId.current += 1;
     compareId.current += 1;
@@ -320,18 +325,31 @@ export function DatabaseCompareModal({
   const handleExport = useCallback(async () => {
     if (!result) return;
     const requestId = ++exportId.current;
+    const resultGeneration = compareId.current;
+    const controller = new AbortController();
+    exportControllersRef.current.add(controller);
+    const isCurrent = () =>
+      isMountedRef.current &&
+      !controller.signal.aborted &&
+      exportId.current === requestId &&
+      compareId.current === resultGeneration;
     setExporting(true);
     try {
-      const saved = await saveDatabaseCompareWorkbook(result);
-      if (exportId.current === requestId && saved) {
+      const saved = await saveDatabaseCompareWorkbook(result, {
+        signal: controller.signal,
+        isCurrent,
+      });
+      if (isCurrent() && saved) {
         message.success("数据库对比结果已导出");
       }
     } catch (exportError) {
-      if (exportId.current === requestId) {
+      if (isMountedRef.current && !controller.signal.aborted) {
         message.error(`导出 Excel 失败：${errorMessage(exportError)}`);
       }
     } finally {
-      if (exportId.current === requestId) setExporting(false);
+      exportControllersRef.current.delete(controller);
+      if (isMountedRef.current && exportId.current === requestId)
+        setExporting(false);
     }
   }, [result]);
 

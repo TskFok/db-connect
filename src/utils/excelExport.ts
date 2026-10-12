@@ -1,102 +1,120 @@
 import { save } from "@tauri-apps/plugin-dialog";
-import { writeBinaryFile } from "../services/tauriCommands";
+import {
+  cancelBinaryExport,
+  prepareBinaryExport,
+  writeBinaryExport,
+} from "../services/tauriCommands";
+import type { ExcelExportSheetInput } from "./excelWorkbook";
+import type {
+  ExcelExportRequest,
+  ExcelExportResponse,
+} from "../workers/excelExport.worker";
 
 export { assertCsvRowWithinLimit, CSV_EXPORT_MAX_ROWS } from "./csvExport";
+export { cellValueForXlsx, sanitizeExcelSheetName } from "./excelWorkbook";
+export type { ExcelExportSheetInput, ExcelSheetData } from "./excelWorkbook";
 
-export interface ExcelSheetData {
-  sheet: string;
-  data: (string | number | boolean)[][];
+export interface PreparedExcelExport {
+  sheets: ExcelExportSheetInput[];
+  release: () => void;
 }
 
-/** Excel 工作表名非法字符，最长 31 */
-export function sanitizeExcelSheetName(name: string): string {
-  const cleaned = name.replace(/[:\\/?*[\]]/g, "_").slice(0, 31);
-  return cleaned.length > 0 ? cleaned : "Sheet1";
-}
+let exporting = false;
+let nextJobId = 0;
 
-export function cellValueForXlsx(value: unknown): string | number | boolean {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "boolean") return value;
-  if (typeof value === "bigint") return value.toString();
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) return String(value);
-    return value;
-  }
-  if (value instanceof Date) return value.toISOString();
-  return String(value);
-}
-
-function uint8ArrayToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const sub = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
-    binary += String.fromCharCode.apply(null, sub as unknown as number[]);
-  }
-  return btoa(binary);
-}
-
-function workbookWriteBufferToBase64(buffer: ArrayBuffer | Uint8Array): string {
-  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-  return uint8ArrayToBase64(bytes);
-}
-
-async function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
-  if (typeof blob.arrayBuffer === "function") {
+function encodeInWorker(
+  sheets: ExcelExportSheetInput[],
+  signal?: AbortSignal
+): Promise<ArrayBuffer> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(
+      new URL("../workers/excelExport.worker.ts", import.meta.url),
+      { type: "module" }
+    );
+    const id = String(++nextJobId);
+    let settled = false;
+    const finish = (buffer?: ArrayBuffer, error?: unknown) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", abort);
+      worker.onmessage = null;
+      worker.onerror = null;
+      worker.onmessageerror = null;
+      worker.terminate();
+      if (buffer) resolve(buffer);
+      else reject(error);
+    };
+    const abort = () =>
+      finish(undefined, new DOMException("已取消导出", "AbortError"));
+    worker.onmessage = ({ data }: MessageEvent<ExcelExportResponse>) => {
+      if (data.id !== id) return;
+      if ("error" in data) finish(undefined, new Error(data.error));
+      else if (data.buffer instanceof ArrayBuffer) finish(data.buffer);
+      else finish(undefined, new Error("Excel 编码未返回二进制内容"));
+    };
+    worker.onerror = (event) => {
+      event.preventDefault();
+      finish(undefined, new Error(event.message || "Excel 编码失败"));
+    };
+    worker.onmessageerror = () =>
+      finish(undefined, new Error("无法读取 Excel 编码结果"));
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
     try {
-      return await blob.arrayBuffer();
-    } catch {
-      /* jsdom 等环境可能不支持，回退 FileReader */
+      worker.postMessage({ id, sheets } satisfies ExcelExportRequest);
+    } catch (error) {
+      finish(undefined, error);
+    }
+  });
+}
+
+/** 先选择路径；一旦开始写入，等待真实写入结果，不将后续取消视作撤销。 */
+export async function exportExcelWithDialog(
+  suggestedFileName: string,
+  prepare: () => Promise<PreparedExcelExport>,
+  signal?: AbortSignal
+): Promise<boolean> {
+  if (signal?.aborted) return false;
+  if (exporting) throw new Error("已有导出任务正在进行");
+  exporting = true;
+  let prepared: PreparedExcelExport | undefined;
+  let exportId: string | undefined;
+  try {
+    const path = await save({
+      defaultPath: suggestedFileName,
+      filters: [{ name: "Excel", extensions: ["xlsx"] }],
+    });
+    if (path == null || signal?.aborted) return false;
+    // 不以 Promise.race 丢弃迟到的快照：prepare 完成后必须释放其租约。
+    prepared = await prepare();
+    if (signal?.aborted) return false;
+    const bytes = await encodeInWorker(prepared.sheets, signal);
+    if (signal?.aborted) return false;
+    // 编码完成后才登记，避免编码时间消耗一次性 ID 的 TTL。
+    exportId = await prepareBinaryExport(path);
+    if (signal?.aborted) return false;
+    await writeBinaryExport(exportId, bytes);
+    exportId = undefined;
+    return true;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError")
+      return false;
+    throw error;
+  } finally {
+    try {
+      if (exportId) {
+        // 写入失败可能已领取 ID；取消失败不得覆盖原始错误。
+        await cancelBinaryExport(exportId).catch(() => undefined);
+      }
+    } finally {
+      try {
+        prepared?.release();
+      } finally {
+        exporting = false;
+      }
     }
   }
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (reader.result instanceof ArrayBuffer) resolve(reader.result);
-      else reject(new Error("FileReader 未返回 ArrayBuffer"));
-    };
-    reader.onerror = () =>
-      reject(reader.error ?? new Error("FileReader 读取失败"));
-    reader.readAsArrayBuffer(blob);
-  });
-}
-
-/** 生成多工作表 xlsx 的 Base64 */
-export async function buildWorkbookBase64(
-  sheets: ExcelSheetData[]
-): Promise<string> {
-  const writeXlsxFile = (await import("write-excel-file/universal")).default;
-  const blob = await (await writeXlsxFile(sheets)).toBlob();
-  return workbookWriteBufferToBase64(await blobToArrayBuffer(blob));
-}
-
-/** 生成 xlsx 的 Base64（供 `writeBinaryFile` 写入） */
-export async function buildQueryResultWorkbookBase64(
-  columns: string[],
-  rows: unknown[][],
-  sheetName: string
-): Promise<string> {
-  const sheetData: (string | number | boolean)[][] = [
-    columns,
-    ...rows.map((row) => row.map(cellValueForXlsx)),
-  ];
-  return buildWorkbookBase64([
-    { sheet: sanitizeExcelSheetName(sheetName), data: sheetData },
-  ]);
-}
-
-/**
- * 弹出系统保存对话框并写入 xlsx。用户取消时返回 false。
- */
-export async function saveExcelWithDialog(
-  suggestedFileName: string,
-  workbookBase64: string
-): Promise<boolean> {
-  const path = await save({
-    defaultPath: suggestedFileName,
-    filters: [{ name: "Excel", extensions: ["xlsx"] }],
-  });
-  if (path == null) return false;
-  await writeBinaryFile(path, workbookBase64);
-  return true;
 }

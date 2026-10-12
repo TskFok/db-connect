@@ -20,23 +20,26 @@ import { useTableDataStore } from "../stores/tableDataStore";
 import { useTableColumnSettingsStore } from "../stores/tableColumnSettingsStore";
 import * as excelExport from "../utils/excelExport";
 
+const { exportedSheets } = vi.hoisted(() => ({
+  exportedSheets: [] as {
+    sheet: string;
+    data: readonly (readonly unknown[])[];
+  }[][],
+}));
+
 vi.mock("../services/tauriCommands");
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
   writeText: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("../utils/excelExport", () => ({
   assertCsvRowWithinLimit: vi.fn(),
-  buildQueryResultWorkbookBase64: vi.fn().mockResolvedValue("xlsx-base64"),
-  saveExcelWithDialog: vi.fn().mockResolvedValue(true),
+  exportExcelWithDialog: vi.fn(),
 }));
 
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 
 const mockApi = vi.mocked(api);
 const mockedWriteText = vi.mocked(writeText);
-const mockedBuildWorkbook = vi.mocked(
-  excelExport.buildQueryResultWorkbookBase64
-);
 
 const connId = "conn-deferred";
 const database = "mydb";
@@ -149,8 +152,18 @@ describe("TableData 大字段按需加载", () => {
       dispatchEvent: vi.fn(),
     }));
     mockedWriteText.mockResolvedValue(undefined);
-    mockedBuildWorkbook.mockResolvedValue("xlsx-base64");
-    vi.mocked(excelExport.saveExcelWithDialog).mockResolvedValue(true);
+    exportedSheets.length = 0;
+    vi.mocked(excelExport.exportExcelWithDialog).mockImplementation(
+      async (_name, prepare) => {
+        const prepared = await prepare();
+        try {
+          exportedSheets.push(prepared.sheets);
+          return true;
+        } finally {
+          prepared.release();
+        }
+      }
+    );
 
     useConnectionStore.setState({
       savedConnections: [],
@@ -382,12 +395,18 @@ describe("TableData 大字段按需加载", () => {
             })
         );
       else
-        vi.mocked(excelExport.saveExcelWithDialog).mockImplementationOnce(
-          () =>
-            new Promise((resolve, reject) => {
-              finish = () => resolve(false);
-              fail = reject;
-            })
+        vi.mocked(excelExport.exportExcelWithDialog).mockImplementationOnce(
+          async (_name, prepare) => {
+            const prepared = await prepare();
+            try {
+              return await new Promise<boolean>((resolve, reject) => {
+                finish = () => resolve(false);
+                fail = reject;
+              });
+            } finally {
+              prepared.release();
+            }
+          }
         );
       const mounted = render(<TableData />);
       await screen.findByText(previewBody1);
@@ -401,9 +420,7 @@ describe("TableData 大字段按需加载", () => {
         fireEvent.click(
           screen.getByRole("button", { name: "导出本页为 Excel" })
         );
-        await waitFor(() =>
-          expect(excelExport.saveExcelWithDialog).toHaveBeenCalled()
-        );
+        await waitFor(() => expect(finish).toBeDefined());
       }
       mounted.unmount();
       const release = cache.pin("pressure");
@@ -570,6 +587,137 @@ describe("TableData 大字段按需加载", () => {
     expect(copied).not.toContain(previewBody1);
   });
 
+  it("取消保存不读取完整字段或固定导出数据", async () => {
+    vi.mocked(excelExport.exportExcelWithDialog).mockResolvedValueOnce(false);
+    const pin = vi.spyOn(resultCacheController, "pin");
+    render(<TableData />);
+    await screen.findByText(previewBody1);
+    pin.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "导出本页为 Excel" }));
+
+    await waitFor(() =>
+      expect(excelExport.exportExcelWithDialog).toHaveBeenCalled()
+    );
+    expect(mockApi.queryFullRows).not.toHaveBeenCalled();
+    expect(exportedSheets).toEqual([]);
+    expect(pin).not.toHaveBeenCalled();
+  });
+
+  it("保存对话框期间切页后拒绝导出旧页，且不读取完整字段", async () => {
+    let choosePath!: () => void;
+    vi.mocked(excelExport.exportExcelWithDialog).mockImplementationOnce(
+      async (_name, prepare) => {
+        await new Promise<void>((resolve) => {
+          choosePath = resolve;
+        });
+        const prepared = await prepare();
+        exportedSheets.push(prepared.sheets);
+        prepared.release();
+        return true;
+      }
+    );
+    render(<TableData />);
+    await screen.findByText(previewBody1);
+    fireEvent.click(screen.getByRole("button", { name: "导出本页为 Excel" }));
+    await waitFor(() => expect(choosePath).toBeDefined());
+    act(() => useTableDataStore.setState({ page: 2 }));
+    await act(async () => choosePath());
+
+    expect(await screen.findByText(/页面已变化.*重新/)).toBeInTheDocument();
+    expect(mockApi.queryFullRows).not.toHaveBeenCalled();
+    expect(exportedSheets).toEqual([]);
+  });
+
+  it("保存路径返回时同步切页再切回仍拒绝旧代次，且不回查", async () => {
+    vi.mocked(excelExport.exportExcelWithDialog).mockImplementationOnce(
+      async (_name, prepare) => {
+        useTableDataStore.setState({ page: 2 });
+        useTableDataStore.setState({ page: 1 });
+        const prepared = await prepare();
+        exportedSheets.push(prepared.sheets);
+        prepared.release();
+        return true;
+      }
+    );
+    render(<TableData />);
+    await screen.findByText(previewBody1);
+    fireEvent.click(screen.getByRole("button", { name: "导出本页为 Excel" }));
+    expect(await screen.findByText(/页面已变化.*重新/)).toBeInTheDocument();
+    expect(mockApi.queryFullRows).not.toHaveBeenCalled();
+  });
+
+  it("导出固定可见列与待提交编辑，完整字段返回前切页不混入新数据", async () => {
+    let finish!: (result: ReturnType<typeof fullRowsResult>) => void;
+    mockApi.queryFullRows.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        })
+    );
+    useTableColumnSettingsStore.setState({
+      settings: {
+        "saved-deferred|mydb|articles": {
+          columnWidths: {},
+          hiddenColumns: ["title"],
+        },
+      },
+    });
+    const pending = {
+      rowKey: 0,
+      colName: "body",
+      oldValue: deferredBody1,
+      newValue: "导出时编辑",
+      primaryKeys: { id: 1 },
+    };
+    const { buildPendingChangeKey } =
+      await import("../components/table/tableDataRowKeys");
+    const changeKey = buildPendingChangeKey({ id: 1 }, "body");
+    useTableDataStore
+      .getState()
+      .setPendingChange(connId, database, table, changeKey, pending);
+    render(<TableData />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "导出本页为 Excel" })
+    );
+    await waitFor(() => expect(mockApi.queryFullRows).toHaveBeenCalledTimes(1));
+    act(() => {
+      useTableDataStore
+        .getState()
+        .setPendingChange(connId, database, table, changeKey, {
+          ...pending,
+          newValue: "后续编辑",
+        });
+      useTableDataStore.setState({
+        page: 2,
+        rows: [[3, "下一页", "下一页标题"]],
+      });
+    });
+    await act(async () =>
+      finish(
+        fullRowsResult([
+          [1, fullBody1],
+          [2, fullBody2],
+        ])
+      )
+    );
+
+    await waitFor(() =>
+      expect(exportedSheets).toEqual([
+        [
+          {
+            sheet: "articles",
+            data: [
+              ["id", "body"],
+              [1, "导出时编辑"],
+              [2, fullBody2],
+            ],
+          },
+        ],
+      ])
+    );
+    expect(mockApi.queryFullRows).toHaveBeenCalledTimes(1);
+  });
+
   it("导出 Excel 前批量加载完整大字段并传给工作簿生成器", async () => {
     mockApi.queryFullRows.mockResolvedValue(
       fullRowsResult([
@@ -583,16 +731,18 @@ describe("TableData 大字段按需加载", () => {
       await screen.findByRole("button", { name: "导出本页为 Excel" })
     );
 
-    await waitFor(() => expect(mockedBuildWorkbook).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(exportedSheets).toHaveLength(1));
     expect(mockApi.queryFullRows).toHaveBeenCalledTimes(1);
-    expect(mockedBuildWorkbook).toHaveBeenCalledWith(
-      ["id", "body", "title"],
-      [
-        [1, fullBody1, "标题一"],
-        [2, fullBody2, "标题二"],
-      ],
-      "articles"
-    );
+    expect(exportedSheets[0]).toEqual([
+      {
+        sheet: "articles",
+        data: [
+          ["id", "body", "title"],
+          [1, fullBody1, "标题一"],
+          [2, fullBody2, "标题二"],
+        ],
+      },
+    ]);
   });
 
   it("完整值请求失败时不把标记或预览写入剪贴板", async () => {

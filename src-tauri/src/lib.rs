@@ -32,6 +32,8 @@ pub struct AppState {
     pub mysql_queries: db::mysql_query::MysqlQueryRegistry,
     /// 正在导出的 SQL 文件：导出令牌（export_id）-> 协作式取消标记。
     pub running_sql_exports: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    /// 尚未领取的二进制文件导出，最多保留一个有效的一次性 ID。
+    pub binary_exports: file_io::BinaryExportRegistry,
 }
 
 impl AppState {
@@ -42,6 +44,7 @@ impl AppState {
             table_queries: db::table_query::TableQueryRegistry::default(),
             mysql_queries: db::mysql_query::MysqlQueryRegistry::default(),
             running_sql_exports: Arc::new(Mutex::new(HashMap::new())),
+            binary_exports: file_io::BinaryExportRegistry::default(),
         }
     }
 }
@@ -82,7 +85,9 @@ pub fn run() {
             runtime::get_runtime_info,
             github_issue::create_github_issue,
             file_io::write_text_file,
-            file_io::write_binary_file,
+            file_io::prepare_binary_export,
+            file_io::write_binary_export,
+            file_io::cancel_binary_export,
             preferences::get_table_column_settings,
             preferences::save_table_column_settings,
             preferences::delete_table_column_settings,

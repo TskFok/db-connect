@@ -94,8 +94,7 @@ import {
 } from "./tableDataRowKeys";
 import {
   assertCsvRowWithinLimit,
-  buildQueryResultWorkbookBase64,
-  saveExcelWithDialog,
+  exportExcelWithDialog,
 } from "../../utils/excelExport";
 import {
   normalizeValue,
@@ -1231,6 +1230,36 @@ export function TableData() {
     [rows, columns, primaryKeyColumns, rowSelectionScopeKey, page]
   );
 
+  const exportGenerationRef = useRef(0);
+  const exportControllersRef = useRef(new Set<AbortController>());
+  const exportColumnsRef = useRef(visibleColNames);
+  useLayoutEffect(() => {
+    exportColumnsRef.current = visibleColNames;
+  }, [visibleColNames]);
+  useLayoutEffect(() => {
+    exportGenerationRef.current += 1;
+  }, [
+    rowSource,
+    connId,
+    database,
+    table,
+    pageSize,
+    sortFields,
+    whereClause,
+    _filterTrigger,
+    activeTableKey,
+    dataLoading,
+    dataError,
+    tableContentActiveTab,
+  ]);
+  useEffect(() => {
+    const controllers = exportControllersRef.current;
+    return () => {
+      for (const controller of controllers) controller.abort();
+      controllers.clear();
+    };
+  }, []);
+
   // 构建表头列定义（memoized，不依赖 pendingChanges —— 通过 ref 访问最新值）
   const DEFAULT_COL_WIDTH = 160;
   const allTableColumns = useMemo<VirtualDataTableColumn[]>(
@@ -1831,39 +1860,98 @@ export function TableData() {
       messageApi.warning("当前页没有数据");
       return;
     }
-    const release = pinResult();
+    const generation = exportGenerationRef.current;
+    const controller = new AbortController();
+    exportControllersRef.current.add(controller);
+    const safeTable = table.replace(/[^\w.-]+/g, "_");
+    let sourceChanged = false;
+    const isCurrentSource = (
+      state: ReturnType<typeof useTableDataStore.getState>
+    ) =>
+      state.activeTableKey === rowSelectionScopeKey &&
+      state.rows === rows &&
+      state.page === page &&
+      state.pageSize === pageSize &&
+      state.sortFields === sortFields &&
+      state.whereClause === whereClause &&
+      state._filterTrigger === _filterTrigger &&
+      !state.dataLoading &&
+      !state.dataError &&
+      state.retention !== "evicted";
+    const unsubscribe = useTableDataStore.subscribe((state) => {
+      if (!isCurrentSource(state)) sourceChanged = true;
+    });
     try {
-      assertCsvRowWithinLimit(rowSource.rowCount);
-      const complete = await loadCompleteRowsForPage(
-        rowSource.materializeRows(
-          Array.from({ length: rowSource.rowCount }, (_, index) => index),
-          visibleColNames
-        ),
-        visibleColNames
+      const ok = await exportExcelWithDialog(
+        `${safeTable}_page${page}.xlsx`,
+        async () => {
+          const current = useTableDataStore.getState();
+          if (
+            controller.signal.aborted ||
+            sourceChanged ||
+            generation !== exportGenerationRef.current ||
+            !isCurrentSource(current)
+          ) {
+            throw new Error("页面已变化，请重新发起导出");
+          }
+          unsubscribe();
+          const selectedColumns = [...exportColumnsRef.current];
+          if (!selectedColumns.length)
+            throw new Error("没有可导出的列，请重新发起导出");
+          assertCsvRowWithinLimit(rowSource.rowCount);
+          const release = pinResult();
+          try {
+            const pendingSnapshot = new Map(pendingChangesRef.current);
+            const records = rowSource.materializeRows(
+              Array.from({ length: rowSource.rowCount }, (_, index) => index),
+              selectedColumns
+            );
+            // 在路径确定后固定上下文；后续切页不改变这次批量回查和编辑快照。
+            const completeRows =
+              currentDatabaseType === "mysql"
+                ? await hydrateDeferredRows(
+                    {
+                      connId,
+                      database,
+                      table,
+                      primaryKeyColumns,
+                      databaseType: currentDatabaseType,
+                    },
+                    records,
+                    selectedColumns
+                  )
+                : records;
+            if (controller.signal.aborted) throw new Error("导出已取消");
+            const exportRows = completeRows.map((row) => {
+              const primaryKeys = getRecordPrimaryKeys(row, primaryKeyColumns);
+              const hasPrimaryKeys = Object.keys(primaryKeys).length > 0;
+              return selectedColumns.map((col) => {
+                const pending = hasPrimaryKeys
+                  ? pendingSnapshot.get(buildPendingChangeKey(primaryKeys, col))
+                  : undefined;
+                return pending ? pending.newValue : row[col];
+              });
+            });
+            return {
+              sheets: [
+                { sheet: safeTable, data: [selectedColumns, ...exportRows] },
+              ],
+              release,
+            };
+          } catch (error) {
+            release();
+            throw error;
+          }
+        },
+        controller.signal
       );
-      const rows: unknown[][] = complete.rows.map((row) => {
-        const primaryKeys = getRecordPrimaryKeys(row, primaryKeyColumns);
-        const hasPrimaryKeys = Object.keys(primaryKeys).length > 0;
-        return visibleColNames.map((col) => {
-          const pending = hasPrimaryKeys
-            ? pendingChanges.get(buildPendingChangeKey(primaryKeys, col))
-            : undefined;
-          return pending ? pending.newValue : row[col];
-        });
-      });
-      const safeTable = table.replace(/[^\w.-]+/g, "_");
-      const b64 = await buildQueryResultWorkbookBase64(
-        visibleColNames,
-        rows,
-        safeTable
-      );
-      const name = `${safeTable}_page${page}.xlsx`;
-      const ok = await saveExcelWithDialog(name, b64);
-      if (ok) messageApi.success("已导出当前页为 Excel");
+      if (ok && !controller.signal.aborted)
+        messageApi.success("已导出当前页为 Excel");
     } catch (e) {
-      messageApi.error(String(e));
+      if (!controller.signal.aborted) messageApi.error(String(e));
     } finally {
-      release();
+      unsubscribe();
+      exportControllersRef.current.delete(controller);
     }
   }, [
     pinResult,
@@ -1871,10 +1959,16 @@ export function TableData() {
     table,
     visibleColNames,
     rowSource,
-    loadCompleteRowsForPage,
-    pendingChanges,
+    rows,
+    rowSelectionScopeKey,
+    currentDatabaseType,
+    connId,
     primaryKeyColumns,
     page,
+    pageSize,
+    sortFields,
+    whereClause,
+    _filterTrigger,
     messageApi,
   ]);
 

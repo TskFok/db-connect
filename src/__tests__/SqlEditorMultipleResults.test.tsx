@@ -20,6 +20,13 @@ import {
 import type { SqlExecuteResult } from "../types";
 import { subscribeSqlCompletionInvalidation } from "../utils/sqlCompletionInvalidation";
 
+const { exportedSheets } = vi.hoisted(() => ({
+  exportedSheets: [] as {
+    sheet: string;
+    data: readonly (readonly unknown[])[];
+  }[][],
+}));
+
 vi.mock("../services/tauriCommands");
 vi.mock("../utils/monacoSetup", () => ({ setupMonacoEditor: () => undefined }));
 vi.mock("../utils/sqlCompletionSchema", () => ({
@@ -31,8 +38,7 @@ vi.mock("../utils/sqlCompletionSchema", () => ({
 }));
 vi.mock("../utils/excelExport", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../utils/excelExport")>()),
-  buildQueryResultWorkbookBase64: vi.fn().mockResolvedValue("workbook-base64"),
-  saveExcelWithDialog: vi.fn().mockResolvedValue(true),
+  exportExcelWithDialog: vi.fn(),
 }));
 vi.mock("@monaco-editor/react", async () => {
   const React = await import("react");
@@ -129,6 +135,18 @@ async function execute() {
 describe("SqlEditor 多语句结果标签", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    exportedSheets.length = 0;
+    vi.mocked(excelExport.exportExcelWithDialog).mockImplementation(
+      async (_name, prepare) => {
+        const prepared = await prepare();
+        try {
+          exportedSheets.push(prepared.sheets);
+          return true;
+        } finally {
+          prepared.release();
+        }
+      }
+    );
     vi.mocked(api.executeSql).mockReset();
     vi.mocked(api.explainSql).mockReset();
     Object.defineProperty(window, "matchMedia", {
@@ -535,20 +553,24 @@ describe("SqlEditor 多语句结果标签", () => {
         .mockResolvedValueOnce(selectResult("other-row"));
       let finish!: (value: boolean) => void;
       let fail!: (error: Error) => void;
-      vi.mocked(excelExport.saveExcelWithDialog).mockImplementationOnce(
-        () =>
-          new Promise((resolve, reject) => {
-            finish = resolve;
-            fail = reject;
-          })
+      vi.mocked(excelExport.exportExcelWithDialog).mockImplementationOnce(
+        async (_name, prepare) => {
+          const prepared = await prepare();
+          try {
+            return await new Promise<boolean>((resolve, reject) => {
+              finish = resolve;
+              fail = reject;
+            });
+          } finally {
+            prepared.release();
+          }
+        }
       );
       const tabId = openSqlTab("SELECT 1; SELECT 2");
       render(<SqlEditor tabId={tabId} />);
       await execute();
       fireEvent.click(screen.getByRole("button", { name: /导出 Excel/ }));
-      await waitFor(() =>
-        expect(excelExport.saveExcelWithDialog).toHaveBeenCalled()
-      );
+      await waitFor(() => expect(finish).toBeDefined());
       fireEvent.click(screen.getByRole("tab", { name: "SQL 2" }));
       const release = cache.pin("pressure");
       await act(async () =>
@@ -721,34 +743,117 @@ describe("SqlEditor 多语句结果标签", () => {
     fireEvent.click(screen.getByRole("tab", { name: "SQL 2" }));
     fireEvent.click(screen.getByRole("button", { name: /导出 Excel/ }));
 
-    await waitFor(() => {
-      expect(
-        excelExport.buildQueryResultWorkbookBase64
-      ).toHaveBeenNthCalledWith(
-        1,
-        ["second_column"],
-        [["second-export-row"]],
-        "query_result"
-      );
-      expect(excelExport.saveExcelWithDialog).toHaveBeenCalledWith(
-        "query_result.xlsx",
-        "workbook-base64"
-      );
-    });
+    await waitFor(() =>
+      expect(exportedSheets[0]).toEqual([
+        {
+          sheet: "query_result",
+          data: [["second_column"], ["second-export-row"]],
+        },
+      ])
+    );
+    expect(excelExport.exportExcelWithDialog).toHaveBeenCalledWith(
+      "query_result.xlsx",
+      expect.any(Function),
+      expect.any(AbortSignal)
+    );
 
     fireEvent.click(screen.getByRole("tab", { name: "SQL 1" }));
     fireEvent.click(screen.getByRole("button", { name: /导出 Excel/ }));
+    await waitFor(() =>
+      expect(exportedSheets[1]).toEqual([
+        {
+          sheet: "query_result",
+          data: [["first_column"], ["first-export-row"]],
+        },
+      ])
+    );
+  });
 
-    await waitFor(() => {
-      expect(
-        excelExport.buildQueryResultWorkbookBase64
-      ).toHaveBeenNthCalledWith(
-        2,
-        ["first_column"],
-        [["first-export-row"]],
-        "query_result"
-      );
-    });
+  it("保存对话框取消时不为 SQL 结果获取导出租约", async () => {
+    vi.mocked(api.executeSql).mockResolvedValueOnce(selectResult("export-row"));
+    vi.mocked(excelExport.exportExcelWithDialog).mockResolvedValueOnce(false);
+    const tabId = openSqlTab("SELECT 1");
+    render(<SqlEditor tabId={tabId} />);
+    await execute();
+    const pin = vi.spyOn(resultCacheController, "pin");
+    fireEvent.click(screen.getByRole("button", { name: /导出 Excel/ }));
+    await waitFor(() =>
+      expect(excelExport.exportExcelWithDialog).toHaveBeenCalled()
+    );
+    expect(pin).not.toHaveBeenCalled();
+    expect(exportedSheets).toEqual([]);
+  });
+
+  it("保存对话框期间切换结果再切回仍拒绝旧代次导出", async () => {
+    vi.mocked(api.executeSql)
+      .mockResolvedValueOnce(selectResult("first"))
+      .mockResolvedValueOnce(selectResult("second"));
+    let choosePath!: () => void;
+    vi.mocked(excelExport.exportExcelWithDialog).mockImplementationOnce(
+      async (_name, prepare) => {
+        await new Promise<void>((resolve) => {
+          choosePath = resolve;
+        });
+        const prepared = await prepare();
+        exportedSheets.push(prepared.sheets);
+        prepared.release();
+        return true;
+      }
+    );
+    const tabId = openSqlTab("SELECT 1; SELECT 2");
+    render(<SqlEditor tabId={tabId} />);
+    await execute();
+    fireEvent.click(screen.getByRole("button", { name: /导出 Excel/ }));
+    await waitFor(() => expect(choosePath).toBeDefined());
+    fireEvent.click(screen.getByRole("tab", { name: "SQL 2" }));
+    fireEvent.click(screen.getByRole("tab", { name: "SQL 1" }));
+    await act(async () => choosePath());
+    expect(await screen.findByText(/查询结果已变化.*重新/)).toBeInTheDocument();
+    expect(exportedSheets).toEqual([]);
+  });
+
+  it("SQL 编辑器卸载会中止尚在保存对话框的导出", async () => {
+    vi.mocked(api.executeSql).mockResolvedValueOnce(selectResult("export-row"));
+    let finish!: () => void;
+    vi.mocked(excelExport.exportExcelWithDialog).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve(false);
+        })
+    );
+    const tabId = openSqlTab("SELECT 1");
+    const mounted = render(<SqlEditor tabId={tabId} />);
+    await execute();
+    fireEvent.click(screen.getByRole("button", { name: /导出 Excel/ }));
+    await waitFor(() => expect(finish).toBeDefined());
+    const signal = vi.mocked(excelExport.exportExcelWithDialog).mock
+      .calls[0][2];
+    mounted.unmount();
+    expect(signal?.aborted).toBe(true);
+    await act(async () => finish());
+  });
+
+  it("保存路径返回时同步切换结果再切回仍阻止旧代次导出", async () => {
+    vi.mocked(api.executeSql)
+      .mockResolvedValueOnce(selectResult("first"))
+      .mockResolvedValueOnce(selectResult("second"));
+    const tabId = openSqlTab("SELECT 1; SELECT 2");
+    render(<SqlEditor tabId={tabId} />);
+    await execute();
+    vi.mocked(excelExport.exportExcelWithDialog).mockImplementationOnce(
+      async (_name, prepare) => {
+        const store = useDatabaseStore.getState();
+        store.setSqlTabActiveResult(connection.connId, tabId, 1);
+        store.setSqlTabActiveResult(connection.connId, tabId, 0);
+        const prepared = await prepare();
+        exportedSheets.push(prepared.sheets);
+        prepared.release();
+        return true;
+      }
+    );
+    fireEvent.click(screen.getByRole("button", { name: /导出 Excel/ }));
+    expect(await screen.findByText(/查询结果已变化.*重新/)).toBeInTheDocument();
+    expect(exportedSheets).toEqual([]);
   });
 
   it("遇错停止并选中失败标签，之前的成功结果仍可查看", async () => {

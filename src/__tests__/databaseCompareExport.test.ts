@@ -1,21 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DatabaseCompareResult } from "../types";
 import {
   buildDatabaseCompareFilename,
-  buildDatabaseCompareWorkbookBase64,
+  saveDatabaseCompareWorkbook,
   buildDatabaseCompareWorkbookSheets,
 } from "../utils/databaseCompareExport";
 
-const XLSX_ZIP_MAGIC = [0x50, 0x4b, 0x03, 0x04];
+import { exportExcelWithDialog } from "../utils/excelExport";
 
-function base64ToBytes(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
-}
+vi.mock("../utils/excelExport", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../utils/excelExport")>()),
+  exportExcelWithDialog: vi.fn(),
+}));
 
 function sampleCompareResult(): DatabaseCompareResult {
   return {
@@ -85,6 +81,7 @@ function sampleCompareResult(): DatabaseCompareResult {
 }
 
 describe("databaseCompareExport", () => {
+  beforeEach(() => vi.clearAllMocks());
   it("构造摘要、表差异和字段差异三个工作表", () => {
     const sheets = buildDatabaseCompareWorkbookSheets(sampleCompareResult());
 
@@ -118,13 +115,68 @@ describe("databaseCompareExport", () => {
     ]);
   });
 
-  it("生成包含三个工作表的有效 xlsx", async () => {
-    const base64 = await buildDatabaseCompareWorkbookBase64(
-      sampleCompareResult()
-    );
-    const bytes = base64ToBytes(base64);
+  it("取消保存时不读取对比数据构造矩阵", async () => {
+    const result = sampleCompareResult();
+    const originalTables = result.tables;
+    Object.defineProperty(result, "tables", {
+      configurable: true,
+      get: () => originalTables,
+    });
+    const tables = vi.spyOn(result, "tables", "get");
+    vi.mocked(exportExcelWithDialog).mockResolvedValueOnce(false);
+    expect(await saveDatabaseCompareWorkbook(result)).toBe(false);
+    expect(tables).not.toHaveBeenCalled();
+  });
 
-    expect(Array.from(bytes.slice(0, 4))).toEqual(XLSX_ZIP_MAGIC);
+  it("选择路径后输出完整的摘要、表、字段三个工作表", async () => {
+    const result = sampleCompareResult();
+    let prepared:
+      | Awaited<ReturnType<Parameters<typeof exportExcelWithDialog>[1]>>
+      | undefined;
+    vi.mocked(exportExcelWithDialog).mockImplementationOnce(
+      async (_name, prepare) => {
+        prepared = await prepare();
+        return true;
+      }
+    );
+    expect(await saveDatabaseCompareWorkbook(result)).toBe(true);
+    expect(prepared?.sheets.map((sheet) => sheet.sheet)).toEqual([
+      "对比摘要",
+      "表差异",
+      "字段差异",
+    ]);
+    expect(prepared?.sheets[0].data[3]).toEqual(["源数据库/schema", "app"]);
+    expect(prepared?.sheets[1].data).toEqual([
+      ["表名", "差异状态"],
+      ["source_only", "仅源端"],
+      ["users", "结构变化"],
+    ]);
+    expect(prepared?.sheets[2].data[1]).toEqual([
+      "users",
+      "email",
+      "仅目标端",
+      "",
+      "",
+      "字段顺序=2；字段类型=varchar(255)；允许为空=是；默认值=NULL；主键=否；额外属性=；注释=",
+    ]);
+    result.tables.length = 0;
+    expect(prepared?.sheets[1].data).toHaveLength(3);
+    prepared?.release();
+  });
+
+  it("对话框返回后来源已失效时拒绝准备工作表", async () => {
+    vi.mocked(exportExcelWithDialog).mockImplementationOnce(
+      async (_name, prepare) => {
+        const prepared = await prepare();
+        prepared.release();
+        return true;
+      }
+    );
+    await expect(
+      saveDatabaseCompareWorkbook(sampleCompareResult(), {
+        isCurrent: () => false,
+      })
+    ).rejects.toThrow(/对比结果已变化/);
   });
 
   it("净化并限制跨平台导出文件名", () => {

@@ -615,8 +615,58 @@ describe("DatabaseCompareModal", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "导出 Excel" }));
     await waitFor(() => {
-      expect(saveDatabaseCompareWorkbook).toHaveBeenCalledWith(result);
+      expect(saveDatabaseCompareWorkbook).toHaveBeenCalledWith(result, {
+        signal: expect.any(AbortSignal),
+        isCurrent: expect.any(Function),
+      });
     });
+  });
+
+  it.each(["unmount", "close"])(
+    "%s 会中止导出并使保存对话框中的来源校验失效",
+    async (action) => {
+      const pending = deferred<boolean>();
+      vi.mocked(saveDatabaseCompareWorkbook).mockReturnValueOnce(
+        pending.promise
+      );
+      vi.mocked(api.compareDatabases).mockResolvedValue(sampleCompareResult());
+      const mounted = render(<DatabaseCompareModal open onClose={vi.fn()} />);
+      await configureEndpoints();
+      fireEvent.click(screen.getByRole("button", { name: "开始对比" }));
+      await screen.findByText("users");
+      fireEvent.click(screen.getByRole("button", { name: "导出 Excel" }));
+      const options = vi.mocked(saveDatabaseCompareWorkbook).mock.calls[0][1];
+      expect(options?.isCurrent?.()).toBe(true);
+      if (action === "unmount") mounted.unmount();
+      else fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+      expect(options?.signal?.aborted).toBe(true);
+      expect(options?.isCurrent?.()).toBe(false);
+      await act(async () => pending.resolve(false));
+    }
+  );
+
+  it("保存对话框期间更改端点后提示重新发起导出", async () => {
+    const selectedPath = deferred<void>();
+    const errorSpy = vi.spyOn(message, "error");
+    vi.mocked(saveDatabaseCompareWorkbook).mockImplementationOnce(
+      async (_result, options) => {
+        await selectedPath.promise;
+        if (!options?.isCurrent?.())
+          throw new Error("对比结果已变化，请重新发起导出");
+        return true;
+      }
+    );
+    vi.mocked(api.compareDatabases).mockResolvedValue(sampleCompareResult());
+    render(<DatabaseCompareModal open onClose={vi.fn()} />);
+    await configureEndpoints();
+    fireEvent.click(screen.getByRole("button", { name: "开始对比" }));
+    await screen.findByText("users");
+    fireEvent.click(screen.getByRole("button", { name: "导出 Excel" }));
+    await selectAntOption("源数据库/schema", "audit");
+    await act(async () => selectedPath.resolve());
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("对比结果已变化，请重新发起导出")
+    );
   });
 
   it("关闭后重开时清空端点和结果", async () => {

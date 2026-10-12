@@ -81,15 +81,23 @@ export async function writeTextFile(
   return invoke<void>("write_text_file", { path, contents });
 }
 
-/** 将 Base64 二进制内容写入用户选择的绝对路径（如 xlsx） */
-export async function writeBinaryFile(
-  path: string,
-  contentsBase64: string
+/** 通过 JSON 登记原始路径，返回一次性写入 ID；此时不创建文件。 */
+export function prepareBinaryExport(path: string): Promise<string> {
+  return invoke<string>("prepare_binary_export", { path });
+}
+
+/** 原始二进制请求体，头部只传 ASCII ID，避免路径编码和 Base64 副本。 */
+export function writeBinaryExport(
+  exportId: string,
+  bytes: ArrayBuffer
 ): Promise<void> {
-  return invoke<void>("write_binary_file", {
-    path,
-    contentsBase64,
+  return invoke<void>("write_binary_export", bytes, {
+    headers: { "x-db-connect-export-id": exportId },
   });
+}
+
+export function cancelBinaryExport(exportId: string): Promise<void> {
+  return invoke<void>("cancel_binary_export", { exportId });
 }
 
 /**
