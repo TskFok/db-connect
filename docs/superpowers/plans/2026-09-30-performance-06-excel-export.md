@@ -1,6 +1,6 @@
 # Excel 导出性能实施计划
 
-> 执行状态：已在当前分支完成代码实现和独立审查，2026-10-10～2026-10-12 完成本机分层验收。测量口径、集成检查和待验平台见文末执行记录；未提交或推送。
+> 执行状态：已在当前分支完成代码实现和独立审查，2026-10-10～2026-10-12 完成本机分层验收。测量口径、集成检查和待验平台见文末执行记录。恢复收尾时工作区已迁移至 CaseSensitive 卷、当前分支为 `dd`，原有提交 `27cf732` 已保留实现；本次收尾未另行提交或推送。
 
 **目标：**用户取消保存时不生成工作簿，取消完整 Base64 中间表示，并将工作簿编码移出主线程，保留当前导出内容和类型语义。
 
@@ -106,7 +106,7 @@ Rust 命令为 `prepare_binary_export(path, state)`、`write_binary_export(reque
 - [ ] 固定 1 万/10 万行及宽字段夹具，分别测准备、结构化克隆、编码、IPC 和写盘耗时，记录主线程最长任务与 Rust/WebView 峰值内存。已完成分阶段测量、独立克隆与 RSS 采样；本机 WebKit 不支持 Long Tasks API，最长任务与精确瞬时峰值仍未直接测得，使用明确标注的定时器间隔和采样峰值。
 - [x] 对比旧路径确认 Base64 完整表示已经消失，取消保存时零准备；记录 Worker 克隆成本，不能把主线程改善描述为内存必然下降。
 - [x] 小文件、Unicode 路径、覆盖已有文件、无写权限、磁盘写入失败和关闭窗口场景均给出明确结果；原始体领取后的写入失败不能提示成功。
-- [ ] 运行 Rust fmt/clippy、相关前端 lint，以及总计划要求的最终集成检查；记录 Windows/macOS/Linux 哪些已验证、哪些待验。
+- [x] 运行 Rust fmt/clippy、相关前端 lint，以及总计划要求的最终集成检查；记录 Windows/macOS/Linux 哪些已验证、哪些待验。
 
 ## 审查重点
 
@@ -137,8 +137,26 @@ Worker 兼容性未通过时先交付路径优先及二进制传输；保留单�
 
 ### 性能证据与验收边界
 
-详细指标及复现命令见 [性能基线](../../performance-baseline.md#06excel-导出2026-10-102026-10-12)，原始数据见 [生产 WKWebView 样本](../../performance/excel-export-webview-2026-10-12.json)。同机新旧比较使用固定旧提交、相同库、生产构建、3 次独立进程样本，逐一核对 XLSX 内全部 `xl/**/*.xml`，内容一致。
+详细指标及复现命令见 [性能基线](../../performance-baseline.md)，原始数据见 [生产 WKWebView 样本](../../performance/excel-export-webview-2026-10-12.json)。同机新旧比较使用固定旧提交、相同库、生产构建、3 次独立进程样本，逐一核对 XLSX 内全部 `xl/**/*.xml`，内容一致。
 
 100,000×8 输入的写盘前总耗时中位数由 1811 ms 变为 1973 ms；10 ms 定时器的最大间隔中位数由 1169 ms 降至 82 ms。宽字段采样峰值由 1507.1 MiB 增至 1615.2 MiB。单独克隆案例记录输入到达、发送方同步耗时与克隆保持期 RSS，不能将主线程改善等同于整体更快或必然降低内存。
 
 本机 WebKit 不支持 `longtask`，采样 RSS 也不能捕获所有瞬时峰值，故任务 4 第一项保留未完全勾选。Windows/Linux 实机、实际磁盘满、完整主应用窗口关闭期间的 OS 行为仍须补验；组件卸载/取消与实际 I/O 返回错误已有自动化验证。主线程临时回退未启用。
+
+
+### 真实 Tauri 与最终集成检查
+
+独立最小 Tauri Context 在真实 `tauri:` 协议和项目 CSP 下使用生产 Worker：两工作表、Unicode/Date/BigInt 的编码与原始二进制落盘通过，CSP 违规为零。中文/空格路径、0x00/0xff 字节、17 字节覆盖截断、取消/重复 ID、目录不存在及 0400 权限失败均通过；失败登记已清理且原有只读文件保持不变。见 [Tauri 原始样本](../../performance/excel-export-tauri-2026-10-12.json)。1/10 MiB 原始体往返中位数为 3/13 ms，Rust 处理为 1.223/9.735 ms，独立写盘微基准为 0.952/8.623 ms；边界与 RSS 采样限制见性能基线。
+
+迁移后基于当前 `dd` 分支重新检查：
+
+- `npm test -- --maxWorkers=2`：158 个文件、2060 项测试全部通过。
+- `npm run build`：类型检查与生产构建通过；仍有原有动态导入及大 chunk 提示。Worker SHA-256 与实机验收产物一致。
+- 本次变更的 20 个 TS/TSX/MJS 文件 ESLint、源码 Prettier、`npm run fmt:rust` 与 `git diff --check` 均通过。
+- `npm run lint`：仍有 `scripts/release.mjs:203/211` 的 2 项 `preserve-caught-error` 与 `scripts/release.node-test.mjs:382` 的 1 项 `no-undef`，相关文件相对实施前未变；未扩大本次改动修复发布脚本。
+- `cargo test --offline --manifest-path src-tauri/Cargo.toml -- --quiet`：784 项通过、18 项默认忽略、0 失败。
+- `cargo clippy --offline --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`：仅有 `src-tauri/src/db/sqlserver_objects.rs:629` 的既有 `type_complexity`；该文件相对实施前未变，无新增诊断。
+
+迁移后的默认 SDK 27 出现 `libSystem.B.tbd` 链接兼容问题，以上 Rust 检查通过命令级 `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk` 使用已安装 SDK 完成，未安装依赖或更改系统配置。严格全仓 ESLint/clippy 因上述既有问题仍未全绿，不将其记作通过。
+
+性能数据取自前述 macOS 26.5.2 同机测量，迁移后的集成复验不重新混入这组性能样本。任务 1 的临时 Base64 阶段直接合并迁移，代码仍是完整矩阵编码，未额外引入流式或恒定内存承诺。

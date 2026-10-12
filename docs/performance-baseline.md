@@ -502,3 +502,10 @@ bash scripts/performance/excel-export-tauri.sh /private/tmp/excel-export-tauri.j
 ```
 
 脚本仅创建本次临时 example/配置/数据，并在结束时清理临时 example。需要运行本机 WebView 与读取进程 RSS 的权限。macOS 已进行上述实测；Windows/Linux 仅有平台无关协议、类型与路径测试，未运行桌面实机。Release Rust 性能、精确最长任务/瞬时峰值及完整主应用交互保留待验。
+
+
+### 06 最终集成检查
+
+恢复后的当前 `dd` 分支已保留实现提交 `27cf732`。重新运行前端全套为 158 个文件、2060 项测试通过；Rust 全套 784 项通过、18 项默认忽略、0 失败。类型检查、生产构建、本次 20 个 TS/TSX/MJS 文件 ESLint、源码 Prettier、Rust 格式及 diff 空白检查通过，生产 Worker SHA-256 与上述实测一致。独立代码审查无待修问题。
+
+严格全仓检查仍有 3 项既有 ESLint 错误（`scripts/release.mjs:203/211`、`scripts/release.node-test.mjs:382`）和 1 项既有 clippy `type_complexity`（`src-tauri/src/db/sqlserver_objects.rs:629`）；这些文件相对实施前未变，未扩大专项范围修改。迁移后的默认 SDK 27 有链接兼容问题，Rust 检查使用命令级 `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk`，未安装或修改系统配置。此次集成复验与前述 macOS 26.5.2 性能样本分开记录，未混合不同环境的时延。
