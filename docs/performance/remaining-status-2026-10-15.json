@@ -1,0 +1,20 @@
+{
+  "date": "2026-10-15",
+  "branch": "dd",
+  "head": "7a0f619831e87da914362f0b3d7d899a0b808421",
+  "integrationCodeUnchanged": true,
+  "allocationScriptUnchanged": true,
+  "dockerVersion": "29.8.2",
+  "availableDatabaseImages": [
+    "mysql:8.4",
+    "mysql:8.0"
+  ],
+  "missingRequiredEngineImages": [
+    "postgres:17-alpine",
+    "SQL Server",
+    "ClickHouse"
+  ],
+  "checksRerun": false,
+  "reason": "相关代码与2026-10-14通过检查时哈希一致；只复核状态、权限范围和空白，不重跑无关测试。",
+  "overallAcceptanceComplete": false
+}

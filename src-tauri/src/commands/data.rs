@@ -2009,6 +2009,77 @@ mod tests {
         assert!(validate_table_page_size(10_000).is_ok());
     }
 
+    #[tokio::test]
+    async fn result_budget_page_size_command_rejects_before_connection_access() {
+        use std::task::Poll;
+        use tauri::Manager;
+
+        let app = tauri::test::mock_builder()
+            .manage(AppState::new())
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let state = app.state::<AppState>();
+        let _manager = state.connection_manager.lock().await;
+
+        // 连接管理器保持锁定；越界请求必须在首次轮询就完成，而不是等待锁或连接。
+        for page_size in [0, 10_001, u32::MAX] {
+            let mut query = Box::pin(query_table_data(
+                state.clone(),
+                "missing-connection".into(),
+                "fixture".into(),
+                "items".into(),
+                1,
+                page_size,
+                None,
+                None,
+                None,
+                Some(true),
+                None,
+                None,
+            ));
+            assert_eq!(
+                futures_util::poll!(query.as_mut()).map(|result| result.map(|_| ())),
+                Poll::Ready(Err("每页行数必须在 1–10,000 之间".into())),
+                "越界页大小 {page_size} 不得进入连接获取路径",
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn result_budget_page_size_command_accepts_boundaries_then_accesses_connection() {
+        use tauri::Manager;
+
+        let app = tauri::test::mock_builder()
+            .manage(AppState::new())
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let state = app.state::<AppState>();
+
+        for page_size in [1, 10_000] {
+            let manager = state.connection_manager.lock().await;
+            let mut query = Box::pin(query_table_data(
+                state.clone(),
+                "missing-connection".into(),
+                "fixture".into(),
+                "items".into(),
+                1,
+                page_size,
+                None,
+                None,
+                None,
+                Some(true),
+                None,
+                None,
+            ));
+            assert!(
+                futures_util::poll!(query.as_mut()).is_pending(),
+                "合法页大小 {page_size} 应继续等待连接管理器",
+            );
+            drop(manager);
+            assert_eq!(query.await.map(|_| ()), Err("连接不存在".into()));
+        }
+    }
+
     #[test]
     fn test_mysql_value_to_json_null() {
         let result = mysql_value_to_json(&MyValue::NULL);

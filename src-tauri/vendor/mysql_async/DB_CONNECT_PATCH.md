@@ -10,4 +10,8 @@
 
 验证：`mysql_query_budget_error_discards_stalled_multi_result_connection` 用本机协议替身提供 100001 行及停顿的第二结果集；原版会因超时后槽位仍被占用而失败，补丁直接丢弃流后通过。
 
-仅 SQL 编辑器的取消/错误清理使用新接口；原版 disconnect、正常归还、会话初始化及表浏览取消路径不变。未来上游提供同等公开能力后，可移除此目录及 `[patch.crates-io]`，切回锁定的上游实现。
+当前使用范围：SQL 编辑器的取消/错误清理（`db/mysql_query.rs::finish_mysql_execution`），以及 01 后续接入的表浏览失败/取消清理（`commands/data.rs::finish_mysql_table_query`）与完整行结果读取失败清理（`commands/data.rs::query_full_rows`）。预算超限也属于失败，整次返回错误并丢弃含未读结果的连接，不排空剩余大结果。
+
+正常查询仍按原路径归还连接，原版 `disconnect()` 和会话初始化不变。表浏览取消仍经独立连接执行 `KILL CONNECTION`，随后直接丢弃原连接；SQL 编辑器取消使用独立连接执行 `KILL QUERY`，配合执行守卫完成清理；完整行回查的此调用点只覆盖结果读取/预算失败，不新增取消接口。
+
+未来上游提供同等公开能力后，可移除此目录及 `[patch.crates-io]`，切回锁定的上游实现；移除前需同步核对上述全部调用点。

@@ -202,6 +202,7 @@ export function runRelease({
   } catch (error) {
     throw new Error(
       `${error instanceof Error ? error.message : String(error)}；请先推送提交后执行 npm run release -- --current`,
+      { cause: error },
     );
   }
   execute("git", ["tag", "-a", tag, "-m", `发布 ${tag}`], { cwd });
@@ -210,6 +211,7 @@ export function runRelease({
   } catch (error) {
     throw new Error(
       `${error instanceof Error ? error.message : String(error)}；请执行 npm run release -- --current 重试`,
+      { cause: error },
     );
   }
   output.log(`${tag} 已推送，GitHub Actions 将构建并发布 Release。`);

@@ -1,0 +1,67 @@
+{
+  "capabilities": {
+    "collectGarbageType": "undefined",
+    "documentProtocol": "about:",
+    "gcControllerType": "undefined",
+    "globalGCType": "undefined",
+    "longTaskEntryAdvertised": false,
+    "origin": "null",
+    "performanceAvailable": true,
+    "performanceMemoryPropertyPresent": false,
+    "performanceMemoryType": "undefined",
+    "performanceObserverAvailable": true,
+    "supportedEntryTypes": [
+      "event",
+      "first-input",
+      "largest-contentful-paint",
+      "mark",
+      "measure",
+      "navigation",
+      "paint",
+      "resource"
+    ],
+    "usedJSHeapSizeExposed": false,
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)"
+  },
+  "evidenceDate": "2026-10-14",
+  "limitations": [
+    "仅记录当前独立 WKWebView 的公开 API 暴露状态；不是完整 Tauri 主应用证据",
+    "未验证 Safari/Inspector 逐 task 起止事件，也未验证 WebContent PID 归属",
+    "未测最长任务、计时分辨率、吞吐、延迟、分配字节或内存峰值",
+    "未调用 GC；未暴露接口不表示引擎内部不能 GC，也不表示其他分析工具不可用",
+    "longtask 未列出只表示此 WebView 未宣告该 PerformanceObserver entry；不能推出实际没有长任务"
+  ],
+  "nativeEnvironment": {
+    "nativeProbePID": 33475,
+    "os": "Version 27.0.1 (Build 26A434)",
+    "webKitBundleIdentifier": "com.apple.WebKit",
+    "webKitBundleVersion": "22625.1.29.11.28",
+    "webKitShortVersion": "22625"
+  },
+  "recordedAt": "2026-10-14T07:45:14Z",
+  "schemaVersion": 1,
+  "scope": {
+    "businessConfigurationRead": false,
+    "inlineHTMLOnly": true,
+    "inspectorTaskEventsVerified": false,
+    "isolatedWKWebView": true,
+    "networkLoaded": false,
+    "nonPersistentWebsiteDataStore": true,
+    "performanceBenchmark": false,
+    "webContentProcessAttributionVerified": false
+  },
+  "sourceSHA256": "837499b128d6033fced1fbf15c8df4f6b74deb5e37da1d981c4e7573412c9bdd",
+  "status": "success",
+  "runner": {
+    "directChildPID": 33475,
+    "exitCode": 0,
+    "directChildExitedAndReaped": true,
+    "outerTimeoutSeconds": 45,
+    "timedOut": false,
+    "stdout": "/Volumes/CaseSensitive/workspace/myself/db-connect/docs/performance/remaining-webview-capabilities-2026-10-14.json\n",
+    "stderr": "",
+    "compileSDK": "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk",
+    "compileTarget": "arm64-apple-macosx26.0",
+    "binarySHA256": "fa716088f03d487238665986f501040b0cad2e82e59a366ed17d610d6fca9e40"
+  }
+}

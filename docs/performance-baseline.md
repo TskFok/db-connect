@@ -1,5 +1,7 @@
 # 性能验证基线
 
+最新仓库检查与验收状态见 [2026-10-14 收尾记录](performance/remaining-status-2026-10-14.md)：全仓检查通过，T03—T09 仍有待验指标。下文带日期的历史样本和检查结果保留，不与本轮环境混合。
+
 ## 01：结果预算与共享缓存（2026-09-30）
 
 ### 夹具与测量边界
@@ -109,7 +111,7 @@ python3 scripts/performance/mysql-cancellation-benchmark.py \
 
 协议替身验证发现 mysql_async 0.37.0 的 `disconnect()` 会尝试排空多结果集，且跨结果集时可能恢复 disconnected 标志；第二结果流停顿后，即使外层关闭超时，池槽仍可能被后台清理占用。回归先在原版失败，再通过同版本本地补丁新增的 `disconnect_immediately`：直接关闭流并由池回收器释放槽位，不执行额外 SQL、不扩池。
 
-补丁仅增加一个公开方法，保留原来的 disconnect、正常归还和表浏览行为，详见 [补丁说明](../src-tauri/vendor/mysql_async/DB_CONNECT_PATCH.md)。维护成本为约 668 KiB 上游源码快照和一处补丁；没有增加依赖或升级版本。此补丁随本专项整体回滚，不能只移除 Cargo patch 而留下调用点。
+补丁仅增加一个公开方法，保留原来的 disconnect、正常归还和会话初始化。01 后续也在表浏览失败/取消清理及完整行结果读取/预算失败时调用它；表浏览取消仍先经独立连接执行 KILL CONNECTION，SQL 编辑器取消仍使用 KILL QUERY，完整行回查未新增取消接口。详见 [补丁说明](../src-tauri/vendor/mysql_async/DB_CONNECT_PATCH.md)。维护成本为约 668 KiB 上游源码快照和一处补丁；没有增加依赖或升级版本。此补丁随本专项整体回滚，不能只移除 Cargo patch 而留下调用点。
 
 ## 03：目录集合读取与分页元数据缓存（2026-09-30）
 
@@ -509,3 +511,17 @@ bash scripts/performance/excel-export-tauri.sh /private/tmp/excel-export-tauri.j
 恢复后的当前 `dd` 分支已保留实现提交 `27cf732`。重新运行前端全套为 158 个文件、2060 项测试通过；Rust 全套 784 项通过、18 项默认忽略、0 失败。类型检查、生产构建、本次 20 个 TS/TSX/MJS 文件 ESLint、源码 Prettier、Rust 格式及 diff 空白检查通过，生产 Worker SHA-256 与上述实测一致。独立代码审查无待修问题。
 
 严格全仓检查仍有 3 项既有 ESLint 错误（`scripts/release.mjs:203/211`、`scripts/release.node-test.mjs:382`）和 1 项既有 clippy `type_complexity`（`src-tauri/src/db/sqlserver_objects.rs:629`）；这些文件相对实施前未变，未扩大专项范围修改。迁移后的默认 SDK 27 有链接兼容问题，Rust 检查使用命令级 `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk`，未安装或修改系统配置。此次集成复验与前述 macOS 26.5.2 性能样本分开记录，未混合不同环境的时延。
+
+## 2026-10-14：剩余任务收尾检查
+
+当前 `dd` 基于 `7a0f619`，前端 158 文件/2060 项、发布脚本 42 项、Rust 786 项通过；18 项 Rust 默认忽略不计为通过。生产构建、ESLint、rustfmt、Clippy 与 diff 检查通过。Rust 仅在命令级使用已安装 MacOSX26.5.sdk；当前系统 macOS 27.0.1 的检查数据不与历史 macOS 26.5.2 性能数据混算。
+
+新增页大小测试直接调用生产 Tauri 命令函数并持有真实连接管理器锁，证明越界首次 poll 即拒绝；合法边界先等待连接锁，释放后进入空连接管理器。移除校验的负向变异如期失败，生产代码恢复后再次通过。这补齐命令函数级证据，仍不是实际 IPC、完整桌面内存或五驱动实库验收。
+
+T03 缺 SQL Server/ClickHouse 隔离环境；T04 缺 PostgreSQL 当前实库分页计数和完整主应用端到端测量；T05 缺完整应用与全驱动预算矩阵；T06 的全部分配原指标、T07 的完整主应用真实交互、T08 的最长任务/归属准确峰值和 T09 的跨平台系统场景继续待验。工具探测、逐驱动/平台覆盖、全部命令和原始输出摘要见 [执行归档](performance/remaining-status-2026-10-14.md)。
+
+### 宽表累计托管堆辅助指标（2026-10-14）
+
+本轮在同一Apple M2 Pro/macOS 27.0.1/Node 25.5.0，以同一bundle比较只读提取的旧转换与当前行源；10000×200数字矩阵，旧/新各3个独立进程，正式测量独占运行。V8累计托管堆分配中位数为250,970,960 B / 5,793,664 B，下降97.6915%；旧样本极差48 B、新样本极差0 B，不将样本极差当作全局误差界。该方法计入已GC对象，但外部ArrayBuffer对照明确漏计backing store，且未覆盖原生累计分配。
+
+**此为新增辅助指标，原“全部分配量下降至少70%”仍待验。** 原始JSON明确 `originalCriterionVerified=false`，不得用该比例替代原指标。全部6样本、14校准进程和环境/源码hash见 [原始证据](performance/table-row-source-allocation-2026-10-14.json)；可复现脚本、命令、限制与具体后续方法见 [方法记录](performance/remaining-allocation-method-2026-10-14.md)。

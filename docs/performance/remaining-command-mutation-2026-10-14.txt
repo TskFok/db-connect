@@ -1,0 +1,5 @@
+test commands::data::tests::result_budget_page_size_command_rejects_before_connection_access ... FAILED
+assertion `left == right` failed: 越界页大小 0 不得进入连接获取路径
+  left: Pending
+ right: Ready(Err("每页行数必须在 1–10,000 之间"))
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 801 filtered out; finished in 0.01s

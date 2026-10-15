@@ -160,3 +160,11 @@ Worker 兼容性未通过时先交付路径优先及二进制传输；保留单�
 迁移后的默认 SDK 27 出现 `libSystem.B.tbd` 链接兼容问题，以上 Rust 检查通过命令级 `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk` 使用已安装 SDK 完成，未安装依赖或更改系统配置。严格全仓 ESLint/clippy 因上述既有问题仍未全绿，不将其记作通过。
 
 性能数据取自前述 macOS 26.5.2 同机测量，迁移后的集成复验不重新混入这组性能样本。任务 1 的临时 Base64 阶段直接合并迁移，代码仍是完整矩阵编码，未额外引入流式或恒定内存承诺。
+
+## 2026-10-14 收尾补验
+
+本轮前端2060项、Rust786项通过，18项Rust默认忽略；构建/ESLint/rustfmt/Clippy通过。工具探测确认当前CLT环境的xctrace不能录制，既有timer/rAF与RSS采样不能替代最长任务或瞬时峰值，新PID筛选不能证明WebContent归属。Release与完整主应用口径、Windows/Linux桌面及系统保存取消/三阶段关窗/受控磁盘错误继续待验，任务4第一项不勾选。
+
+本轮环境、命令及逐项限制见 [收尾执行归档](../../performance/remaining-status-2026-10-14.md) 和 [剩余任务清单](2026-10-13-performance-remaining-tasks.md)。带日期的旧检查结果不改写为本轮结果。
+
+当前macOS27.0.1的独立无痕WKWebView能力补探针成功：WebKit22625.1.29.11.28未宣告longtask、未暴露performance.memory/GC接口；仅说明本次API暴露，不代表Inspector或完整主应用能力已验证。见 [当前探针记录](../../performance/remaining-webview-capabilities-2026-10-14.md)。T08综合工具探测及原性能指标继续待验。

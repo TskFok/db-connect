@@ -623,11 +623,16 @@ impl SqlServerCompletionForeignKeyRow {
     }
 }
 
+struct SqlServerCompletionForeignKeyAgg {
+    foreign_key: SqlCompletionForeignKey,
+    columns: Vec<(u32, String, String)>,
+    complete: bool,
+}
+
 fn aggregate_sql_completion_foreign_key_rows(
     rows: Vec<SqlServerCompletionForeignKeyRow>,
 ) -> Vec<SqlCompletionForeignKey> {
-    let mut map: BTreeMap<i32, (SqlCompletionForeignKey, Vec<(u32, String, String)>, bool)> =
-        BTreeMap::new();
+    let mut map: BTreeMap<i32, SqlServerCompletionForeignKeyAgg> = BTreeMap::new();
     for row in rows {
         let complete = !row.constraint_name.is_empty()
             && row.object_id != 0
@@ -638,9 +643,10 @@ fn aggregate_sql_completion_foreign_key_rows(
             && !row.referenced_table_name.is_empty()
             && !row.referenced_column_name.is_empty()
             && row.ordinal > 0;
-        let entry = map.entry(row.object_id).or_insert_with(|| {
-            (
-                SqlCompletionForeignKey {
+        let entry = map
+            .entry(row.object_id)
+            .or_insert_with(|| SqlServerCompletionForeignKeyAgg {
+                foreign_key: SqlCompletionForeignKey {
                     id: format!(
                         "{}.{}.{}#{}",
                         row.table_schema, row.table_name, row.constraint_name, row.object_id
@@ -653,17 +659,21 @@ fn aggregate_sql_completion_foreign_key_rows(
                     referenced_table: row.referenced_table_name,
                     referenced_columns: Vec::new(),
                 },
-                Vec::new(),
-                true,
-            )
-        });
-        entry.2 &= complete;
+                columns: Vec::new(),
+                complete: true,
+            });
+        entry.complete &= complete;
         entry
-            .1
+            .columns
             .push((row.ordinal, row.column_name, row.referenced_column_name));
     }
     map.into_values()
-        .filter_map(|(mut fk, mut columns, complete)| {
+        .filter_map(|agg| {
+            let SqlServerCompletionForeignKeyAgg {
+                foreign_key: mut fk,
+                mut columns,
+                complete,
+            } = agg;
             if !complete || columns.is_empty() {
                 return None;
             }

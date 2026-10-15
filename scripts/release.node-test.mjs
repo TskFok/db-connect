@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
+import { URL } from "node:url";
 import {
   getConsistentVersion,
   parseReleaseArgs,
@@ -191,7 +192,11 @@ function releaseHarness(
     calls.push([command, ...commandArgs]);
     events.push(["command", command, ...commandArgs]);
     const key = [command, ...commandArgs].join(" ");
-    if (key === failOn) throw new Error(`模拟失败：${key}`);
+    if (key === failOn) {
+      const error = new Error(`模拟失败：${key}`);
+      state.failure = error;
+      throw error;
+    }
     if (key === "git status --porcelain") return status;
     if (key === "git branch --show-current") return branch;
     if (key === "git remote get-url origin") {
@@ -348,17 +353,33 @@ describe("发布编排", () => {
     assert.equal(state.files.get("/repo/src/appVersion.ts"), manifests.appVersion);
   });
 
-  it("分支推送失败时给出 current 恢复命令", () => {
+  it("分支推送失败时保留原错误并给出 current 恢复命令", () => {
+    const state = {};
     assert.throws(
-      () => releaseHarness([], { failOn: "git push origin main" }),
-      /npm run release -- --current/,
+      () => releaseHarness([], { failOn: "git push origin main", state }),
+      (error) => {
+        assert.equal(
+          error.message,
+          "模拟失败：git push origin main；请先推送提交后执行 npm run release -- --current",
+        );
+        assert.equal(error.cause, state.failure);
+        return true;
+      },
     );
   });
 
-  it("标签推送失败时给出 current 重试命令", () => {
+  it("标签推送失败时保留原错误并给出 current 重试命令", () => {
+    const state = {};
     assert.throws(
-      () => releaseHarness([], { failOn: "git push origin refs/tags/v0.1.1" }),
-      /npm run release -- --current/,
+      () => releaseHarness([], { failOn: "git push origin refs/tags/v0.1.1", state }),
+      (error) => {
+        assert.equal(
+          error.message,
+          "模拟失败：git push origin refs/tags/v0.1.1；请执行 npm run release -- --current 重试",
+        );
+        assert.equal(error.cause, state.failure);
+        return true;
+      },
     );
   });
 
