@@ -13,6 +13,8 @@ import {
   Tooltip,
   message,
   Tabs,
+  Drawer,
+  Descriptions,
 } from "antd";
 import { SafeInput } from "../common/SafeInput";
 import type { ColumnType } from "antd/es/table";
@@ -31,13 +33,15 @@ import {
   FunctionOutlined,
   ClockCircleOutlined,
   FilterOutlined,
+  InfoCircleOutlined,
 } from "@ant-design/icons";
 import type { InputRef } from "antd";
 import { useShallow } from "zustand/react/shallow";
 import { useDatabaseStore } from "../../stores/databaseStore";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useFavoriteStore } from "../../stores/favoriteStore";
-import type { TableInfo } from "../../types";
+import type { SessionInfo, TableInfo } from "../../types";
+import { getSessionInfoCached } from "../../services/tauriCommands";
 import { CreateTableModal } from "./CreateTableModal";
 import { DatabaseEditModal } from "./DatabaseEditModal";
 import { DatabaseSqlFileActions } from "./DatabaseSqlFileActions";
@@ -125,6 +129,9 @@ export function DatabaseOverview() {
     : "";
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [editDbModalOpen, setEditDbModalOpen] = useState(false);
+  const [sessionDrawerOpen, setSessionDrawerOpen] = useState(false);
+  const [sessionLoading, setSessionLoading] = useState(false);
+  const [sessionInfo, setSessionInfo] = useState<SessionInfo | null>(null);
   const [messageApi, contextHolder] = message.useMessage();
   const systemDb = selectedDatabase
     ? isSystemDatabase(selectedDatabase)
@@ -191,6 +198,75 @@ export function DatabaseOverview() {
     capabilities.sqlFileImportExport,
     databaseType,
   ]);
+
+  useEffect(() => {
+    if (!sessionDrawerOpen || !connId || !selectedDatabase) {
+      setSessionInfo(null);
+      setSessionLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setSessionLoading(true);
+    setSessionInfo(null);
+    void getSessionInfoCached(connId, selectedDatabase, { force: true })
+      .then((info) => {
+        if (!cancelled) setSessionInfo(info);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) messageApi.error(String(error));
+      })
+      .finally(() => {
+        if (!cancelled) setSessionLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionDrawerOpen, connId, selectedDatabase, messageApi]);
+
+  const sessionLabels = useMemo(() => {
+    if (databaseType === "postgres") {
+      return {
+        version: "version()",
+        hostname: "server_host",
+        readOnly: "transaction_read_only",
+        timeoutHelp: "PostgreSQL 当前返回 0（未配置客户端侧统一超时）",
+        timeZone: "TimeZone",
+        database: "current_schema",
+        connectionId: "pg_backend_pid()",
+      };
+    }
+    if (databaseType === "sqlite") {
+      return {
+        version: "sqlite_version()",
+        hostname: "local",
+        readOnly: "read_only",
+        timeoutHelp: "SQLite 当前返回 0（未配置统一超时）",
+        timeZone: "local",
+        database: "database",
+        connectionId: "connection_id",
+      };
+    }
+    if (databaseType === "clickhouse") {
+      return {
+        version: "version()",
+        hostname: "hostName()",
+        readOnly: "readonly setting",
+        timeoutHelp: "ClickHouse 首版返回 0；查询结果通过 max_result_rows 限制",
+        timeZone: "timezone()",
+        database: "currentDatabase()",
+        connectionId: "无连接 ID",
+      };
+    }
+    return {
+      version: "@@version",
+      hostname: "@@hostname",
+      readOnly: "@@read_only",
+      timeoutHelp: "MySQL: max_execution_time；MariaDB: max_statement_time",
+      timeZone: "@@time_zone",
+      database: "DATABASE()",
+      connectionId: "CONNECTION_ID()",
+    };
+  }, [databaseType]);
 
   // 搜索状态保存在连接缓存中，打开数据表导致概览卸载后仍可恢复。
   const { searchVisible, searchKeyword, setTableSearch } = useDatabaseStore(
@@ -776,6 +852,26 @@ export function DatabaseOverview() {
                           大索引
                         </Button>
                       </Tooltip>
+                      <Tooltip
+                        title={
+                          databaseType === "postgres"
+                            ? "查看 PostgreSQL 版本、连接 ID、只读状态等"
+                            : databaseType === "sqlite"
+                              ? "查看 SQLite 版本、只读状态、database 等"
+                              : databaseType === "clickhouse"
+                                ? "查看 ClickHouse 版本、主机、当前 database、时区等"
+                                : "查看 @@version、连接 ID、@@read_only 等"
+                        }
+                      >
+                        <Button
+                          type="default"
+                          size="small"
+                          icon={<InfoCircleOutlined />}
+                          aria-label="会话信息"
+                          onClick={() => setSessionDrawerOpen(true)}
+                          disabled={!connId}
+                        />
+                      </Tooltip>
                       {capabilities.sqlFileImportExport && (
                         <DatabaseSqlFileActions
                           connId={connId}
@@ -1067,6 +1163,56 @@ export function DatabaseOverview() {
             : []),
         ]}
       />
+
+      <Drawer
+        title="会话信息"
+        placement="right"
+        width={400}
+        open={sessionDrawerOpen}
+        onClose={() => {
+          setSessionDrawerOpen(false);
+          setSessionInfo(null);
+        }}
+        styles={{ body: { padding: "12px 16px" } }}
+      >
+        <Spin spinning={sessionLoading}>
+          {sessionInfo ? (
+            <Descriptions column={1} size="small" bordered>
+              <Descriptions.Item label={sessionLabels.version}>
+                {sessionInfo.version}
+              </Descriptions.Item>
+              <Descriptions.Item label={sessionLabels.hostname}>
+                {sessionInfo.hostname}
+              </Descriptions.Item>
+              <Descriptions.Item label={sessionLabels.readOnly}>
+                {sessionInfo.server_read_only ? "是" : "否"}
+              </Descriptions.Item>
+              <Descriptions.Item label="SHOW GRANTS（可写）">
+                {sessionInfo.grant_write_capable
+                  ? "是（含 DML/DDL 等）"
+                  : "否（仅 SELECT/USAGE 等，界面已按只读灰显）"}
+              </Descriptions.Item>
+              <Descriptions.Item label="会话查询超时 (ms)">
+                {sessionInfo.max_execution_time_ms}
+                <Text type="secondary" style={{ fontSize: 11, marginLeft: 6 }}>
+                  {sessionLabels.timeoutHelp}
+                </Text>
+              </Descriptions.Item>
+              <Descriptions.Item label={sessionLabels.timeZone}>
+                {sessionInfo.time_zone}
+              </Descriptions.Item>
+              <Descriptions.Item label={sessionLabels.database}>
+                {sessionInfo.database ?? "—"}
+              </Descriptions.Item>
+              <Descriptions.Item label={sessionLabels.connectionId}>
+                {sessionInfo.connection_id}
+              </Descriptions.Item>
+            </Descriptions>
+          ) : !sessionLoading ? (
+            <Text type="secondary">暂无数据</Text>
+          ) : null}
+        </Spin>
+      </Drawer>
 
       {/* 新建表对话框 */}
       {capabilities.schemaManagement && (

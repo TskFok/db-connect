@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  render,
+  fireEvent,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import * as api from "../services/tauriCommands";
 import { formatBytes } from "../utils/formatBytes";
 import { DatabaseOverview } from "../components/database/DatabaseOverview";
@@ -8,7 +14,7 @@ import {
   getTableListCellText,
   resolveTableListColumnWidth,
 } from "../utils/databaseOverviewUtils";
-import type { TableInfo } from "../types";
+import type { SessionInfo, TableInfo } from "../types";
 import { useDatabaseStore } from "../stores/databaseStore";
 import { useConnectionStore } from "../stores/connectionStore";
 import { useFavoriteStore } from "../stores/favoriteStore";
@@ -17,6 +23,7 @@ import { LIST_TABLE_IDS } from "../utils/listTableColumns";
 
 vi.mock("../services/tauriCommands", () => ({
   executeSql: vi.fn(),
+  getSessionInfoCached: vi.fn(),
 }));
 
 const mockTables: TableInfo[] = [
@@ -80,6 +87,16 @@ describe("DatabaseOverview", () => {
       affected_rows: null,
       message: "",
       execution_time_ms: 0,
+    });
+    vi.mocked(api.getSessionInfoCached).mockResolvedValue({
+      version: "8.0.30",
+      hostname: "db-host",
+      server_read_only: false,
+      grant_write_capable: true,
+      max_execution_time_ms: 1000,
+      time_zone: "SYSTEM",
+      database: "app_db",
+      connection_id: 42,
     });
     if (!window.matchMedia) {
       vi.stubGlobal("matchMedia", () => ({
@@ -152,6 +169,66 @@ describe("DatabaseOverview", () => {
       },
     });
   }
+
+  it("表列表可打开会话信息，按当前连接和数据库加载最新数据", async () => {
+    render(<DatabaseOverview />);
+    expect(api.getSessionInfoCached).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "会话信息" }));
+
+    expect(api.getSessionInfoCached).toHaveBeenCalledWith("conn-1", "app_db", {
+      force: true,
+    });
+    expect(await screen.findByText("8.0.30")).toBeInTheDocument();
+    expect(screen.getByText("db-host")).toBeInTheDocument();
+    expect(screen.getByText("CONNECTION_ID()")).toBeInTheDocument();
+    expect(screen.getByText("42")).toBeInTheDocument();
+  });
+
+  it("切换连接后加载新会话，并忽略旧连接尚未完成的响应", async () => {
+    let resolvePrevious!: (info: SessionInfo) => void;
+    vi.mocked(api.getSessionInfoCached).mockImplementationOnce(
+      () => new Promise((resolve) => (resolvePrevious = resolve))
+    );
+    render(<DatabaseOverview />);
+    fireEvent.click(screen.getByRole("button", { name: "会话信息" }));
+
+    vi.mocked(api.getSessionInfoCached).mockResolvedValue({
+      version: "3.45.0",
+      hostname: "local",
+      server_read_only: true,
+      grant_write_capable: false,
+      max_execution_time_ms: 0,
+      time_zone: "local",
+      database: "main",
+      connection_id: 0,
+    });
+    act(() => useSqliteConnection(true));
+
+    expect(api.getSessionInfoCached).toHaveBeenLastCalledWith(
+      "sqlite-1",
+      "main",
+      { force: true }
+    );
+    expect(await screen.findByText("3.45.0")).toBeInTheDocument();
+    expect(screen.getByText("sqlite_version()")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "会话信息" })).toBeEnabled();
+
+    await act(async () => {
+      resolvePrevious({
+        version: "8.0.30",
+        hostname: "old-host",
+        server_read_only: false,
+        grant_write_capable: true,
+        max_execution_time_ms: 0,
+        time_zone: "SYSTEM",
+        database: "app_db",
+        connection_id: 42,
+      });
+    });
+    expect(screen.getByText("3.45.0")).toBeInTheDocument();
+    expect(screen.queryByText("8.0.30")).not.toBeInTheDocument();
+  });
 
   it("PostgreSQL 可在 schema 概览添加和取消收藏，保留其它 schema 同名表", () => {
     useConnectionStore.setState({

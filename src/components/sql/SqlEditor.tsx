@@ -19,10 +19,8 @@ import {
   Empty,
   Modal,
   Input,
-  Drawer,
   Tooltip,
   message,
-  Descriptions,
 } from "antd";
 import {
   PlayCircleOutlined,
@@ -30,7 +28,6 @@ import {
   CheckCircleOutlined,
   SaveOutlined,
   FileExcelOutlined,
-  InfoCircleOutlined,
   FileSearchOutlined,
   StopOutlined,
   AlignLeftOutlined,
@@ -50,7 +47,7 @@ import {
 } from "../../utils/savedSqlConnection";
 import { SavedSqlDropdown } from "../database/SavedSqlDropdown";
 import * as api from "../../services/tauriCommands";
-import type { SessionInfo, SqlExecuteResult } from "../../types";
+import type { SqlExecuteResult } from "../../types";
 import { splitSqlStatements } from "../../utils/sqlUtils";
 import { setupMonacoEditor } from "../../utils/monacoSetup";
 import { registerSqlEditorCompletion } from "../../utils/sqlCompletionEditor";
@@ -129,9 +126,6 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
   const [localExecuting, setLocalExecuting] = useState(false);
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [saveModalName, setSaveModalName] = useState("");
-  const [sessionDrawerOpen, setSessionDrawerOpen] = useState(false);
-  const [sessionLoading, setSessionLoading] = useState(false);
-  const [sessionInfo, setSessionInfo] = useState<SessionInfo | null>(null);
   /** 连接或库切换时预取，用于禁用不兼容的 EXPLAIN ANALYZE */
   const [prefetchedVersion, setPrefetchedVersion] = useState<string | null>(
     null
@@ -420,26 +414,6 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     savedListForCurrent.length,
     activeConnection,
   ]);
-
-  const loadSessionInfo = useCallback(async () => {
-    const { connId: cid, currentDb: db } = execParamsRef.current;
-    if (!cid) return;
-    setSessionLoading(true);
-    setSessionInfo(null);
-    try {
-      const info = await api.getSessionInfoCached(cid, db, { force: true });
-      setSessionInfo(info);
-    } catch (e) {
-      message.error(String(e));
-    } finally {
-      setSessionLoading(false);
-    }
-  }, []);
-
-  const openSessionDrawer = useCallback(() => {
-    setSessionDrawerOpen(true);
-    void loadSessionInfo();
-  }, [loadSessionInfo]);
 
   /** 取编辑器选中内容，否则全文（与执行逻辑一致） */
   const getEditorSqlSnippet = useCallback((): string => {
@@ -935,51 +909,6 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
     result.columns !== null &&
     result.columns.length > 0;
 
-  const sessionLabels = useMemo(() => {
-    if (databaseType === "postgres") {
-      return {
-        version: "version()",
-        hostname: "server_host",
-        readOnly: "transaction_read_only",
-        timeoutHelp: "PostgreSQL 当前返回 0（未配置客户端侧统一超时）",
-        timeZone: "TimeZone",
-        database: "current_schema",
-        connectionId: "pg_backend_pid()",
-      };
-    }
-    if (databaseType === "sqlite") {
-      return {
-        version: "sqlite_version()",
-        hostname: "local",
-        readOnly: "read_only",
-        timeoutHelp: "SQLite 当前返回 0（未配置统一超时）",
-        timeZone: "local",
-        database: "database",
-        connectionId: "connection_id",
-      };
-    }
-    if (databaseType === "clickhouse") {
-      return {
-        version: "version()",
-        hostname: "hostName()",
-        readOnly: "readonly setting",
-        timeoutHelp: "ClickHouse 首版返回 0；查询结果通过 max_result_rows 限制",
-        timeZone: "timezone()",
-        database: "currentDatabase()",
-        connectionId: "无连接 ID",
-      };
-    }
-    return {
-      version: "@@version",
-      hostname: "@@hostname",
-      readOnly: "@@read_only",
-      timeoutHelp: "MySQL: max_execution_time；MariaDB: max_statement_time",
-      timeZone: "@@time_zone",
-      database: "DATABASE()",
-      connectionId: "CONNECTION_ID()",
-    };
-  }, [databaseType]);
-
   const handleExportSqlExcel = useCallback(async () => {
     if (resultEvicted || !result?.columns?.length || !result.rows?.length) {
       message.warning("没有可导出的查询结果");
@@ -1296,25 +1225,6 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
               ANALYZE
             </Button>
           </Tooltip>
-          <Tooltip
-            title={
-              databaseType === "postgres"
-                ? "查看 PostgreSQL 版本、连接 ID、只读状态等"
-                : databaseType === "sqlite"
-                  ? "查看 SQLite 版本、只读状态、database 等"
-                  : databaseType === "clickhouse"
-                    ? "查看 ClickHouse 版本、主机、当前 database、时区等"
-                    : "查看 @@version、连接 ID、@@read_only 等"
-            }
-          >
-            <Button
-              type="default"
-              size="small"
-              icon={<InfoCircleOutlined />}
-              onClick={openSessionDrawer}
-              disabled={!connId}
-            />
-          </Tooltip>
         </Space>
 
         <Space>
@@ -1500,56 +1410,6 @@ export function SqlEditor({ tabId }: SqlEditorProps) {
           autoFocus
         />
       </Modal>
-
-      <Drawer
-        title="会话信息"
-        placement="right"
-        width={400}
-        open={sessionDrawerOpen}
-        onClose={() => {
-          setSessionDrawerOpen(false);
-          setSessionInfo(null);
-        }}
-        styles={{ body: { padding: "12px 16px" } }}
-      >
-        <Spin spinning={sessionLoading}>
-          {sessionInfo ? (
-            <Descriptions column={1} size="small" bordered>
-              <Descriptions.Item label={sessionLabels.version}>
-                {sessionInfo.version}
-              </Descriptions.Item>
-              <Descriptions.Item label={sessionLabels.hostname}>
-                {sessionInfo.hostname}
-              </Descriptions.Item>
-              <Descriptions.Item label={sessionLabels.readOnly}>
-                {sessionInfo.server_read_only ? "是" : "否"}
-              </Descriptions.Item>
-              <Descriptions.Item label="SHOW GRANTS（可写）">
-                {sessionInfo.grant_write_capable
-                  ? "是（含 DML/DDL 等）"
-                  : "否（仅 SELECT/USAGE 等，界面已按只读灰显）"}
-              </Descriptions.Item>
-              <Descriptions.Item label="会话查询超时 (ms)">
-                {sessionInfo.max_execution_time_ms}
-                <Text type="secondary" style={{ fontSize: 11, marginLeft: 6 }}>
-                  {sessionLabels.timeoutHelp}
-                </Text>
-              </Descriptions.Item>
-              <Descriptions.Item label={sessionLabels.timeZone}>
-                {sessionInfo.time_zone}
-              </Descriptions.Item>
-              <Descriptions.Item label={sessionLabels.database}>
-                {sessionInfo.database ?? "—"}
-              </Descriptions.Item>
-              <Descriptions.Item label={sessionLabels.connectionId}>
-                {sessionInfo.connection_id}
-              </Descriptions.Item>
-            </Descriptions>
-          ) : !sessionLoading ? (
-            <Text type="secondary">暂无数据</Text>
-          ) : null}
-        </Spin>
-      </Drawer>
     </div>
   );
 }
