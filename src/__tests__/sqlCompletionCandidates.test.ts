@@ -756,7 +756,12 @@ describe("上下文到候选的行为表", () => {
         (i) => i.label
       )
     ).toContain("COALESCE");
-    expect(fromSql("SELECT * FROM |", "mysql", empty).items).toEqual([]);
+    expect(
+      fromSql("SELECT * FROM |", "mysql", empty).items.map((item) => ({
+        insertText: item.insertText,
+        kind: item.kind,
+      }))
+    ).toEqual([{ insertText: "`information_schema`", kind: "relation" }]);
     expect(
       fromSql("SELECT * FROM users WHERE |", "mysql", {
         ...completionSchema,

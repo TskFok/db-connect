@@ -1,5 +1,8 @@
 import { quoteIdentifier, quoteSqlReference } from "./sqlCompletion";
+import { sqlCommandKeywords } from "./sqlCompletionCommands";
 import {
+  getSqlMetadataIndexForNamespace,
+  getSqlMetadataNamespaces,
   resolveSqlName,
   sqlIdentifierName,
 } from "./sqlCompletionMetadataIndex";
@@ -88,6 +91,7 @@ function aliasesAllowed(context: SqlCompletionContext): boolean {
 
 function keywordsFor(context: SqlCompletionContext): string[] {
   const { slot, clause, dialect } = context;
+  if (context.command?.words.length) return sqlCommandKeywords(context);
   if (slot === "continuation") {
     if (clause === "update") return ["AS", "SET"];
     if (clause === "insertInto") return ["VALUES", "SELECT"];
@@ -118,7 +122,15 @@ function keywordsFor(context: SqlCompletionContext): string[] {
     if (context.operator === "IS" || context.operator === "IS NOT")
       return dialect === "sqlserver" ? ["NULL"] : ["NULL", "TRUE", "FALSE"];
     if (clause === "unknown")
-      return ["SELECT", "INSERT INTO", "UPDATE", "DELETE FROM"];
+      return [
+        ...new Set([
+          "SELECT",
+          "INSERT INTO",
+          "UPDATE",
+          "DELETE FROM",
+          ...sqlCommandKeywords(context),
+        ]),
+      ];
     if (clause === "set") return ["=", "WHERE"];
     if (clause === "groupBy") return ["HAVING", "ORDER BY"];
     if (clause === "orderBy")
@@ -178,13 +190,21 @@ export function generateSqlCompletionCandidates(
     });
   }
   const currentNamespace = index.key.database;
-  const matchesNamespace = (name: string, quoted = false) =>
-    currentNamespace !== null &&
-    resolveSqlName(name, quoted, [currentNamespace], dialect) !== undefined;
   // Provider 注入的默认 namespace 是 catalog 名称，而非需要折叠的 SQL token。
   const defaultMatches =
     context.defaultNamespace == null ||
     context.defaultNamespace === currentNamespace;
+  const defaultIndex = defaultMatches
+    ? getSqlMetadataIndexForNamespace(index, currentNamespace, true)
+    : undefined;
+  const metadataForRelation = (relation: RelationSymbol) =>
+    relation.namespace
+      ? getSqlMetadataIndexForNamespace(
+          index,
+          relation.namespace,
+          !!relation.namespaceQuoted
+        )
+      : defaultIndex;
   if (context.slot === "table") {
     const ctes =
       context.qualifierParts.length === 0 ? (currentScope?.ctes ?? []) : [];
@@ -209,16 +229,18 @@ export function generateSqlCompletionCandidates(
         cte.id
       );
     }
-    const namespaceMatches =
+    const tableIndex =
       context.qualifierParts.length === 0
-        ? defaultMatches
-        : context.qualifierParts.length === 1 &&
-          matchesNamespace(
-            context.qualifierParts[0],
-            context.qualifierQuoted?.[0]
-          );
-    if (namespaceMatches) {
-      for (const table of index.tablesByName.values()) {
+        ? defaultIndex
+        : context.qualifierParts.length === 1
+          ? getSqlMetadataIndexForNamespace(
+              index,
+              context.qualifierParts[0],
+              context.qualifierQuoted?.[0]
+            )
+          : undefined;
+    if (tableIndex) {
+      for (const table of tableIndex.tablesByName.values()) {
         if (cteNames.has(identifierKey(table.name, context))) continue;
         add(
           {
@@ -233,7 +255,7 @@ export function generateSqlCompletionCandidates(
       }
     }
     if (context.qualifierParts.length === 0) {
-      for (const namespace of [...new Set(index.schema.databases)]) {
+      for (const namespace of getSqlMetadataNamespaces(index)) {
         add(
           {
             label: namespace,
@@ -270,10 +292,16 @@ export function generateSqlCompletionCandidates(
   if (context.qualifierParts.length) {
     const [first, second] = context.qualifierParts;
     const namespaceQualifier = context.qualifierParts.length === 2;
+    const namespaceIndex = namespaceQualifier
+      ? getSqlMetadataIndexForNamespace(
+          index,
+          first,
+          context.qualifierQuoted?.[0]
+        )
+      : undefined;
     if (
       context.qualifierParts.length > 2 ||
-      (namespaceQualifier &&
-        !matchesNamespace(first, context.qualifierQuoted?.[0]))
+      (namespaceQualifier && !namespaceIndex)
     )
       return [];
     let eligible = namespaceQualifier
@@ -281,9 +309,8 @@ export function generateSqlCompletionCandidates(
           (relation) =>
             relation.kind === "table" &&
             !relation.alias &&
-            (relation.namespace
-              ? matchesNamespace(relation.namespace, relation.namespaceQuoted)
-              : defaultMatches)
+            metadataForRelation(relation)?.key.database ===
+              namespaceIndex!.key.database
         )
       : relations;
     if (!namespaceQualifier) {
@@ -327,7 +354,6 @@ export function generateSqlCompletionCandidates(
     relation: RelationSymbol;
     column: ColumnSymbol;
   }>((relation) => {
-    if (relation.outputComplete === false) return unknownColumns();
     if (relation.kind !== "table") {
       if (!relation.outputComplete || !relation.outputColumns)
         return unknownColumns();
@@ -340,20 +366,21 @@ export function generateSqlCompletionCandidates(
         .filter((_, i) => counts.get(names[i]) === 1)
         .map((column) => ({ relation, column }));
     }
-    if (
-      relation.namespace
-        ? !matchesNamespace(relation.namespace, relation.namespaceQuoted)
-        : !defaultMatches
-    )
-      return unknownColumns();
+    const relationIndex = metadataForRelation(relation);
+    if (!relationIndex) return unknownColumns();
     const name = resolveSqlName(
       relation.name,
       !!relation.nameQuoted,
-      [...index.tablesByName.keys()],
+      [...relationIndex.tablesByName.keys()],
       dialect
     );
     if (name === undefined) return unknownColumns();
-    return (index.columnsByTable.get(name) ?? []).map((column) => ({
+    const incomplete = relationIndex.incompleteTables?.has(name);
+    if (relation.outputComplete === false && !incomplete)
+      return unknownColumns();
+    // 公共列仍可补全；未知扩展列可能与其他表同名，裸引用必须加限定符。
+    if (incomplete) hasUnknownColumns = true;
+    return (relationIndex.columnsByTable.get(name) ?? []).map((column) => ({
       relation,
       column,
     }));
@@ -440,13 +467,14 @@ export function generateSqlCompletionCandidates(
   if (context.qualifierParts.length === 0 && context.slot !== "columnList") {
     const functions = ["select", "having", "orderBy"].includes(context.clause)
       ? [...SCALAR_FUNCTIONS, ...AGGREGATE_FUNCTIONS]
-      : SCALAR_FUNCTIONS;
+      : [...SCALAR_FUNCTIONS];
+    if (dialect === "mysql") functions.push("VERSION", "DATABASE");
     for (const name of functions)
       add(
         {
           label: name,
           filterText: name,
-          insertText: `${name}()`,
+          insertText: context.followingToken === "(" ? name : `${name}()`,
           kind: "function",
           detail: "函数",
         },

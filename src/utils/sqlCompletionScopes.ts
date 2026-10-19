@@ -4,6 +4,7 @@ import {
   analyzeSqlCompletionTokens,
 } from "./sqlCompletionContext";
 import {
+  getSqlMetadataIndexForNamespace,
   resolveSqlName,
   sqlIdentifierName,
 } from "./sqlCompletionMetadataIndex";
@@ -224,14 +225,22 @@ export function resolveSqlCompletionScopes(
 
     const projections = new Map<string, ProjectionInference>();
     const cteOutputs = new Map<string, ProjectionInference>();
-    const tableNames = [...index.tablesByName.keys()];
-    function physical(ref: ParsedFromRef): ColumnSymbol[] | undefined {
+    const tableNamesByIndex = new Map<SqlMetadataIndex, string[]>();
+    function physical(ref: ParsedFromRef): ProjectionInference | undefined {
+      const relationIndex = getSqlMetadataIndexForNamespace(
+        index,
+        ref.namespace ?? context.defaultNamespace,
+        !!ref.namespaceQuoted
+      );
+      if (!relationIndex) return undefined;
       if (
+        relationIndex === index &&
         context.defaultNamespace != null &&
         context.defaultNamespace !== index.key.database
       )
         return undefined;
       if (
+        relationIndex === index &&
         ref.namespace &&
         (context.defaultNamespace == null ||
           resolveSqlName(
@@ -242,6 +251,11 @@ export function resolveSqlCompletionScopes(
           ) === undefined)
       )
         return undefined;
+      let tableNames = tableNamesByIndex.get(relationIndex);
+      if (!tableNames) {
+        tableNames = [...relationIndex.tablesByName.keys()];
+        tableNamesByIndex.set(relationIndex, tableNames);
+      }
       const table = resolveSqlName(
         ref.name,
         ref.nameQuoted,
@@ -249,11 +263,16 @@ export function resolveSqlCompletionScopes(
         dialect
       );
       if (table === undefined) return undefined;
-      return (index.columnsByTable.get(table) ?? []).map((column) => ({
-        name: column.name,
-        type: column.type,
-        source: { relationId: ref.id, column: column.name },
-      }));
+      return {
+        columns: (relationIndex.columnsByTable.get(table) ?? []).map(
+          (column) => ({
+            name: column.name,
+            type: column.type,
+            source: { relationId: ref.id, column: column.name },
+          })
+        ),
+        complete: !relationIndex.incompleteTables?.has(table),
+      };
     }
     function sourcesKnown(
       block: ParsedQueryBlock | undefined,
@@ -333,8 +352,7 @@ export function resolveSqlCompletionScopes(
         }
       }
       if (!output && relation.kind === "table") {
-        const columns = physical(ref);
-        if (columns !== undefined) output = { columns, complete: true };
+        output = physical(ref);
       }
       if (output) {
         relation.outputColumns = output.columns.map((column) => ({

@@ -86,6 +86,12 @@ export interface SqlCompletionContext {
   };
   excludedColumns: string[];
   operator?: "NOT" | "IS" | "IS NOT";
+  followingToken?: string;
+  command?: {
+    /** 当前语句开头已经输入的完整命令词，不含正在编辑的单词。 */
+    words: string[];
+    hasFollowingTokens: boolean;
+  };
 }
 export interface CompletionCandidate {
   label: string;
@@ -107,4 +113,6 @@ export interface SqlMetadataIndex {
   schema: SqlSchema;
   tablesByName: Map<string, { name: string }>;
   columnsByTable: Map<string, SqlSchema["columns"]>;
+  /** 静态公共列不代表服务端的完整列集合。 */
+  incompleteTables?: ReadonlySet<string>;
 }

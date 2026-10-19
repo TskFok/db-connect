@@ -225,6 +225,15 @@ npm run tauri dev
 npm run tauri build
 ```
 
+macOS 构建入口会检测默认 SDK 的编译和链接兼容性。若遇到 `.tbd` 的
+`unknown architecture` 错误（例如 SDK 27 的 `arm64e.x1-macos`），会从当前
+工具链已安装的 SDK 中选择可用版本，并输出实际使用的 `SDKROOT`。此设置仅对本次
+命令生效；已手动设置 `SDKROOT` 时保持该设置。也可以显式指定已安装的兼容 SDK：
+
+```bash
+SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk npm run tauri build
+```
+
 产物位置（具体子目录随目标平台变化）：
 
 - **macOS**：`src-tauri/target/release/bundle/macos/DB Connect.app`（以及 DMG 等）

@@ -73,6 +73,9 @@ describe("SQL completion context", () => {
   });
   it.each([
     ["SELECT * FROM |", "from", "table"],
+    ["SELECT * FROM app.|", "from", "table"],
+    ["UPDATE app.|", "update", "table"],
+    ["INSERT INTO app.|", "insertInto", "table"],
     ["SELECT * FROM users u |", "from", "continuation"],
     ["SELECT * FROM users u WHERE |", "where", "column"],
     ["SELECT * FROM users WHERE id |", "where", "keyword"],

@@ -1,4 +1,5 @@
 import type { SqlDialect } from "./sqlCompletion";
+import { isSqlCommandStart, sqlCommandSlot } from "./sqlCompletionCommands";
 import type {
   QueryScope,
   RelationSymbol,
@@ -366,6 +367,9 @@ export function analyzeSqlCompletionTokens(input: {
     if (editable.quoted && !isClosedSqlIdentifier(editable))
       context.confidence = "partial";
   }
+  context.followingToken = tokens.find(
+    (token) => token.start >= context.edit.end
+  )?.text;
   let q = editable
     ? tokens.indexOf(editable) - 1
     : tokens.findIndex((t) => t.start >= offset) - 1;
@@ -378,6 +382,26 @@ export function analyzeSqlCompletionTokens(input: {
   const before = active.tokens.filter(
     (t) => t.end <= (editable?.start ?? offset)
   );
+  const managementCommand =
+    dialect === "mysql" &&
+    !before[0]?.quoted &&
+    !!before[0] &&
+    isSqlCommandStart(before[0].text);
+  if (active === root && (before.length === 0 || managementCommand)) {
+    const words = before.map((token) => token.text.toUpperCase());
+    const slot = sqlCommandSlot(words);
+    if (!editable?.quoted || slot === "table") {
+      context.command = {
+        words,
+        hasFollowingTokens: context.followingToken !== undefined,
+      };
+    }
+    // 管理命令的 SET/TABLE/FROM 等词不属于 SELECT/DML 子句。
+    if (managementCommand) {
+      context.slot = editable?.quoted && slot !== "table" ? "none" : slot;
+      return context;
+    }
+  }
   const topBefore = before.filter((t) => depths.get(t) === active.depth);
   let clauseIndex = -1;
   for (let i = 0; i < topBefore.length; i++) {
@@ -443,6 +467,8 @@ export function analyzeSqlCompletionTokens(input: {
     context.slot =
       !decl ||
       offset <= decl.end ||
+      (context.qualifierParts.length > 0 &&
+        topBefore[topBefore.length - 1]?.text === ".") ||
       topBefore[topBefore.length - 1]?.text === ","
         ? "table"
         : "continuation";

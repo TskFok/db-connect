@@ -4,6 +4,7 @@ import {
   quoteSqlReference,
   registerSqlCompletionProvider,
   type SqlCompletionBinding,
+  type SqlDialect,
 } from "../utils/sqlCompletion";
 import { buildSqlMetadataIndex } from "../utils/sqlCompletionMetadataIndex";
 import { createSqlCompletionModel } from "./fixtures/sqlCompletionModel";
@@ -19,7 +20,11 @@ const schema = {
   tables: [{ name: "users" }],
   columns: [{ table: "users", name: "name", type: "text" }],
 };
-function setup(sql: string, offset = sql.length) {
+function setup(
+  sql: string,
+  offset = sql.length,
+  dialect: SqlDialect = "postgres"
+) {
   const providers = new Set<Monaco.languages.CompletionItemProvider>();
   const monaco = {
     languages: {
@@ -42,9 +47,10 @@ function setup(sql: string, offset = sql.length) {
   } as unknown as typeof Monaco;
   const fixture = createSqlCompletionModel(sql);
   const model = fixture.model;
+  const bindingKey = { ...key, dialect };
   let binding: SqlCompletionBinding | undefined = {
-    key,
-    index: buildSqlMetadataIndex(schema, key),
+    key: bindingKey,
+    index: buildSqlMetadataIndex(schema, bindingKey),
     revision: 0,
   };
   const disposable = registerSqlCompletionProvider(
@@ -160,6 +166,327 @@ describe("模型绑定 SQL provider", () => {
     s.setBinding({ key, revision: 2 });
     expect(isCurrent()).toBe(false);
   });
+});
+
+describe("provider MySQL SHOW 命令补全", () => {
+  function suggest(marked: string, dialect: SqlDialect = "mysql") {
+    const sql = marked.replace("|", "");
+    const s = setup(sql, marked.indexOf("|"), dialect);
+    const result = { sql, model: s.model, suggestions: s.run().suggestions };
+    s.disposable.dispose();
+    return result;
+  }
+
+  it.each([
+    ["SH|", "SHOW FULL PROCESSLIST", "SHOW FULL PROCESSLIST"],
+    ["SHOW |", "FULL PROCESSLIST", "SHOW FULL PROCESSLIST"],
+    ["SHOW |", "PROCESSLIST", "SHOW PROCESSLIST"],
+    ["SHOW FULL |", "PROCESSLIST", "SHOW FULL PROCESSLIST"],
+    ["SHOW FULL PRO|CESSLIST", "PROCESSLIST", "SHOW FULL PROCESSLIST"],
+    ["SHOW FU|LL PROCESSLIST", "FULL", "SHOW FULL PROCESSLIST"],
+    ["show\tfull\npro|", "PROCESSLIST", "show\tfull\nPROCESSLIST"],
+    [
+      "SHOW /* 说明 */ FULL PRO|",
+      "PROCESSLIST",
+      "SHOW /* 说明 */ FULL PROCESSLIST",
+    ],
+    [
+      "SELECT 1; SHOW FULL PRO|",
+      "PROCESSLIST",
+      "SELECT 1; SHOW FULL PROCESSLIST",
+    ],
+    [
+      "SELECT '😀;中文'; SHOW FULL PRO|",
+      "PROCESSLIST",
+      "SELECT '😀;中文'; SHOW FULL PROCESSLIST",
+    ],
+  ])("接受命令候选正确替换 %s", (marked, insertText, expected) => {
+    const { sql, model, suggestions } = suggest(marked);
+    const item = suggestions.find(
+      (candidate) => candidate.insertText === insertText
+    );
+    expect(item).toBeDefined();
+    const range = item!.range as Monaco.IRange;
+    const start = model.getOffsetAt({
+      lineNumber: range.startLineNumber,
+      column: range.startColumn,
+    });
+    const end = model.getOffsetAt({
+      lineNumber: range.endLineNumber,
+      column: range.endColumn,
+    });
+    expect(sql.slice(0, start) + item!.insertText + sql.slice(end)).toBe(
+      expected
+    );
+  });
+
+  it("光标右侧已有 PROCESSLIST 时不提供会重复尾部的候选", () => {
+    const { suggestions } = suggest("SHOW FU|LL PROCESSLIST");
+    expect(suggestions.some((item) => item.insertText === "FULL")).toBe(true);
+    expect(
+      suggestions.some((item) => item.insertText === "FULL PROCESSLIST")
+    ).toBe(false);
+  });
+
+  it.each(["SHOW FULL PROCESSLIST |", "SHOW UNKNOWN |"])(
+    "命令完成或无法识别后不回退语句起始关键词：%s",
+    (marked) => {
+      const { suggestions } = suggest(marked);
+      expect(
+        suggestions.some((item) =>
+          /^(?:SELECT|INSERT(?: INTO)?|DELETE(?: FROM)?|UPDATE)$/.test(
+            String(item.insertText)
+          )
+        )
+      ).toBe(false);
+    }
+  );
+
+  it.each([
+    ["SHOW |", ["FULL", "DATABASES", "TABLES", "CREATE TABLE"]],
+    ["SHOW FULL |", ["TABLES", "COLUMNS", "PROCESSLIST"]],
+    ["SHOW GLOBAL |", ["VARIABLES", "STATUS"]],
+    ["SHOW ENGINE INNODB |", ["STATUS"]],
+  ])("按已输入的完整词提供后缀和下一单词：%s", (marked, expected) => {
+    const { suggestions } = suggest(marked);
+    expect(suggestions.map((item) => item.insertText)).toEqual(
+      expect.arrayContaining(expected)
+    );
+  });
+
+  it.each([
+    "SHOW /* FULL PRO| */",
+    "SHOW -- FULL PRO|\n",
+    "SELECT 'SHOW FULL PRO|'",
+    "SELECT SH| FROM users",
+    "SELECT name AS SH| FROM users",
+    "SELECT `SHOW` FU| FROM users",
+    "`SHOW` FULL PRO|",
+    "SHOW.`FU`|",
+    "SELECT 1 SH|; SHOW FULL PROCESSLIST",
+  ])("非命令位置不提供 PROCESSLIST 命令候选：%s", (marked) => {
+    const { suggestions } = suggest(marked);
+    expect(
+      suggestions.some((item) =>
+        /^(?:SHOW )?(?:FULL )?PROCESSLIST$/.test(String(item.insertText))
+      )
+    ).toBe(false);
+  });
+
+  it.each<SqlDialect>(["postgres", "sqlite", "sqlserver", "clickhouse"])(
+    "%s 不提供 MySQL PROCESSLIST 命令候选",
+    (dialect) => {
+      for (const marked of ["SH|", "SHOW |", "SHOW FULL PRO|"]) {
+        const { suggestions } = suggest(marked, dialect);
+        expect(
+          suggestions.some((item) =>
+            /^(?:SHOW )?(?:FULL )?PROCESSLIST$/.test(String(item.insertText))
+          )
+        ).toBe(false);
+      }
+    }
+  );
+
+  it("元数据尚未加载时仍提供 SHOW 命令补全", () => {
+    const s = setup("SHOW FULL PRO", undefined, "mysql");
+    s.setBinding({ key: { ...key, dialect: "mysql" }, revision: 0 });
+    expect(
+      s.run().suggestions.some((item) => item.insertText === "PROCESSLIST")
+    ).toBe(true);
+    s.disposable.dispose();
+  });
+});
+
+describe("provider MySQL 常用命令和函数补全", () => {
+  function suggest(marked: string, dialect: SqlDialect = "mysql") {
+    const offset = marked.indexOf("|");
+    const sql = marked.replace("|", "");
+    const s = setup(sql, offset, dialect);
+    const result = { sql, model: s.model, suggestions: s.run().suggestions };
+    s.disposable.dispose();
+    return result;
+  }
+
+  function accept(
+    result: ReturnType<typeof suggest>,
+    item: Monaco.languages.CompletionItem
+  ) {
+    const range = item.range as Monaco.IRange;
+    const start = result.model.getOffsetAt({
+      lineNumber: range.startLineNumber,
+      column: range.startColumn,
+    });
+    const end = result.model.getOffsetAt({
+      lineNumber: range.endLineNumber,
+      column: range.endColumn,
+    });
+    return result.sql.slice(0, start) + item.insertText + result.sql.slice(end);
+  }
+
+  it("语句起始的关键词与函数整句模板不重复候选", () => {
+    const filters = suggest("|").suggestions.map((item) => item.filterText);
+    expect(filters.filter((filter) => filter === "SELECT")).toHaveLength(1);
+    expect(new Set(filters).size).toBe(filters.length);
+  });
+
+  it.each([
+    ["STA|", "START TRANSACTION", "START TRANSACTION"],
+    ["COM|", "COMMIT", "COMMIT"],
+    ["ROLL|", "ROLLBACK", "ROLLBACK"],
+    ["SAVE|", "SAVEPOINT", "SAVEPOINT"],
+    ["REL|", "RELEASE SAVEPOINT", "RELEASE SAVEPOINT"],
+    ["SET|", "SET GLOBAL", "SET GLOBAL"],
+    ["ANAL|", "ANALYZE TABLE", "ANALYZE TABLE"],
+    ["CHE|", "CHECK TABLE", "CHECK TABLE"],
+    ["OPT|", "OPTIMIZE TABLE", "OPTIMIZE TABLE"],
+    ["SE|", "SELECT VERSION()", "SELECT VERSION()"],
+    ["SE|", "SELECT DATABASE()", "SELECT DATABASE()"],
+    ["START |", "TRANSACTION", "START TRANSACTION"],
+    ["ROLLBACK |", "TO SAVEPOINT", "ROLLBACK TO SAVEPOINT"],
+    ["RELEASE |", "SAVEPOINT", "RELEASE SAVEPOINT"],
+    ["SET SESSION au|", "autocommit", "SET SESSION autocommit"],
+    ["SET GLOBAL au|", "autocommit", "SET GLOBAL autocommit"],
+    ["SET PERSIST au|", "autocommit", "SET PERSIST autocommit"],
+    ["ANALYZE TABLE us|", "`users`", "ANALYZE TABLE `users`"],
+    ["CHECK TABLE us|", "`users`", "CHECK TABLE `users`"],
+    ["OPTIMIZE TABLE us|", "`users`", "OPTIMIZE TABLE `users`"],
+    ["ANALYZE TABLE users, us|", "`users`", "ANALYZE TABLE users, `users`"],
+    ["CHECK TABLE users, us|", "`users`", "CHECK TABLE users, `users`"],
+    ["OPTIMIZE TABLE users, us|", "`users`", "OPTIMIZE TABLE users, `users`"],
+    ["ANALYZE TABLE app.us|", "`users`", "ANALYZE TABLE app.`users`"],
+    ["CHECK TABLE app.us|", "`users`", "CHECK TABLE app.`users`"],
+    ["OPTIMIZE TABLE app.us|", "`users`", "OPTIMIZE TABLE app.`users`"],
+    ["SELECT VER|", "VERSION()", "SELECT VERSION()"],
+    ["SELECT DATA|", "DATABASE()", "SELECT DATABASE()"],
+    ["start\ttran|", "TRANSACTION", "start\tTRANSACTION"],
+    [
+      "SELECT '😀;中文';\nset session au|",
+      "autocommit",
+      "SELECT '😀;中文';\nset session autocommit",
+    ],
+    [
+      "SELECT 1;\noptimize\ntable us|",
+      "`users`",
+      "SELECT 1;\noptimize\ntable `users`",
+    ],
+    ["SELECT /* 版本 */ ver|", "VERSION()", "SELECT /* 版本 */ VERSION()"],
+  ])("接受候选得到可执行的命令或函数：%s", (marked, insertText, expected) => {
+    const result = suggest(marked);
+    const item = result.suggestions.find(
+      (candidate) => candidate.insertText === insertText
+    );
+    expect(item).toBeDefined();
+    expect(accept(result, item!)).toBe(expected);
+  });
+
+  it("SET 提供作用域后缀和常用静态系统变量", () => {
+    expect(suggest("SET |").suggestions.map((item) => item.insertText)).toEqual(
+      expect.arrayContaining(["GLOBAL", "SESSION", "PERSIST"])
+    );
+    expect(
+      suggest("SET SESSION |").suggestions.map((item) => item.insertText)
+    ).toEqual(expect.arrayContaining(["autocommit", "sql_mode", "time_zone"]));
+  });
+
+  it("max_connections 仅在 GLOBAL 和 PERSIST 作用域补全", () => {
+    for (const scope of ["GLOBAL", "PERSIST"]) {
+      expect(
+        suggest(`SET ${scope} max_con|`).suggestions.some(
+          (item) => item.insertText === "max_connections"
+        )
+      ).toBe(true);
+    }
+    expect(
+      suggest("SET SESSION max_con|").suggestions.some(
+        (item) => item.insertText === "max_connections"
+      )
+    ).toBe(false);
+  });
+
+  it.each(["VERSION", "DATABASE"])(
+    "%s 右侧已有括号时接受补全不重复括号",
+    (name) => {
+      const result = suggest(`SELECT ${name}|()`);
+      const item = result.suggestions.find(
+        (candidate) => candidate.label === name
+      );
+      expect(item).toBeDefined();
+      expect(item!.insertText).toBe(name);
+      expect(accept(result, item!)).toBe(`SELECT ${name}()`);
+    }
+  );
+
+  it.each([
+    ["SELECT VER|SION()", "VERSION", "SELECT VERSION()"],
+    ["SELECT DATA|BASE()", "DATABASE", "SELECT DATABASE()"],
+  ])("函数词中接受补全保留右侧括号：%s", (marked, name, expected) => {
+    const result = suggest(marked);
+    const item = result.suggestions.find(
+      (candidate) => candidate.label === name
+    );
+    expect(item).toBeDefined();
+    expect(item!.filterText).toBe(name);
+    expect(accept(result, item!)).toBe(expected);
+  });
+
+  it("元数据尚未加载时仍提供静态 SET 和函数候选", () => {
+    for (const [sql, expected] of [
+      ["SET SESSION au", "autocommit"],
+      ["SELECT VER", "VERSION()"],
+    ]) {
+      const s = setup(sql, sql.length, "mysql");
+      s.setBinding({ key: { ...key, dialect: "mysql" }, revision: 0 });
+      expect(
+        s.run().suggestions.some((item) => item.insertText === expected)
+      ).toBe(true);
+      s.disposable.dispose();
+    }
+  });
+
+  it("UPDATE 的 SET 继续补全字段，不混入系统变量作用域", () => {
+    const result = suggest("UPDATE users SET na|");
+    expect(
+      result.suggestions.some((item) => item.insertText === "`name`")
+    ).toBe(true);
+    expect(
+      suggest("UPDATE users SET |").suggestions.some((item) =>
+        /^(?:SET )?(?:GLOBAL|SESSION|PERSIST)$/.test(String(item.insertText))
+      )
+    ).toBe(false);
+    expect(
+      suggest("UPDATE users SET au|").suggestions.some(
+        (item) => item.insertText === "autocommit"
+      )
+    ).toBe(false);
+  });
+
+  it.each([
+    "SELECT 'START TRAN|",
+    'SELECT "SET SESSION au|',
+    "SELECT /* OPTIMIZE TABLE us| */",
+    "SET -- SESSION au|\n",
+  ])("字符串和注释中不补全命令或函数：%s", (marked) => {
+    expect(suggest(marked).suggestions).toEqual([]);
+  });
+
+  it.each<SqlDialect>(["postgres", "sqlite", "sqlserver", "clickhouse"])(
+    "%s 不泄漏新增 MySQL 专属命令和函数候选",
+    (dialect) => {
+      for (const [marked, forbidden] of [
+        ["SET |", "PERSIST"],
+        ["CHE|", "CHECK TABLE"],
+        ["OPT|", "OPTIMIZE TABLE"],
+        ["SELECT VER|", "VERSION()"],
+        ["SELECT DATA|", "DATABASE()"],
+      ]) {
+        expect(
+          suggest(marked, dialect).suggestions.some(
+            (item) => item.insertText === forbidden
+          )
+        ).toBe(false);
+      }
+    }
+  );
 });
 
 describe("SQL 引用的语义名称", () => {
