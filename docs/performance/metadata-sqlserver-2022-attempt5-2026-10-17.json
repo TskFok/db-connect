@@ -1,0 +1,90 @@
+{
+  "started_at": "2026-10-17T10:47:32.371567+00:00",
+  "kind": "correctness-and-server-count-only",
+  "status": "failed",
+  "measurement_run": false,
+  "fixture_marker": "74c24d5147b8475d95d90f51502c967b",
+  "build_mode": "cargo test debug",
+  "sdkroot": "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk",
+  "fixture_ssl_mode": "disabled",
+  "host_platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "container_and_volumes_removed": true,
+  "image": "mcr.microsoft.com/mssql/server:2022-latest",
+  "image_id": "sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718",
+  "image_repo_digests": [
+    "mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718"
+  ],
+  "image_architecture": "amd64",
+  "docker_host": {
+    "OSType": "linux",
+    "Architecture": "aarch64",
+    "NCPU": 10,
+    "MemTotal": 8319504384,
+    "KernelVersion": "7.0.14-linuxkit"
+  },
+  "supported_configuration": false,
+  "support_reference": "https://learn.microsoft.com/en-us/sql/linux/containers/deploy?view=sql-server-ver17",
+  "pull_attempted": false,
+  "database_fixture_initialized": true,
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--locked",
+    "--manifest-path",
+    "src-tauri/Cargo.toml",
+    "--lib",
+    "db::metadata_sqlserver_tests::metadata_access_isolated_sqlserver2022",
+    "--",
+    "--ignored",
+    "--exact",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "validation_attempted": true,
+  "failure": {
+    "stage": "cargo_test",
+    "type": "RuntimeError",
+    "exit_code": 101,
+    "sqlserver_message_numbers": [],
+    "connection_diagnostics": [
+      {
+        "category": "tls",
+        "numeric_codes": [],
+        "server_error_code": null,
+        "ssl_mode": "required_insecure",
+        "stage": "direct_production_config_connection",
+        "status": "failed",
+        "tls_error_text": "connection closed via error",
+        "tls_subcategory": "other"
+      },
+      {
+        "category": "tls",
+        "numeric_codes": [],
+        "server_error_code": null,
+        "ssl_mode": "disabled",
+        "stage": "direct_production_config_connection",
+        "status": "failed",
+        "tls_error_text": "The validity period in the certificate exceeds the maximum allowed.",
+        "tls_subcategory": "certificate_or_identity"
+      }
+    ]
+  },
+  "cargo_exit_code": 101,
+  "cleanup_result": "removed",
+  "credentials_file_removed": true,
+  "source_sha256": {
+    "scripts/performance/metadata-sqlserver-validation.py": "b255f2a7c93fa78601ffd1a24f54a0a60d0cdca4f45bf87bfde05bf6325df3d6",
+    "scripts/performance/test_metadata_sqlserver_validation.py": "183b28a9c98850f0e4972f9e1a6839be2ff701b91a2bcab348bf0e7b933d92a3",
+    "src-tauri/src/db/metadata_sqlserver_tests.rs": "8aabb333d638d909d377cc5ae7d205c3b728862a0e71b7a75589b6fb1d4cb654",
+    "src-tauri/src/db/sqlserver.rs": "595bb599c938c736c7d31169478efeb4efa37bc98093ef914bba081610b1c28c",
+    "src-tauri/src/db/metadata_batch.rs": "cccd37a7acc8738ebf74e58da836dea60b86b778a2916d23d63e72c73f867ad6",
+    "src-tauri/src/db/sql_utils.rs": "1eadf5562c2cd1703ba963335c3e2a1a608d2edcd55a9066fb57e74f2a31fe44",
+    "src-tauri/src/db/mod.rs": "c8e6a786eba292616f55c8e1bfbce58fb519f0851ee1d73c18bcd2d95ffd3de6",
+    "src-tauri/src/models/types.rs": "eab35aa2df0e30ce9eefdea2c22b7c959a8241d672448eb83d08e9afcc7f5d5e",
+    "src-tauri/Cargo.toml": "498a55e43ec5b72c47df1ed61d18fb7c6baa9bf00ab8ccf016ea888914669ad6",
+    "src-tauri/Cargo.lock": "7dc8410823fa4ef430e748953fb9a08409d0e397448ea67c4a53b073f81cff73"
+  },
+  "source_head": "e43940a50159cf6e075c49f5faf115e19c047958",
+  "finished_at": "2026-10-17T10:47:52.638371+00:00"
+}

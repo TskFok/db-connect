@@ -7,15 +7,19 @@ use aes_gcm::{
     Aes256Gcm, Nonce,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+#[cfg(not(feature = "performance-desktop"))]
 use keyring::Entry;
 use rand_core::RngCore;
 
+#[cfg(not(feature = "performance-desktop"))]
 const SERVICE_NAME: &str = "db-connect";
+#[cfg(not(feature = "performance-desktop"))]
 const KEY_ID: &str = "config-encryption-key";
 const NONCE_SIZE: usize = 12;
 const KEY_SIZE: usize = 32;
 
 /// 获取或生成加密密钥
+#[cfg(not(feature = "performance-desktop"))]
 fn get_or_create_key() -> Result<[u8; KEY_SIZE], String> {
     let entry =
         Entry::new(SERVICE_NAME, KEY_ID).map_err(|e| format!("初始化密钥存储失败: {}", e))?;
@@ -39,6 +43,18 @@ fn get_or_create_key() -> Result<[u8; KEY_SIZE], String> {
         .set_password(&encoded)
         .map_err(|e| format!("保存密钥失败: {}", e))?;
     Ok(key)
+}
+
+/// 验收构建仅保留进程内随机密钥，绝不访问系统钥匙串。
+#[cfg(feature = "performance-desktop")]
+fn get_or_create_key() -> Result<[u8; KEY_SIZE], String> {
+    crate::performance_desktop::isolation()?;
+    static KEY: std::sync::OnceLock<[u8; KEY_SIZE]> = std::sync::OnceLock::new();
+    Ok(*KEY.get_or_init(|| {
+        let mut key = [0u8; KEY_SIZE];
+        rand_core::OsRng.fill_bytes(&mut key);
+        key
+    }))
 }
 
 fn encrypt_with_key(plaintext: &[u8], key: &[u8; KEY_SIZE]) -> Result<String, String> {

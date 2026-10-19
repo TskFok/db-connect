@@ -1,10 +1,18 @@
 use crate::util::secure_fs::{set_secure_dir_permissions, set_secure_file_permissions};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
+#[cfg(not(feature = "performance-desktop"))]
+use tauri::Manager;
 
 const TABLE_COLUMN_SETTINGS_FILE: &str = "table-column-settings.json";
 
 /// 获取表列设置文件路径
 fn get_table_column_settings_file(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    #[cfg(feature = "performance-desktop")]
+    let data_dir = {
+        let _ = app;
+        crate::performance_desktop::data_dir()?
+    };
+    #[cfg(not(feature = "performance-desktop"))]
     let data_dir = app
         .path()
         .app_data_dir()

@@ -1,0 +1,325 @@
+{
+  "schemaVersion": 1,
+  "archivedDate": "2026-10-17",
+  "timezone": "Asia/Shanghai",
+  "branch": "dd",
+  "baseCommit": "e43940a50159cf6e075c49f5faf115e19c047958",
+  "mode": "uncommitted-working-tree",
+  "kind": "correctness-and-integration-only",
+  "checks": [
+    {
+      "id": "frontend",
+      "executedDate": "2026-10-16",
+      "command": [
+        "npm",
+        "test",
+        "--",
+        "--maxWorkers=2"
+      ],
+      "cwd": ".",
+      "exitCode": 0,
+      "exitCodeEvidence": "observed tool completion or delegated verifier completion in this session",
+      "localLog": "/private/tmp/db-connect-frontend-tests-2026-10-16.log",
+      "outputSha256": "f7e59a90fb75d90bbb25dbb20664bed6105fb16efabd78aac32a031b50241f49",
+      "evidenceLines": [
+        "Test Files  158 passed (158)",
+        "Tests  2060 passed (2060)"
+      ],
+      "counts": {
+        "filesPassed": 158,
+        "passed": 2060,
+        "failed": 0
+      }
+    },
+    {
+      "id": "release-tests",
+      "executedDate": "2026-10-16",
+      "command": [
+        "npm",
+        "run",
+        "test:release"
+      ],
+      "cwd": ".",
+      "exitCode": 0,
+      "exitCodeEvidence": "observed tool completion or delegated verifier completion in this session",
+      "localLog": "/private/tmp/db-connect-release-tests-2026-10-16.log",
+      "outputSha256": "66dc61c107986f73a2ab56e7758565bf2f5d2e32de2e7fd7315f9451a9378229",
+      "evidenceLines": [
+        "ℹ tests 42",
+        "ℹ pass 42",
+        "ℹ fail 0",
+        "ℹ skipped 0"
+      ],
+      "counts": {
+        "passed": 42,
+        "failed": 0
+      }
+    },
+    {
+      "id": "production-build",
+      "executedDate": "2026-10-16",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "cwd": ".",
+      "exitCode": 0,
+      "exitCodeEvidence": "observed tool completion or delegated verifier completion in this session",
+      "localLog": "/private/tmp/db-connect-production-build-2026-10-16.log",
+      "outputSha256": "4c46f995159d480c82bd7b81a8a2303fd7904e4f5ea06bf2654c227d16deb84b",
+      "evidenceLines": [
+        "✓ built in 1.12s"
+      ]
+    },
+    {
+      "id": "eslint",
+      "executedDate": "2026-10-16",
+      "command": [
+        "npm",
+        "run",
+        "lint"
+      ],
+      "cwd": ".",
+      "exitCode": 0,
+      "exitCodeEvidence": "observed tool completion or delegated verifier completion in this session",
+      "localLog": "/private/tmp/db-connect-lint-2026-10-16.log",
+      "outputSha256": "8aca1f90dc217c91053104a0c76c1e90724cea7a8d3b6d5088b44d7d8b5609a5",
+      "evidenceLines": []
+    },
+    {
+      "id": "rust-lib",
+      "executedDate": "2026-10-16",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--lib"
+      ],
+      "cwd": "src-tauri",
+      "exitCode": 0,
+      "exitCodeEvidence": "observed tool completion or delegated verifier completion in this session",
+      "localLog": "/private/tmp/db-connect-test-lib-2026-10-16.log",
+      "outputSha256": "d1a30f9ff614b4d6286ab5741216306097aa0b005f75151d06e2143c62990446",
+      "evidenceLines": [
+        "Finished `test` profile [unoptimized + debuginfo] target(s) in 33.54s",
+        "test result: ok. 786 passed; 0 failed; 20 ignored; 0 measured; 0 filtered out; finished in 2.34s"
+      ],
+      "environment": {
+        "SDKROOT": "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"
+      },
+      "counts": {
+        "passed": 786,
+        "ignored": 20,
+        "failed": 0
+      }
+    },
+    {
+      "id": "rust-fmt",
+      "executedDate": "2026-10-16",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "cwd": "src-tauri",
+      "exitCode": 0,
+      "exitCodeEvidence": "observed tool completion or delegated verifier completion in this session",
+      "localLog": "/private/tmp/db-connect-fmt-2026-10-16.log",
+      "outputSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "evidenceLines": [],
+      "environment": {
+        "SDKROOT": "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"
+      }
+    },
+    {
+      "id": "rust-clippy-default",
+      "executedDate": "2026-10-16",
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "cwd": "src-tauri",
+      "exitCode": 0,
+      "exitCodeEvidence": "observed tool completion or delegated verifier completion in this session",
+      "localLog": "/private/tmp/db-connect-clippy-default-2026-10-16.log",
+      "outputSha256": "67d402f6d5d87ec96e4874a883bd55346c32627ec112e815a8561556450ddf44",
+      "evidenceLines": [
+        "Finished `dev` profile [unoptimized + debuginfo] target(s) in 17.38s"
+      ],
+      "environment": {
+        "SDKROOT": "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"
+      }
+    },
+    {
+      "id": "rust-clippy-desktop",
+      "executedDate": "2026-10-16",
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--all-targets",
+        "--features",
+        "performance-desktop",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "cwd": "src-tauri",
+      "exitCode": 0,
+      "exitCodeEvidence": "observed tool completion or delegated verifier completion in this session",
+      "localLog": "/private/tmp/db-connect-clippy-performance-desktop-2026-10-16.log",
+      "outputSha256": "2c858500d3d40762d5f42be190d41c7375ba53824390d0de051f05e070c95ae7",
+      "evidenceLines": [
+        "Finished `dev` profile [unoptimized + debuginfo] target(s) in 16.33s"
+      ],
+      "environment": {
+        "SDKROOT": "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"
+      }
+    },
+    {
+      "id": "desktop-entry-node",
+      "executedDate": "2026-10-16",
+      "command": [
+        "node",
+        "--test",
+        "scripts/performance/desktop-frontend.node-test.mjs"
+      ],
+      "cwd": ".",
+      "exitCode": 0,
+      "exitCodeEvidence": "observed tool completion or delegated verifier completion in this session",
+      "localLog": "/private/tmp/db-connect-desktop-tests-2026-10-16.log",
+      "outputSha256": "19283f54c7ea33f88290d1492ddc35fac3a7a15e4f5d9d0d30dd1f0fe3b1ca61",
+      "evidenceLines": [
+        "ℹ tests 3",
+        "ℹ pass 3",
+        "ℹ fail 0",
+        "ℹ skipped 0"
+      ],
+      "counts": {
+        "passed": 3,
+        "failed": 0
+      }
+    },
+    {
+      "id": "rust-bins",
+      "executedDate": "2026-10-17",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--bins"
+      ],
+      "cwd": "src-tauri",
+      "exitCode": 0,
+      "exitCodeEvidence": "observed tool completion or delegated verifier completion in this session",
+      "localLog": "/private/tmp/db-connect-test-bins-2026-10-17.log",
+      "outputSha256": "991ee6c7a3eac5c069ea5b221f2e285d6ba1ba664e9f98c50cc2a32470834565",
+      "evidenceLines": [
+        "Finished `test` profile [unoptimized + debuginfo] target(s) in 23.14s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ],
+      "environment": {
+        "SDKROOT": "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"
+      },
+      "counts": {
+        "passed": 0,
+        "failed": 0
+      }
+    },
+    {
+      "id": "rust-doc",
+      "executedDate": "2026-10-17",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--doc"
+      ],
+      "cwd": "src-tauri",
+      "exitCode": 0,
+      "exitCodeEvidence": "observed tool completion or delegated verifier completion in this session",
+      "localLog": "/private/tmp/db-connect-test-doc-2026-10-17.log",
+      "outputSha256": "5066f13b059b3da26fbe65f6f6b469afd67ad6399fe723a105f639230c65f677",
+      "evidenceLines": [
+        "Finished `test` profile [unoptimized + debuginfo] target(s) in 0.57s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ],
+      "environment": {
+        "SDKROOT": "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"
+      },
+      "counts": {
+        "passed": 0,
+        "failed": 0
+      }
+    }
+  ],
+  "changedSourceSha256AtArchive": {
+    "scripts/performance/desktop-app.mjs": "3d5044334398d5716bb1ce3232e59a2180481658c5fac56cf7d1d71aa1d36e76",
+    "scripts/performance/desktop-entry.tsx": "9ac4bb5eb7a7550b0d76372797a400fe216160efe3df909149e0f6922d307ba3",
+    "scripts/performance/desktop-frontend-build.mjs": "e9c34e5bede07e8b9d05043c0fe822268fcb27a82c4e2e5b4655e23f3616d7ea",
+    "scripts/performance/desktop-frontend.node-test.mjs": "8f3fe8507e101eed8ebf8152b8f03b342cf0ee4e303fc44235b2cc18d8d6efdc",
+    "scripts/performance/desktop-tauri-invoke.mjs": "1575607446ea59a12996c00dc8bfbb12e22d5af2af8055ace8272edd231f4acc",
+    "scripts/performance/excel-export-tauri.mjs": "2c851ab8d1bd6dd8ce7eca44f6532001d61bb3d50fa428ce79b69ddcb8055ecf",
+    "scripts/performance/excel-export-tauri.rs": "70bdd298b1fbdc049a5c9d371fd7394eb867fb3b4b1b6d96e9c3ac936d96ad7b",
+    "scripts/performance/excel-export-tauri.sh": "4ff34b355200946a56f183497410fa8e2a1b087b066acde188ae0d177808f0fe",
+    "scripts/performance/excel-export-validation.mjs": "35dff13f7173962661fdc956c7af0d14b3d3f8f6de4073737cfd380d84a4e598",
+    "scripts/performance/excel-export-validation.node-test.mjs": "9c5772501ed89f7f258dfc29554b5a85513da02aaa42fb6bb8b7d99bf83d06da",
+    "scripts/performance/metadata-postgres-validation.py": "d3dc1130f9b0218204a3004d001d0ce8550245247aa00300955596400bcc96b6",
+    "scripts/performance/mysql-budget-validation.py": "0fa85fa5e67cf9160d8b5bb0014dfbb6e0a78a3370b3cc91ee0efe9f3bf91a35",
+    "scripts/performance/test_mysql_budget_validation.py": "b9306a6d999a62c964eb231c32350690f96fcac1ceea2b4e27ceeac7e6d9120c",
+    "src-tauri/Cargo.toml": "498a55e43ec5b72c47df1ed61d18fb7c6baa9bf00ab8ccf016ea888914669ad6",
+    "src-tauri/src/commands/connection.rs": "bdb962a7fdf0dd401e5048ba5ae1b26a8bdf0e40fbf8e10bd8d1a710f4435879",
+    "src-tauri/src/commands/data.rs": "5315bbab88b0e8f00fe01eb163b445e9c209e056f402581a0609f894b1d9ec77",
+    "src-tauri/src/commands/data_mysql_budget_tests.rs": "9dc428b62010854590cf63a625841d8950ab18fa1a520c9e37a2e97b713408d6",
+    "src-tauri/src/commands/preferences.rs": "ad277c794be935098aaec524f511e4ef621dbea96e5e959c1a168ed78c0b8246",
+    "src-tauri/src/commands/temporary_database.rs": "a27342075e9e98325c851483547dab93ebf9cb362ae31b5130adf6bd869bf148",
+    "src-tauri/src/crypto/mod.rs": "a173cc411da8af5762b81c6c59b456933d667802c734c9ccc4cebe45b7b3be0a",
+    "src-tauri/src/db/connection.rs": "e2bc63fdf8d4afd083d6b7ce60b5b38e4604c067ebd240bf723f33a70fc00ed1",
+    "src-tauri/src/db/metadata_pg_pagination_tests.rs": "b8410e42913ec2864a024f37bc7126dc2455c48cecc2df9d105882deafb9a02f",
+    "src-tauri/src/db/metadata_pg_tests.rs": "f876d541342359d19e4a1c1c596d7035e5ef104daaf130faa59eca2506e9ddad",
+    "src-tauri/src/db/mod.rs": "69f26849d3c65f950ff2284f15ddc3c69481084f89d1ebcbb65c8527362f8fb2",
+    "src-tauri/src/lib.rs": "6b67aee8ca124f668f1424a17ac4aa9c9cdc64c42a9e91b0ba72a0a18541dc90",
+    "src-tauri/src/performance_desktop.rs": "eebb28c327a4cd66437a8710edbb3ba0b7cb76c7288b844c4ab58aae98b6788b"
+  },
+  "desktopSourceFingerprintVerified": "d8c9eaf7b7e5d9ec7b9e7e70da178ec1237d5fc62f9f045912e4f0026d0e992a",
+  "separateMeasurementFiles": [
+    "mysql-budget-8.4-2026-10-15.json",
+    "excel-export-tauri-release-2026-10-16.json",
+    "desktop-save-cancel-2026-10-16.json",
+    "desktop-interactions-2026-10-16.json"
+  ],
+  "notes": [
+    "logs and commands occurred on their recorded execution dates; no invented start/end timestamps",
+    "default lib tests 786 passed/20 ignored; binaries and doctests each have zero cases; ignored tests are not passes",
+    "permission for local protocol loopback was granted for default library tests",
+    "performance-desktop full test suite was not run; its guards intentionally reject external databases; targeted guard tests were run separately",
+    "production build retains pre-existing large-chunk and ineffective dynamic-import warnings",
+    "no new production-code edits after the validated build; final changes are evidence/documentation",
+    "source hashes recorded at archive; each separate measurement retains its own original source identity",
+    "code/test success does not complete missing original metrics or platform acceptance"
+  ],
+  "archiveChecks": {
+    "executedDate": "2026-10-17",
+    "gitDiffCheckExitCode": 0,
+    "jsonFilesParsed": 6,
+    "localMarkdownLinksChecked": 117,
+    "brokenLinks": [],
+    "desktopEvidenceHashesMatched": true,
+    "desktopSourceAndBinaryFingerprintsMatched": true
+  },
+  "review": {
+    "date": "2026-10-17",
+    "scope": "final documentation, original evidence and log/source hash consistency",
+    "blockingFindings": 0,
+    "result": "passed",
+    "nonBlockingWordingClarification": "file-error coverage explicitly limited to tested fixture; disk-full/interruption remain unverified"
+  }
+}

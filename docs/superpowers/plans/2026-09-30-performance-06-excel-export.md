@@ -168,3 +168,11 @@ Worker 兼容性未通过时先交付路径优先及二进制传输；保留单�
 本轮环境、命令及逐项限制见 [收尾执行归档](../../performance/remaining-status-2026-10-14.md) 和 [剩余任务清单](2026-10-13-performance-remaining-tasks.md)。带日期的旧检查结果不改写为本轮结果。
 
 当前macOS27.0.1的独立无痕WKWebView能力补探针成功：WebKit22625.1.29.11.28未宣告longtask、未暴露performance.memory/GC接口；仅说明本次API暴露，不代表Inspector或完整主应用能力已验证。见 [当前探针记录](../../performance/remaining-webview-capabilities-2026-10-14.md)。T08综合工具探测及原性能指标继续待验。
+
+## 2026-10-16 本机补验（10月17日归档）
+
+独立最小 Tauri example 新增显式 Release 构建、每组5次预热/20次正式采样及两表17坐标XML校验。本机1/10MiB原始体往返p50/p95为1/2与5/5ms，全部40条IPC/40条独立写盘样本保留；生产Worker/CSP、Unicode路径、覆盖截断、重复/取消ID、权限/缺目录与登记清理通过。计时精度造成一次0ms往返和负的派生差值，原值保留，不解释为精确IPC内部耗时。
+
+当前源码完整隔离主应用实际打开macOS系统保存框并Cancel，完整行回查、prepare、Excel Worker创建及登记四项增量均0。此项单独补齐macOS子场景，不能代替其他平台或编码/登记/写入中关窗。
+
+原始证据、构建/手工步骤及最终检查见 [本机续验记录](../../performance/remaining-local-validation-2026-10-16.md)。Release最小example不等于完整主应用的大导出；RSS仍仅3个测量期样本、WebContent归属未确认，最长任务/准确峰值/输入克隆、Windows/Linux及受控磁盘故障仍待验，任务4第一项不勾选。

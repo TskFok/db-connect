@@ -1,0 +1,98 @@
+{
+  "recorded_at": "2026-10-17T10:37:05.183565+00:00",
+  "status": "passed",
+  "image": "clickhouse/clickhouse-server:25.8",
+  "image_id": "sha256:0152dd511befe6a2c2ef53e930726179669b08116da78500b37c51c96ff5ee77",
+  "image_architecture": "arm64",
+  "measurement_run": true,
+  "fixture_marker": "db-connect-metadata-ch-247a0078d4f84ac6bd96353ea1bd5c58",
+  "pull_attempted_by_runner": false,
+  "host_bind_mounts": false,
+  "business_configuration_read": false,
+  "catalog": {
+    "counter_source": "system.query_log terminal initial-query events, isolated log_comment per case; SYSTEM FLUSH LOGS before one observation query",
+    "empty_missing_invisible": "empty groups, same as independent legacy query",
+    "empty_request_sql": 0,
+    "latency_benchmark": false,
+    "legacy_fields_and_order_match": true,
+    "limitations": [
+      "ClickHouse 25.8 LTS Linux arm64 only",
+      "No Tauri IPC, network p95, TLS, SSH, distributed cluster or broad version matrix",
+      "Metadata invisibility is successful filtering under legacy ClickHouse semantics, not an ACL error"
+    ],
+    "oversized_257_sql": 0,
+    "passed": true,
+    "permission_matrix": {
+      "invalid_password": "whole batch error, no partial success",
+      "no_object_grants": "all requested groups empty",
+      "owner": "all requested visible objects",
+      "single_table_select": "only granted table visible; hidden data denied"
+    },
+    "requested_databases": 6,
+    "server_counters": [
+      {
+        "calls": 1,
+        "case": "none_multi",
+        "failures": 0
+      },
+      {
+        "calls": 1,
+        "case": "owner_256",
+        "failures": 0
+      },
+      {
+        "calls": 1,
+        "case": "owner_multi",
+        "failures": 0
+      },
+      {
+        "calls": 1,
+        "case": "owner_one",
+        "failures": 0
+      },
+      {
+        "calls": 1,
+        "case": "reader_multi",
+        "failures": 0
+      }
+    ],
+    "server_version": "25.8.33.6",
+    "sql_calls_in_iteration": false,
+    "table_view_and_null_statistics": true,
+    "unique_databases": 5
+  },
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--locked",
+    "--manifest-path",
+    "src-tauri/Cargo.toml",
+    "--lib",
+    "db::metadata_clickhouse_tests::metadata_batch_isolated_clickhouse_catalog",
+    "--",
+    "--exact",
+    "--ignored",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "source_head": "e43940a50159cf6e075c49f5faf115e19c047958",
+  "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+  "legacy_source_commit": "17e37adaa84cc7c79d53430432db726f6a81e768",
+  "cleanup": {
+    "status": "removed",
+    "owned_container_absent": true,
+    "anonymous_volumes_removed": true,
+    "label_rechecked": true
+  },
+  "credential_file_removed": true,
+  "source_sha256": {
+    "scripts/performance/metadata-clickhouse-validation.py": "757ce8d1c394de7f7c0af0eecec91739077f0f8eb508370167f74e91b8adce96",
+    "scripts/performance/test_metadata_clickhouse_validation.py": "4ea16e305eb91716d1a5ffe59e4cfadc7765ed3d64f6edc3649e7ec21333d9a8",
+    "src-tauri/src/db/metadata_clickhouse_tests.rs": "442217b8b7ad57a27ef85a591bffe1f4e3bcb748db9e52da172ec2bbf7bc572d",
+    "src-tauri/src/db/clickhouse.rs": "5bbe14d65bc74597b6235d0b44acc2a3913ff70b03161b53be4959f992907e85",
+    "src-tauri/src/db/metadata_batch.rs": "cccd37a7acc8738ebf74e58da836dea60b86b778a2916d23d63e72c73f867ad6",
+    "src-tauri/src/models/types.rs": "eab35aa2df0e30ce9eefdea2c22b7c959a8241d672448eb83d08e9afcc7f5d5e"
+  }
+}

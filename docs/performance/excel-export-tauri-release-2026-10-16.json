@@ -1,0 +1,2754 @@
+{
+  "schemaVersion": 2,
+  "recordedAt": "2026-10-16T02:38:12.696Z",
+  "warmups": 5,
+  "repetitions": 20,
+  "cases": [
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 0.765083,
+      "iteration": 1,
+      "roundTripMs": 1,
+      "rustProcessingMs": 0.234917
+    },
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 0.783458,
+      "iteration": 2,
+      "roundTripMs": 1,
+      "rustProcessingMs": 0.216542
+    },
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 0.783791,
+      "iteration": 3,
+      "roundTripMs": 1,
+      "rustProcessingMs": 0.216209
+    },
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 0.744792,
+      "iteration": 4,
+      "roundTripMs": 1,
+      "rustProcessingMs": 0.255208
+    },
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 0.765125,
+      "iteration": 5,
+      "roundTripMs": 1,
+      "rustProcessingMs": 0.234875
+    },
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 1.43725,
+      "iteration": 6,
+      "roundTripMs": 2,
+      "rustProcessingMs": 0.56275
+    },
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 0.515417,
+      "iteration": 7,
+      "roundTripMs": 1,
+      "rustProcessingMs": 0.484583
+    },
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 0.771916,
+      "iteration": 8,
+      "roundTripMs": 1,
+      "rustProcessingMs": 0.228084
+    },
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 1.375416,
+      "iteration": 9,
+      "roundTripMs": 2,
+      "rustProcessingMs": 0.6245839999999999
+    },
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 0.545584,
+      "iteration": 10,
+      "roundTripMs": 1,
+      "rustProcessingMs": 0.454416
+    },
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 0.786041,
+      "iteration": 11,
+      "roundTripMs": 1,
+      "rustProcessingMs": 0.213959
+    },
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 0.7643340000000001,
+      "iteration": 12,
+      "roundTripMs": 1,
+      "rustProcessingMs": 0.235666
+    },
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 0.478333,
+      "iteration": 13,
+      "roundTripMs": 1,
+      "rustProcessingMs": 0.521667
+    },
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 0.673,
+      "iteration": 14,
+      "roundTripMs": 1,
+      "rustProcessingMs": 0.32699999999999996
+    },
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 0.7541249999999999,
+      "iteration": 15,
+      "roundTripMs": 1,
+      "rustProcessingMs": 0.245875
+    },
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 0.61775,
+      "iteration": 16,
+      "roundTripMs": 1,
+      "rustProcessingMs": 0.38225
+    },
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": -0.23425,
+      "iteration": 17,
+      "roundTripMs": 0,
+      "rustProcessingMs": 0.23425
+    },
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 0.7665420000000001,
+      "iteration": 18,
+      "roundTripMs": 1,
+      "rustProcessingMs": 0.233458
+    },
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 0.737042,
+      "iteration": 19,
+      "roundTripMs": 1,
+      "rustProcessingMs": 0.26295799999999997
+    },
+    {
+      "byteLength": 1048576,
+      "ipcWaitingAndOverheadMs": 0.795833,
+      "iteration": 20,
+      "roundTripMs": 1,
+      "rustProcessingMs": 0.204167
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 2.033125,
+      "iteration": 1,
+      "roundTripMs": 4,
+      "rustProcessingMs": 1.966875
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 2.8983749999999997,
+      "iteration": 2,
+      "roundTripMs": 5,
+      "rustProcessingMs": 2.1016250000000003
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 3.569292,
+      "iteration": 3,
+      "roundTripMs": 6,
+      "rustProcessingMs": 2.430708
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 3.1790000000000003,
+      "iteration": 4,
+      "roundTripMs": 5,
+      "rustProcessingMs": 1.821
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 3.204833,
+      "iteration": 5,
+      "roundTripMs": 5,
+      "rustProcessingMs": 1.7951670000000002
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 2.978584,
+      "iteration": 6,
+      "roundTripMs": 5,
+      "rustProcessingMs": 2.021416
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 2.391333,
+      "iteration": 7,
+      "roundTripMs": 4,
+      "rustProcessingMs": 1.608667
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 2.745792,
+      "iteration": 8,
+      "roundTripMs": 5,
+      "rustProcessingMs": 2.254208
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 2.35475,
+      "iteration": 9,
+      "roundTripMs": 4,
+      "rustProcessingMs": 1.64525
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 3.287709,
+      "iteration": 10,
+      "roundTripMs": 5,
+      "rustProcessingMs": 1.712291
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 3.0084160000000004,
+      "iteration": 11,
+      "roundTripMs": 5,
+      "rustProcessingMs": 1.991584
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 2.29525,
+      "iteration": 12,
+      "roundTripMs": 4,
+      "rustProcessingMs": 1.7047500000000002
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 3.371417,
+      "iteration": 13,
+      "roundTripMs": 5,
+      "rustProcessingMs": 1.628583
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 3.0024170000000003,
+      "iteration": 14,
+      "roundTripMs": 5,
+      "rustProcessingMs": 1.997583
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 2.268875,
+      "iteration": 15,
+      "roundTripMs": 4,
+      "rustProcessingMs": 1.731125
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 3.011708,
+      "iteration": 16,
+      "roundTripMs": 5,
+      "rustProcessingMs": 1.988292
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 3.0599999999999996,
+      "iteration": 17,
+      "roundTripMs": 5,
+      "rustProcessingMs": 1.94
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 2.212459,
+      "iteration": 18,
+      "roundTripMs": 4,
+      "rustProcessingMs": 1.7875409999999998
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 2.005625,
+      "iteration": 19,
+      "roundTripMs": 4,
+      "rustProcessingMs": 1.994375
+    },
+    {
+      "byteLength": 10485760,
+      "ipcWaitingAndOverheadMs": 3.109,
+      "iteration": 20,
+      "roundTripMs": 5,
+      "rustProcessingMs": 1.891
+    }
+  ],
+  "cspViolations": [],
+  "diskCases": [
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 0.16387500000000002,
+      "iteration": 1
+    },
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 0.1405,
+      "iteration": 2
+    },
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 0.15083300000000002,
+      "iteration": 3
+    },
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 0.134792,
+      "iteration": 4
+    },
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 0.120208,
+      "iteration": 5
+    },
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 0.140166,
+      "iteration": 6
+    },
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 0.141083,
+      "iteration": 7
+    },
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 0.133125,
+      "iteration": 8
+    },
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 0.12670800000000002,
+      "iteration": 9
+    },
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 0.495875,
+      "iteration": 10
+    },
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 0.129458,
+      "iteration": 11
+    },
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 0.142875,
+      "iteration": 12
+    },
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 0.14475,
+      "iteration": 13
+    },
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 0.145375,
+      "iteration": 14
+    },
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 0.134958,
+      "iteration": 15
+    },
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 0.136042,
+      "iteration": 16
+    },
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 0.124583,
+      "iteration": 17
+    },
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 0.13466699999999998,
+      "iteration": 18
+    },
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 0.12774999999999995,
+      "iteration": 19
+    },
+    {
+      "byteLength": 1048576,
+      "fsWriteMs": 0.13504200000000002,
+      "iteration": 20
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 1.6713749999999998,
+      "iteration": 1
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 1.334166,
+      "iteration": 2
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 1.49525,
+      "iteration": 3
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 1.466833,
+      "iteration": 4
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 1.295542,
+      "iteration": 5
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 1.531167,
+      "iteration": 6
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 1.499916,
+      "iteration": 7
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 1.513917,
+      "iteration": 8
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 1.813458,
+      "iteration": 9
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 1.457125,
+      "iteration": 10
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 1.5435,
+      "iteration": 11
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 1.498583,
+      "iteration": 12
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 2.1423330000000003,
+      "iteration": 13
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 1.49,
+      "iteration": 14
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 1.549166,
+      "iteration": 15
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 1.415875,
+      "iteration": 16
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 1.6015,
+      "iteration": 17
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 1.5026659999999998,
+      "iteration": 18
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 1.569458,
+      "iteration": 19
+    },
+    {
+      "byteLength": 10485760,
+      "fsWriteMs": 2.374208,
+      "iteration": 20
+    }
+  ],
+  "errors": {
+    "missingDirectoryError": "写入文件失败: No such file or directory (os error 2)",
+    "permissionError": "写入文件失败: Permission denied (os error 13)"
+  },
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+  "validations": {
+    "cancelledIdRejected": true,
+    "cancelledWritePreservesFile": true,
+    "ioFailureReportedAndRegistrationCleared": true,
+    "overwriteTruncates": true,
+    "permissionFailureReportedAndRegistrationCleared": true,
+    "rawZeroAndFFBytes": true,
+    "repeatedIdRejected": true,
+    "unicodeAndSpacePath": true,
+    "permissionFailurePreservesFile": true
+  },
+  "worker": {
+    "arrayBufferReceived": true,
+    "byteLength": 3607,
+    "protocol": "tauri:",
+    "writtenThroughProductionCommand": true,
+    "productionAsset": "excelExport.worker-BBBJPQfl.js",
+    "productionAssetSha256": "495044015b1ce67956587671c8b5d8cac912cf30ce1c1c8ab5f1589940c928e1",
+    "workbookSha256": "54afdef20528f4278d2451490a1d7f9599b007ef62229a08f2636fc43b62c4f6",
+    "workbookValidation": {
+      "method": "ZIP 解压与 namespace XML 解析，关系定位工作表并逐坐标/类型比较",
+      "sheets": [
+        {
+          "name": "真实_导出",
+          "path": "xl/worksheets/sheet1.xml",
+          "rows": 3,
+          "columns": 5,
+          "coordinatesChecked": 15
+        },
+        {
+          "name": "明细",
+          "path": "xl/worksheets/sheet2.xml",
+          "rows": 2,
+          "columns": 1,
+          "coordinatesChecked": 2
+        }
+      ],
+      "sheetNamesAndOrder": true,
+      "columnOrder": true,
+      "bigIntegersAsStrings": true,
+      "datesAsISOString": true,
+      "nullAsBlank": true,
+      "unicodeAndXmlEscaping": true,
+      "finalRows": true
+    }
+  },
+  "artifactIdentity": {
+    "kind": "isolated-tauri-example",
+    "mainApplication": false,
+    "gitHead": "e43940a50159cf6e075c49f5faf115e19c047958",
+    "gitStatus": "M docs/superpowers/plans/2026-10-13-performance-remaining-tasks.md\n M scripts/performance/excel-export-tauri.mjs\n M scripts/performance/excel-export-tauri.rs\n M scripts/performance/excel-export-tauri.sh\n M scripts/performance/metadata-postgres-validation.py\n M src-tauri/Cargo.toml\n M src-tauri/src/commands/connection.rs\n M src-tauri/src/commands/data.rs\n M src-tauri/src/commands/preferences.rs\n M src-tauri/src/commands/temporary_database.rs\n M src-tauri/src/crypto/mod.rs\n M src-tauri/src/db/connection.rs\n M src-tauri/src/db/metadata_pg_tests.rs\n M src-tauri/src/db/mod.rs\n M src-tauri/src/lib.rs\n?? docs/performance/desktop-isolation-2026-10-15.md\n?? docs/performance/excel-release-runner-2026-10-15.md\n?? docs/performance/mysql-budget-8.4-2026-10-15.json\n?? docs/performance/mysql-budget-validation-2026-10-15.md\n?? docs/performance/remaining-local-validation-2026-10-16.md\n?? docs/performance/remaining-postgres-pagination-2026-10-15.md\n?? scripts/performance/desktop-app.mjs\n?? scripts/performance/desktop-entry.tsx\n?? scripts/performance/desktop-frontend-build.mjs\n?? scripts/performance/desktop-frontend.node-test.mjs\n?? scripts/performance/desktop-tauri-invoke.mjs\n?? scripts/performance/excel-export-validation.mjs\n?? scripts/performance/excel-export-validation.node-test.mjs\n?? scripts/performance/mysql-budget-validation.py\n?? scripts/performance/test_mysql_budget_validation.py\n?? src-tauri/examples/\n?? src-tauri/src/commands/data_mysql_budget_tests.rs\n?? src-tauri/src/db/metadata_pg_pagination_tests.rs\n?? src-tauri/src/performance_desktop.rs",
+    "sources": {
+      "manifestSha256": "809e22944f63ecd011f4fed7381a0b0752f80f21c346c83fd71f22492dcf0cac",
+      "files": [
+        {
+          "path": "package-lock.json",
+          "sha256": "0e63064b91fe0df1973c12df99584612d26c19c2ae2f77cd03ce075f5070305d"
+        },
+        {
+          "path": "package.json",
+          "sha256": "7a109317b53255c4fe91bf2fafa985a8e495dac2d5729bccfcea423ed238de6f"
+        },
+        {
+          "path": "scripts/performance/excel-export-tauri.mjs",
+          "sha256": "2c851ab8d1bd6dd8ce7eca44f6532001d61bb3d50fa428ce79b69ddcb8055ecf"
+        },
+        {
+          "path": "scripts/performance/excel-export-tauri.rs",
+          "sha256": "70bdd298b1fbdc049a5c9d371fd7394eb867fb3b4b1b6d96e9c3ac936d96ad7b"
+        },
+        {
+          "path": "scripts/performance/excel-export-tauri.sh",
+          "sha256": "4ff34b355200946a56f183497410fa8e2a1b087b066acde188ae0d177808f0fe"
+        },
+        {
+          "path": "scripts/performance/excel-export-validation.mjs",
+          "sha256": "35dff13f7173962661fdc956c7af0d14b3d3f8f6de4073737cfd380d84a4e598"
+        },
+        {
+          "path": "src-tauri/Cargo.lock",
+          "sha256": "7dc8410823fa4ef430e748953fb9a08409d0e397448ea67c4a53b073f81cff73"
+        },
+        {
+          "path": "src-tauri/Cargo.toml",
+          "sha256": "498a55e43ec5b72c47df1ed61d18fb7c6baa9bf00ab8ccf016ea888914669ad6"
+        },
+        {
+          "path": "src-tauri/build.rs",
+          "sha256": "487059eaf8a947b80f20a9aacac038a5047b2ad69d2401b827376c67d6fe847f"
+        },
+        {
+          "path": "src-tauri/src/commands/connection.rs",
+          "sha256": "bdb962a7fdf0dd401e5048ba5ae1b26a8bdf0e40fbf8e10bd8d1a710f4435879"
+        },
+        {
+          "path": "src-tauri/src/commands/data.rs",
+          "sha256": "5315bbab88b0e8f00fe01eb163b445e9c209e056f402581a0609f894b1d9ec77"
+        },
+        {
+          "path": "src-tauri/src/commands/data_batch_tests.rs",
+          "sha256": "1aa85051cb39ec18bfa7cd4998593f6e0335c20ceb67492bdde4771e9b84be9f"
+        },
+        {
+          "path": "src-tauri/src/commands/data_mysql_budget_tests.rs",
+          "sha256": "9dc428b62010854590cf63a625841d8950ab18fa1a520c9e37a2e97b713408d6"
+        },
+        {
+          "path": "src-tauri/src/commands/database/batch_tests.rs",
+          "sha256": "5b4d5c0e0944bc79294ff84e64c2cf0a7fdb999e5fb067970e7c6ee3e208500b"
+        },
+        {
+          "path": "src-tauri/src/commands/database/column_ops.rs",
+          "sha256": "374ca66f93180ce87a425bb8f88cc6c33fb8a9d3554e5fcde7329932a530e267"
+        },
+        {
+          "path": "src-tauri/src/commands/database/mod.rs",
+          "sha256": "7df2863fe0d9375fd52954a96cb9a44618de36403963d05425d04c1bc3ebb50d"
+        },
+        {
+          "path": "src-tauri/src/commands/database/mysql_catalog_access.rs",
+          "sha256": "72f4c5e1014823b74795fee24adcc6c9d598545c4351cb068fa3eedb00517646"
+        },
+        {
+          "path": "src-tauri/src/commands/database/structure_preview.rs",
+          "sha256": "ade879707c1466589da9b3a39829ad8e83be7de2514919a1f22bc8e00f39c8cc"
+        },
+        {
+          "path": "src-tauri/src/commands/database_compare.rs",
+          "sha256": "b59514c5057e10eefe5df27095b8fe6e5780cb4bc9ca6722d57c98be3390215c"
+        },
+        {
+          "path": "src-tauri/src/commands/database_sync.rs",
+          "sha256": "655647aa32a6ea04ef6940636f1f7d01f342531154b65ed52cafeb8c351d599b"
+        },
+        {
+          "path": "src-tauri/src/commands/file_io.rs",
+          "sha256": "e24dceca9a9d45f12f19036366a4c93f3d0e382572631393e940b14af2ca9473"
+        },
+        {
+          "path": "src-tauri/src/commands/foreign_key.rs",
+          "sha256": "2c775f2a37d528ccc7b23714e6674748dd9ac340d1b3796d54257be72251b66f"
+        },
+        {
+          "path": "src-tauri/src/commands/github_issue.rs",
+          "sha256": "8584a3dbccab08e6dc6ddc63cdb02dab19fd6d9a51921b6568e475078e7d7f74"
+        },
+        {
+          "path": "src-tauri/src/commands/index_cmd.rs",
+          "sha256": "f224d230b0778afd14ce317d152b40d620472ff8f00b0fe14561426470e25d96"
+        },
+        {
+          "path": "src-tauri/src/commands/mod.rs",
+          "sha256": "4ee7b3bf8568b6f2b433f46cffed6848dab26d6c5598e320ccd68f9473887824"
+        },
+        {
+          "path": "src-tauri/src/commands/preferences.rs",
+          "sha256": "ad277c794be935098aaec524f511e4ef621dbea96e5e959c1a168ed78c0b8246"
+        },
+        {
+          "path": "src-tauri/src/commands/routine_event.rs",
+          "sha256": "fbced78b67a8ad22ce5cca694f37dcd5fa2c481a1df2372d0b4f43228ec60eea"
+        },
+        {
+          "path": "src-tauri/src/commands/runtime.rs",
+          "sha256": "1d113c0aa78af774c345bd3a41d9f573859192ea9818f3cf5e6d1afe8465ad62"
+        },
+        {
+          "path": "src-tauri/src/commands/sql_file.rs",
+          "sha256": "417e73ec4c799c52f5a3c2342ec91e90be37f1a56d318665594c9b59aa837a97"
+        },
+        {
+          "path": "src-tauri/src/commands/temporary_database.rs",
+          "sha256": "a27342075e9e98325c851483547dab93ebf9cb362ae31b5130adf6bd869bf148"
+        },
+        {
+          "path": "src-tauri/src/commands/trigger.rs",
+          "sha256": "fe196ec1d2c3d6e9bf2e564bd1fe50c4d4baaa13fb42b5e98a481314e4653420"
+        },
+        {
+          "path": "src-tauri/src/crypto/mod.rs",
+          "sha256": "a173cc411da8af5762b81c6c59b456933d667802c734c9ccc4cebe45b7b3be0a"
+        },
+        {
+          "path": "src-tauri/src/db/adapter.rs",
+          "sha256": "a57f9ae62760c705b6794054f6150cae7e3cd91ef6d8adff460cc21baa9c0846"
+        },
+        {
+          "path": "src-tauri/src/db/batch_update.rs",
+          "sha256": "148fba77a7f7a3c1c69a18e0d0bf7d1e630e0a730b2df006dc3454c35fd0187f"
+        },
+        {
+          "path": "src-tauri/src/db/clickhouse.rs",
+          "sha256": "5bbe14d65bc74597b6235d0b44acc2a3913ff70b03161b53be4959f992907e85"
+        },
+        {
+          "path": "src-tauri/src/db/connection.rs",
+          "sha256": "e2bc63fdf8d4afd083d6b7ce60b5b38e4604c067ebd240bf723f33a70fc00ed1"
+        },
+        {
+          "path": "src-tauri/src/db/dialect.rs",
+          "sha256": "86725c633eac1ddc5fcd37c07187a4bdeae82dde970d3a0db4fd9f6a4a700a0a"
+        },
+        {
+          "path": "src-tauri/src/db/metadata_batch.rs",
+          "sha256": "cccd37a7acc8738ebf74e58da836dea60b86b778a2916d23d63e72c73f867ad6"
+        },
+        {
+          "path": "src-tauri/src/db/metadata_bench_tests.rs",
+          "sha256": "ff54d68aee3519cad020574ee05de4700256418cd26595c67b28487aeb91ccb7"
+        },
+        {
+          "path": "src-tauri/src/db/metadata_mysql8_tests.rs",
+          "sha256": "272014ed28b556560f7443632ea006f66cc35e5cfa535e396eea27054d761f68"
+        },
+        {
+          "path": "src-tauri/src/db/metadata_pg_pagination_tests.rs",
+          "sha256": "b8410e42913ec2864a024f37bc7126dc2455c48cecc2df9d105882deafb9a02f"
+        },
+        {
+          "path": "src-tauri/src/db/metadata_pg_tests.rs",
+          "sha256": "f876d541342359d19e4a1c1c596d7035e5ef104daaf130faa59eca2506e9ddad"
+        },
+        {
+          "path": "src-tauri/src/db/mod.rs",
+          "sha256": "69f26849d3c65f950ff2284f15ddc3c69481084f89d1ebcbb65c8527362f8fb2"
+        },
+        {
+          "path": "src-tauri/src/db/mysql_deferred_fields.rs",
+          "sha256": "57bd0577e6e0086d8564c6e932ded16d0b65df70deec23f6bd9342f32cb76d25"
+        },
+        {
+          "path": "src-tauri/src/db/mysql_query.rs",
+          "sha256": "9b3b154905216b650ff70f358cf0e96b9c322bea7f857d21d3f557d7224af7df"
+        },
+        {
+          "path": "src-tauri/src/db/mysql_query_bench_tests.rs",
+          "sha256": "de012a002694b9dbb508e48959e6dba68671635921a9efe7ab919fcbb80d14be"
+        },
+        {
+          "path": "src-tauri/src/db/mysql_query_tests.rs",
+          "sha256": "dd05ee06f8db1a0661caa979d64cc72d88d57c6cf8d9b7c9dbd3b1a87dc05bfd"
+        },
+        {
+          "path": "src-tauri/src/db/postgres.rs",
+          "sha256": "3127d030f0f6c25cecd08fc5befd5cc1b56695c06f599b00387fe6b381809cab"
+        },
+        {
+          "path": "src-tauri/src/db/postgres_batch_tests.rs",
+          "sha256": "c8cf1af5a71af2e810184f58adaa0f31e7e0be46bd40d08e97f66c568182ada1"
+        },
+        {
+          "path": "src-tauri/src/db/postgres_ddl.rs",
+          "sha256": "ec63d119bf08bf02f35b59a960bd4454f6d128f94ccb5131a25e4e014c3b9fd9"
+        },
+        {
+          "path": "src-tauri/src/db/postgres_error.rs",
+          "sha256": "13cc22bebbdde6446ea75555c597131d61b668a62f7a723a042ec136ea30f956"
+        },
+        {
+          "path": "src-tauri/src/db/postgres_objects.rs",
+          "sha256": "03cc7e7d54bd40931351ea4639d22f2aef26446e8e51f0a9b4dc09f5c97e7823"
+        },
+        {
+          "path": "src-tauri/src/db/postgres_query_tests.rs",
+          "sha256": "7f0817217be69f7707fbda38417717c96ceb0be7ca2e4359e73c746d079ec244"
+        },
+        {
+          "path": "src-tauri/src/db/result_budget.rs",
+          "sha256": "9e5c634fb53fd696be0bcabf26d5e6d0242a8b56070aa1d92176c8ec1abfa0a6"
+        },
+        {
+          "path": "src-tauri/src/db/schema_compare/clickhouse.rs",
+          "sha256": "1944360bf4f7021f18b3aec8edd2a2a073258c054b281bad22abd7a53ceefb99"
+        },
+        {
+          "path": "src-tauri/src/db/schema_compare/mod.rs",
+          "sha256": "19167505cc118601eb44840457b5ec6e275531af9807c5de47262fa51cf08853"
+        },
+        {
+          "path": "src-tauri/src/db/schema_compare/mysql.rs",
+          "sha256": "9a221eb138a6c7db51d93a8f8a9ceed7e897feb658b525622307f421b7e16122"
+        },
+        {
+          "path": "src-tauri/src/db/schema_compare/postgres.rs",
+          "sha256": "bbaf08132e3a449db16c3b96bbc7ea920c7a953ca6185c9ec8f1485ab093a087"
+        },
+        {
+          "path": "src-tauri/src/db/schema_compare/sqlite.rs",
+          "sha256": "e3fb44ad143a35720e01695cb40cdf0502f73aeaf3fd6fc9084235c55ff00542"
+        },
+        {
+          "path": "src-tauri/src/db/schema_compare/sqlserver.rs",
+          "sha256": "28e5dfb80c8d5a3d97d5c05995d1175948015ba23f6fecea062af5264d75216c"
+        },
+        {
+          "path": "src-tauri/src/db/schema_sync/clickhouse.rs",
+          "sha256": "c344140614b4eab8b8a25674e36f7df07cbaca797bbefd5029305e980483c262"
+        },
+        {
+          "path": "src-tauri/src/db/schema_sync/mod.rs",
+          "sha256": "3a54ad7eab2b6101cb662aa8c7281d801e2d55074cc878a353d1f3cce6c10be9"
+        },
+        {
+          "path": "src-tauri/src/db/schema_sync/mysql.rs",
+          "sha256": "c3b5c2cf138b4a0fc2dfec093804398f197d92dee2d272ed5f2c8951dbde908a"
+        },
+        {
+          "path": "src-tauri/src/db/schema_sync/postgres.rs",
+          "sha256": "405200ebb1ac1088c684dbd3048a888b7b78f27059993b06ede3238a5b1a55f1"
+        },
+        {
+          "path": "src-tauri/src/db/schema_sync/sqlite.rs",
+          "sha256": "7fbbc9ee5c0ddbc711f5390f691e5088b1ebcf089da7670e580edc855a657a6d"
+        },
+        {
+          "path": "src-tauri/src/db/schema_sync/sqlserver.rs",
+          "sha256": "11d951f904337f406c7bc2b4e5ac1855bda1256ad3bfa8bbb5fcbe34326c7aaf"
+        },
+        {
+          "path": "src-tauri/src/db/sql_script.rs",
+          "sha256": "9fa74a43820cb5f663f94ff0d3af513f006231247cca2b299d689b63bca61c4e"
+        },
+        {
+          "path": "src-tauri/src/db/sql_utils.rs",
+          "sha256": "1eadf5562c2cd1703ba963335c3e2a1a608d2edcd55a9066fb57e74f2a31fe44"
+        },
+        {
+          "path": "src-tauri/src/db/sqlite.rs",
+          "sha256": "bf0cb9c2c61c7302a3cc8df90174b49503ae79d48988e86292024a41a0f7c98e"
+        },
+        {
+          "path": "src-tauri/src/db/sqlserver.rs",
+          "sha256": "595bb599c938c736c7d31169478efeb4efa37bc98093ef914bba081610b1c28c"
+        },
+        {
+          "path": "src-tauri/src/db/sqlserver_ddl.rs",
+          "sha256": "a72fd59ad9d72b961bed0cbfc38238387da22ecb7263a8231e0ceaa22fed1ff0"
+        },
+        {
+          "path": "src-tauri/src/db/sqlserver_objects.rs",
+          "sha256": "c418a0048b09d0c8b2e3d32a8a0ef16a11338dd80cb0894980591e83ae1db458"
+        },
+        {
+          "path": "src-tauri/src/db/ssh_tunnel/mod.rs",
+          "sha256": "d5f69db4add5b78a8b8ef16104ae6b4f8de25b695f502b124d4e7000383de4e3"
+        },
+        {
+          "path": "src-tauri/src/db/ssh_tunnel/openssh_tunnel.rs",
+          "sha256": "92791f73c801c54df932db383ef7eccec8721a6c6c311c9d57a8ced7c2818a66"
+        },
+        {
+          "path": "src-tauri/src/db/ssh_tunnel/russh_tunnel.rs",
+          "sha256": "86fb73d3e036167b9b25c27c4a8876c6f4d1a478ef8fdfc865204cff5b59c2a8"
+        },
+        {
+          "path": "src-tauri/src/db/table_pagination.rs",
+          "sha256": "78f1b56e28cb43010df1627cb6e34ba3f45f03d93556d9bc36b00ddbca26aeed"
+        },
+        {
+          "path": "src-tauri/src/db/table_query.rs",
+          "sha256": "2730fe8d2675540b57fb99537e35fd32ce60be2b11ac4f0b12c900bbde197e4e"
+        },
+        {
+          "path": "src-tauri/src/lib.rs",
+          "sha256": "6b67aee8ca124f668f1424a17ac4aa9c9cdc64c42a9e91b0ba72a0a18541dc90"
+        },
+        {
+          "path": "src-tauri/src/main.rs",
+          "sha256": "4ae5411e6b7aa35b9dd07bdb33c71333f4da8c4d90e1ddeb92342ef68ca2e7ce"
+        },
+        {
+          "path": "src-tauri/src/models/mod.rs",
+          "sha256": "97d44f2fb0ef7fb79cc8f7c04438d34bc262a99774abb427cd310bceb56c7107"
+        },
+        {
+          "path": "src-tauri/src/models/types.rs",
+          "sha256": "eab35aa2df0e30ce9eefdea2c22b7c959a8241d672448eb83d08e9afcc7f5d5e"
+        },
+        {
+          "path": "src-tauri/src/performance_desktop.rs",
+          "sha256": "eebb28c327a4cd66437a8710edbb3ba0b7cb76c7288b844c4ab58aae98b6788b"
+        },
+        {
+          "path": "src-tauri/src/util/mod.rs",
+          "sha256": "8c687e69dcc0fedf82c54c371b10f6230b454de4b757298d2373b144af3def00"
+        },
+        {
+          "path": "src-tauri/src/util/secure_fs.rs",
+          "sha256": "60a16f7141631417d6614338d303d819db9d02cc820ea99ae45700695568ed00"
+        },
+        {
+          "path": "src-tauri/tauri.conf.json",
+          "sha256": "7f6016e93777893129805a5e5ca62d70938c38602f48c6e72142af965b01144d"
+        },
+        {
+          "path": "src/App.css",
+          "sha256": "29495b750a1822b066eee5e3ce5b70723d4a9a7ee88df2b27ba604cb1ed2e1e8"
+        },
+        {
+          "path": "src/App.tsx",
+          "sha256": "40b7876357913b8648ef0361f84bc462e677afe790821ce26229c6b73ddeae52"
+        },
+        {
+          "path": "src/__tests__/AppLazyFeatures.test.tsx",
+          "sha256": "bbfce2734d13267a260d49011526c1b777f6d5cf40deb353d50ac9c0b17c61f6"
+        },
+        {
+          "path": "src/__tests__/AppStateSubscriptions.test.tsx",
+          "sha256": "55ed7f4646518a1902ce4b90e7b9c744e903c7e942f04effc229926ff2932915"
+        },
+        {
+          "path": "src/__tests__/ConnectionFormDatabaseType.test.tsx",
+          "sha256": "e0565b2bc0c6369ac079a2092608d3eb2f8d594bcb7f4f2498357e51ff321c46"
+        },
+        {
+          "path": "src/__tests__/ConnectionListGroups.test.tsx",
+          "sha256": "e626e961eef2a13327bd6652b4e3c39af56cba59e78085653f1c8b9b6764b86a"
+        },
+        {
+          "path": "src/__tests__/ConnectionSecuritySections.test.tsx",
+          "sha256": "63f886ed41e6adaedb3018a3d1f31e3291755b0c70fea9f2843dea871ff9c00f"
+        },
+        {
+          "path": "src/__tests__/CrashIssueUploadModal.test.tsx",
+          "sha256": "6ca3ae06915518653c941d020685e01be93c4f9e332d7b2ddf30f68816fcb2d6"
+        },
+        {
+          "path": "src/__tests__/CreateTableTypeDefaults.test.tsx",
+          "sha256": "37b13bbb4a57941ac2aabe32d5651958ec3319474e34e9f2f9393d2cbe3c1b2a"
+        },
+        {
+          "path": "src/__tests__/DatabaseCompareModal.test.tsx",
+          "sha256": "1e61ebd2e2319a317685642803152555e15d40aafff94eb401bc99fbe5f433bc"
+        },
+        {
+          "path": "src/__tests__/DatabaseCompareResults.test.tsx",
+          "sha256": "d52a0a227653543e7beffa16d500c25c0e6b31978cf2ee073588f41b5149c119"
+        },
+        {
+          "path": "src/__tests__/DatabaseOverview.test.tsx",
+          "sha256": "6e4922f686a430ff8a1df43d38f9ec982a563b42a2c14ad3330211f2d8604941"
+        },
+        {
+          "path": "src/__tests__/DatabaseOverviewLazy.test.tsx",
+          "sha256": "57543dd58794833769c4ae9759c84cd9aad48c22535c547cf30b52cfca01c00f"
+        },
+        {
+          "path": "src/__tests__/DatabaseOverviewSearch.test.tsx",
+          "sha256": "fec3b822f21050d95f11825e1d056eb4e9ede3e3fa133b8574fb487e04d55fec"
+        },
+        {
+          "path": "src/__tests__/DatabaseSqlFileActions.test.tsx",
+          "sha256": "170d7878a0cb06568666d1a62f6d2e143f96745d526a93529ef5ac8e236754e5"
+        },
+        {
+          "path": "src/__tests__/DatabaseSyncPreviewModal.test.tsx",
+          "sha256": "3e670daf9c17bf5f2e05989ba952d0ef91d8a2dde7cce72d99499a84ccc05787"
+        },
+        {
+          "path": "src/__tests__/DatabaseTreeCapabilities.test.tsx",
+          "sha256": "a8ddbee0a9cb6279b4947b094029801a72712ace9413184d774e8dc4039fc13a"
+        },
+        {
+          "path": "src/__tests__/DeferredFeatureBoundary.test.tsx",
+          "sha256": "736dbf1d72e87ff6b768edb1b8a7e2e477312e5771ee0bd4f1a6782e20cdeaf7"
+        },
+        {
+          "path": "src/__tests__/EditableCellDeferred.test.tsx",
+          "sha256": "de3d6349a5dfd2f5811c9deba8f7544f318f32ae7c56a44077262862fb3d0e27"
+        },
+        {
+          "path": "src/__tests__/ErrorBoundary.test.tsx",
+          "sha256": "903af1431be3689f630f9a3b080614db58d414542adadebccbee73d4861297be"
+        },
+        {
+          "path": "src/__tests__/FavoriteTables.test.tsx",
+          "sha256": "526745138b8d27bf18a8ca3967c1bd793db882698c8d3328c82493d55255feae"
+        },
+        {
+          "path": "src/__tests__/ForeignKeyListDiagram.test.tsx",
+          "sha256": "a9596f74e3160e25a78024af729a1ff96339663f67ebf17b9da1cb81eb20a03d"
+        },
+        {
+          "path": "src/__tests__/MermaidBlock.test.tsx",
+          "sha256": "a70b718bbc7e5bfde738555c80a929840d497496f0fa64548ac07a4aa20d35d8"
+        },
+        {
+          "path": "src/__tests__/ObjectEditorSqlPreview.test.tsx",
+          "sha256": "b48c69cc508aafb8daa6963b4378db2390b2b3e986550fe201a3bdc9a7c64edb"
+        },
+        {
+          "path": "src/__tests__/ObjectWriteGuards.test.tsx",
+          "sha256": "add587af150fe3aa67029d7fd4fc7625b71924f7a03d42d58642a5196d9c77dc"
+        },
+        {
+          "path": "src/__tests__/PostgresDatabaseCreateModal.test.tsx",
+          "sha256": "fb71e2175c3ef2bfaef2b404df11169b976655ce32eaa3328c9a059d38a7529c"
+        },
+        {
+          "path": "src/__tests__/PostgresTableStructure.test.tsx",
+          "sha256": "80eeb9670729cf6e0f7568febb8dce2100330cd4ca94a3df98b5e0043fd54c84"
+        },
+        {
+          "path": "src/__tests__/ProjectIntroModal.test.tsx",
+          "sha256": "7d9941baa93e71c390e91bc1c76968aaf754da1d542cd1f1bc3e7e8eab1eb406"
+        },
+        {
+          "path": "src/__tests__/ProjectIntroTrigger.test.tsx",
+          "sha256": "18c17fcde7a2215c4f6b5ba630be377bf2f68d67c1ad1df07649a6a4c83286d9"
+        },
+        {
+          "path": "src/__tests__/ResizableTableHeaderCell.test.tsx",
+          "sha256": "3648133649c352a1856c1caf301c313b9740109170bb017755148518458e1586"
+        },
+        {
+          "path": "src/__tests__/SQLiteCreateTableModal.test.tsx",
+          "sha256": "ad69a954e58a6e12709cacd34978ed9e5311b6ea5ca2333c58c058ae1963c68e"
+        },
+        {
+          "path": "src/__tests__/SQLiteTableStructure.test.tsx",
+          "sha256": "5716e9e291a8863c833d0698fecc6886b3ff7909bb8d96d945c7ece40aefcfeb"
+        },
+        {
+          "path": "src/__tests__/SavedSqlDropdown.test.tsx",
+          "sha256": "773488907535fd8a599f7abb4dc587c390dee9e11781c710a80e01689c2ddaf3"
+        },
+        {
+          "path": "src/__tests__/SqlEditorCompletion.test.tsx",
+          "sha256": "5cb63bc158ae6b9b4a312c3bf1f81226dbc1a4b74b768d8f0924df9ca3000ec2"
+        },
+        {
+          "path": "src/__tests__/SqlEditorExecutionPersistence.test.tsx",
+          "sha256": "4c98538d6646751dd7f98823f5bc0ae0fabd6fc806fb1602658708a760f3388d"
+        },
+        {
+          "path": "src/__tests__/SqlEditorMultipleResults.test.tsx",
+          "sha256": "3d7476168611716958e5ec3cd6bf1b8062c097dc80409a13d4c12d783f1ab40f"
+        },
+        {
+          "path": "src/__tests__/SqlEditorResultPagination.test.tsx",
+          "sha256": "c4e433bec90870ba564fbd90ca993a1df6522ba93b2aa4271126cc89a8310f52"
+        },
+        {
+          "path": "src/__tests__/SqlEditorSavedSql.test.tsx",
+          "sha256": "c834e8055344569ed83206bfee5049f1cfe69437429354355d559d2a66ae9b6d"
+        },
+        {
+          "path": "src/__tests__/SqlStateSubscriptions.test.tsx",
+          "sha256": "95b19c0fca29c3835dbbf5e1dff3f561f5fbc06708dcea42a6f5a53e7a4a7c45"
+        },
+        {
+          "path": "src/__tests__/TableContentSwitchTable.test.tsx",
+          "sha256": "198709c2b911e8832d3d458fb864ebb5d1b3a37745cc55afcfb952091f7304ad"
+        },
+        {
+          "path": "src/__tests__/TableDataDeferred.test.tsx",
+          "sha256": "a61256e2d6206dd20d1cc65dec75d83a992547da48008f977621a0723ad8d4d5"
+        },
+        {
+          "path": "src/__tests__/TableDataSelection.test.tsx",
+          "sha256": "bca0598851b9adc51d27289766ddcba95c718c18ef50650c3a9fdd3e492d33a1"
+        },
+        {
+          "path": "src/__tests__/TableDataSlotResizeTab.test.tsx",
+          "sha256": "b88cc81ab21f9488c3a4a8373ff5cb88a3ac3a5c97dd9cecc9d2824f85380099"
+        },
+        {
+          "path": "src/__tests__/TableDataTemporal.test.tsx",
+          "sha256": "1dfb65166c0ceab154dd69fcc728cb0daa158d04e66c026f34406cb5dd2e1f9d"
+        },
+        {
+          "path": "src/__tests__/TableDetailSearchShortcut.test.tsx",
+          "sha256": "d0567a085a98fedb918d8aeef5af07037412bb6bb936e1c5b224a313e3bb7d09"
+        },
+        {
+          "path": "src/__tests__/TableSqlExamples.test.tsx",
+          "sha256": "bfa85b9d7dea22184859b5cd7b4059986b67e7ff3624107b70895c780c124292"
+        },
+        {
+          "path": "src/__tests__/TableStructureColumnDefaults.test.tsx",
+          "sha256": "fd15a98e25290180dc2c61999ac6264e5ebddb2640dac8427aa867b5ae56177f"
+        },
+        {
+          "path": "src/__tests__/TableStructureMetadata.test.tsx",
+          "sha256": "8c91ae84f34c7f43f395cbd6e885261650cb5dc499c8190e6e846ac6105f6e7a"
+        },
+        {
+          "path": "src/__tests__/TableStructureReorderConfirm.test.tsx",
+          "sha256": "99c5767eb38edf7e18eac962cf1242ca0a085746412a6d4c32e65ee2a914082b"
+        },
+        {
+          "path": "src/__tests__/TableStructureSqlPreview.test.tsx",
+          "sha256": "53ec1591a42d5b896d927f80827eb102fd871649c13d2b84be999c1f6d812d21"
+        },
+        {
+          "path": "src/__tests__/TableTabsBarSingleTab.test.tsx",
+          "sha256": "1e2a47e7e094bee24dd7c4e14e70815f08e2a80cf3c9470f901974e7b37aafa6"
+        },
+        {
+          "path": "src/__tests__/TemporalInput.test.tsx",
+          "sha256": "5f1321c079de94ebcd68f7f9d7d397040798d936c212c5fdd205e9bcc23469bc"
+        },
+        {
+          "path": "src/__tests__/VirtualDataTable.test.tsx",
+          "sha256": "da924dc1beb2d6edc0c140e1cd6e9fff4ea2a34d701e3bcca546972c6443b592"
+        },
+        {
+          "path": "src/__tests__/VirtualDataTableResize.test.tsx",
+          "sha256": "a392e476158ff07b6b72afa5112adbf6304a4e7f79f63ff343404ababf411cea"
+        },
+        {
+          "path": "src/__tests__/WhereFilterBuilder.test.tsx",
+          "sha256": "1072e192e4e0d2e74ca7fb969e5f3648aebb645452d6ee894359e0b7f8231b01"
+        },
+        {
+          "path": "src/__tests__/WindowLaunchSetting.test.tsx",
+          "sha256": "cafa91d4b79f94e577bb938b6668abb7bc0aa5ca30db1393d8a299af767d9d2e"
+        },
+        {
+          "path": "src/__tests__/antTableLayout.test.ts",
+          "sha256": "0b2b1f1350021668d104450f753b681b0cb4421f7e9f97ff25578f56f00c107c"
+        },
+        {
+          "path": "src/__tests__/columnAutoFitWidth.test.ts",
+          "sha256": "2eb81a32cc0ce16777e729b9ee4c9831b2fab5f7f81c07467739b3aa8612c901"
+        },
+        {
+          "path": "src/__tests__/columnTypeUtils.test.ts",
+          "sha256": "de0bd9d6350a762c1270a1cd658b95bdbc7c34af654506773b1082040374fccf"
+        },
+        {
+          "path": "src/__tests__/columnVisibility.test.ts",
+          "sha256": "ecc59cb0af23a3ec7bec2a1e282d6988db87429f674e57e0fef6e9e5e007eda3"
+        },
+        {
+          "path": "src/__tests__/connectionErrors.test.ts",
+          "sha256": "caa056e46e2e5fd8f6ceead16d0c9a9d134c5e462c04bb61e4d5ecf846430b7f"
+        },
+        {
+          "path": "src/__tests__/connectionGroups.test.ts",
+          "sha256": "e6fbaea286823b5cd9ecd71e1279132c02f16889169613bbddd62c149d353432"
+        },
+        {
+          "path": "src/__tests__/connectionStore.test.ts",
+          "sha256": "522c766859d95425a48d5194d61335eed8744ca535a3f4b6518b5795682dd26d"
+        },
+        {
+          "path": "src/__tests__/copyAsInsert.test.ts",
+          "sha256": "41e681753df6ca2c11844709273f5365d320d7102738f86ed5e72359f22a5ea4"
+        },
+        {
+          "path": "src/__tests__/crashBreadcrumbs.test.ts",
+          "sha256": "73f5675072b1372c100210fc70a9808776cd23b7a3be02f2e6d2aa97a20e7cdf"
+        },
+        {
+          "path": "src/__tests__/crashReport.test.ts",
+          "sha256": "665411c1cd11b276c875ee1fca999fd18e612bd0139ea2f8f4901339d8b2e7a2"
+        },
+        {
+          "path": "src/__tests__/createTable.test.ts",
+          "sha256": "fbdb1a9012206fc3c218313b3b3749408dc3139ef1f34672dabcdbf842c81884"
+        },
+        {
+          "path": "src/__tests__/createTableSql.test.ts",
+          "sha256": "e99458d4115b49891bf04d2204d169c515223cd8f963fbfcf6314b43a114c2b5"
+        },
+        {
+          "path": "src/__tests__/csvExport.test.ts",
+          "sha256": "3090e186099197de57203819081e2374c06f14451b1da5bb5165ed918932db22"
+        },
+        {
+          "path": "src/__tests__/dangerousSql.test.ts",
+          "sha256": "f2d8b378df1865376df841d68102deab34da985f0aef78cea6d18d531e28d295"
+        },
+        {
+          "path": "src/__tests__/databaseCapabilities.test.ts",
+          "sha256": "4df3d5c6d44d1f853436813b9eee46ab3c03338ea83e74a65edaed7450841a46"
+        },
+        {
+          "path": "src/__tests__/databaseCompare.test.ts",
+          "sha256": "6290756fe01b0f7337ccd9eecdd4d6aec4c61a8ea6179650b4741ae01b586431"
+        },
+        {
+          "path": "src/__tests__/databaseCompareExport.test.ts",
+          "sha256": "d27541497004e45c95aafff512b9e6ddbe51f2c446f4b2ebcf318ce9f22e7865"
+        },
+        {
+          "path": "src/__tests__/databaseStore.test.ts",
+          "sha256": "014fa8bf7ed746bcc486b5cdc1f6bd19a37dc80495cfb74c1869ad0f11ba895d"
+        },
+        {
+          "path": "src/__tests__/databaseStoreLazyTabs.test.ts",
+          "sha256": "4c5c8f99503f56d774c569398b57ef201615065f23774395146ebb6de880d761"
+        },
+        {
+          "path": "src/__tests__/databaseStoreViewMode.test.ts",
+          "sha256": "cd8ef8e6949e0210d954fdfc157c05d7251e20df115dc54f6d5b6a75c5635418"
+        },
+        {
+          "path": "src/__tests__/databaseSync.test.ts",
+          "sha256": "6eb4ea940bc65afec78f981481feabe883dc605140a68126d4055a5b876af079"
+        },
+        {
+          "path": "src/__tests__/databaseSyncProgress.test.ts",
+          "sha256": "9f2212988c9ceca978db86e25b855781ddd4070de3edb8bd6a61b8ed8c174eed"
+        },
+        {
+          "path": "src/__tests__/deferredFields.test.ts",
+          "sha256": "e56011e8a542851d4998e60dd8ec6a9efa018d242a1254591f983faef40bbbd3"
+        },
+        {
+          "path": "src/__tests__/editableCell.test.ts",
+          "sha256": "3e9a6af98c195a4867145d580ba7d21fb168d8b4d815d6b83e31244dd67601e1"
+        },
+        {
+          "path": "src/__tests__/errorMessage.test.ts",
+          "sha256": "4972f25a3bee8b94f9f71136e8b9d537b9b99af637bead2ffa224fef8797aa10"
+        },
+        {
+          "path": "src/__tests__/excelBinaryCommands.test.ts",
+          "sha256": "5ef64dc285b8da8734a68d781a86f9ffe6f0170c7627a718b1cdef6b7fd116d2"
+        },
+        {
+          "path": "src/__tests__/excelExport.test.ts",
+          "sha256": "16b737238c3d3ce7294ee2b5a20b594e4358711d21a9cbad493f0dbf161459b2"
+        },
+        {
+          "path": "src/__tests__/excelExportWorker.test.ts",
+          "sha256": "3dc41291f383af81fc807af958933ee09ccc0e220094b231dcc054bc4be0277d"
+        },
+        {
+          "path": "src/__tests__/excelWorkbook.test.ts",
+          "sha256": "92a9fca23d33030d72a0143b2f4afb9e2c9fd69b65ccd78e2d8c69de609f1dbc"
+        },
+        {
+          "path": "src/__tests__/favoriteStore.test.ts",
+          "sha256": "bdc86961b681a65dac6e5f7ef5058b831fb91e12efc03d1cb3fc02287d4d9e4f"
+        },
+        {
+          "path": "src/__tests__/filterTables.test.ts",
+          "sha256": "b9367e776000795e7382cb417954b9493ec751ae6bde628f4b219d093110b3ea"
+        },
+        {
+          "path": "src/__tests__/fixtures/sqlCompletionDocumentFixtures.ts",
+          "sha256": "6a53f010678b003346f86c10bd8e0a5e76dbde9bcf618a28d587239bde6f4a80"
+        },
+        {
+          "path": "src/__tests__/fixtures/sqlCompletionFixtures.ts",
+          "sha256": "85890c16d12775afbc9869ffe00bc6ce8119ff4f8792e9f090514a3bcfc56fa1"
+        },
+        {
+          "path": "src/__tests__/fixtures/sqlCompletionModel.ts",
+          "sha256": "53f9a7a82cf5f96da876e8e354e7b7efe5c20d972f7ac4bc395d0bbf6740c0f4"
+        },
+        {
+          "path": "src/__tests__/foreignKeyAndRoutineCommands.test.ts",
+          "sha256": "2144b5ba4f65da24f0a2d7e82295fc6615faf7581813885d1114a2496a8d6e68"
+        },
+        {
+          "path": "src/__tests__/foreignKeyMermaid.test.ts",
+          "sha256": "27ef1d195cda3d3d18c3c7c4819fbd33f3e6eb1879ed08a864ab4656d67eedd9"
+        },
+        {
+          "path": "src/__tests__/foreignKeySql.test.ts",
+          "sha256": "60156a582eaa664292026a098b4f5bbe8fe7efdd9f9edfdd9c8be323c8de80f6"
+        },
+        {
+          "path": "src/__tests__/formatBytes.test.ts",
+          "sha256": "ba39938a9da64992f690c2db9b062bef16b8a399155e909f06549b1ee80fc7eb"
+        },
+        {
+          "path": "src/__tests__/indexList.test.ts",
+          "sha256": "7c3b9a832e9bd5fdb1f76cb83aa14f1a1252e6ea92f8ce4b577ca648d5a6e876"
+        },
+        {
+          "path": "src/__tests__/indexUtils.test.ts",
+          "sha256": "1249acf1a2277a146505381b06a0551ee7b9a6657a2d927ef6281a756aff393b"
+        },
+        {
+          "path": "src/__tests__/listTableColumns.test.ts",
+          "sha256": "1fd8f5b80c26eac955319c7add1ad507ef148180b9e92eecdc9f740d06009a95"
+        },
+        {
+          "path": "src/__tests__/metadataFinalReview.test.ts",
+          "sha256": "18173cac9c2289d6e0624b438575703135856b027f1d358c3c1f3b821998ab79"
+        },
+        {
+          "path": "src/__tests__/metadataOwnerReview.test.ts",
+          "sha256": "a1dfdf371b5bf2627a623a0550d06929e3866bbf0c05dca7c671cb4578e46d12"
+        },
+        {
+          "path": "src/__tests__/metadataRefreshReview.test.ts",
+          "sha256": "1107e2a16763659fd557cfee516410151fa09784e160b75c137be48994b1b661"
+        },
+        {
+          "path": "src/__tests__/metadataRequests.performance.test.ts",
+          "sha256": "7bc0b6762d150312c4d30373d1344a2ab9f3ad81c847d95b1bb2b323cfdd42c2"
+        },
+        {
+          "path": "src/__tests__/metadataRequests.test.ts",
+          "sha256": "b6496c33a4fc89c3891d561e080dc97738cd28ad82662b5065fdb027ed85952a"
+        },
+        {
+          "path": "src/__tests__/mocks/SqlEditorLazy.tsx",
+          "sha256": "8b08f27f3ac3d8ca5b42be90215102bfa27e80b501f845bae9d18bf8d98edc19"
+        },
+        {
+          "path": "src/__tests__/mocks/monacoEditorReact.tsx",
+          "sha256": "a007adc7f2213185034e53ffadeaf441b12e4b958d4b3127a7d2f3e8a408b70b"
+        },
+        {
+          "path": "src/__tests__/mocks/monacoEditorStub.ts",
+          "sha256": "f20843b18510f44cc63d5cb761353dcb03570625c4a98590baab37273016f9f0"
+        },
+        {
+          "path": "src/__tests__/mocks/monacoEditorWorker.ts",
+          "sha256": "9af70972e15d7801fb9fc84c9021b6b7698ce2e96e56db0217fe79871df7f46e"
+        },
+        {
+          "path": "src/__tests__/mocks/monacoSetup.ts",
+          "sha256": "64ddd1c259c898d14557baaedc30d6e3ba966dcdeb66399c207d1b8b32705f03"
+        },
+        {
+          "path": "src/__tests__/mysqlVersion.test.ts",
+          "sha256": "a875d47881e082010137fed61089982ae115a5d0b7815527849c04d0a6fc1356"
+        },
+        {
+          "path": "src/__tests__/npmAuditOverrides.test.ts",
+          "sha256": "a154c5c6cd93374f555988feb307d0733ffe6b58f26b1e3aa92121b26ca352c5"
+        },
+        {
+          "path": "src/__tests__/resultCacheBudget.test.ts",
+          "sha256": "0bfb9f3da6ae16a4df4022defa6b6ceb7f4e0b9d42a58309f90490dbb08b36a3"
+        },
+        {
+          "path": "src/__tests__/safeInput.test.ts",
+          "sha256": "8b32ac28d99df7e61b624212d472ce775d84374553b637ae999ef78c372b6af0"
+        },
+        {
+          "path": "src/__tests__/savedSqlConnection.test.ts",
+          "sha256": "09e81bc992e043bd7b9d56c62c986312fb05c05a50c1e612ccf1f66e3b96181d"
+        },
+        {
+          "path": "src/__tests__/savedSqlStore.test.ts",
+          "sha256": "ec2bf99ffa8928e69f6cdce41f3184f76e48b8a96bf27ee85d1df766ad75e2c8"
+        },
+        {
+          "path": "src/__tests__/settingsStore.test.ts",
+          "sha256": "0f4190c7e6f92c3c9e45aba151b3f27744211624afc803c3bf138a36940b6033"
+        },
+        {
+          "path": "src/__tests__/setup.ts",
+          "sha256": "9834c18a23b17fe9621f894eaa2d6dd59f4322b7b9dc1e88d8a452bff8a2615d"
+        },
+        {
+          "path": "src/__tests__/sqlCompletion.test.ts",
+          "sha256": "3badbee4acb129ee83dcc7fec40f10bf434bd0102789956ef388698e9113c559"
+        },
+        {
+          "path": "src/__tests__/sqlCompletionCache.test.ts",
+          "sha256": "ad7d3e38d855c2587faddb85da1ed1c39c458a405f30ca92e7dafb05ff93def1"
+        },
+        {
+          "path": "src/__tests__/sqlCompletionCandidates.test.ts",
+          "sha256": "4285c54f8a7fc3326f7954031961994ea93d2121cb371e2b460168040991e737"
+        },
+        {
+          "path": "src/__tests__/sqlCompletionContext.test.ts",
+          "sha256": "7efa33ffcd6124a96c02d7866abbdb45c2caa83cf942fe96398b210927eef8c0"
+        },
+        {
+          "path": "src/__tests__/sqlCompletionDocumentCache.test.ts",
+          "sha256": "2bdfbfac771eef883f84141006528178336a7836f678847cc72ea15ad074abee"
+        },
+        {
+          "path": "src/__tests__/sqlCompletionDocumentPerformance.test.ts",
+          "sha256": "50540f940617714fe901b03bac0191cf8944ad078daacd96af3a37e46cfef3f3"
+        },
+        {
+          "path": "src/__tests__/sqlCompletionEditor.test.ts",
+          "sha256": "91b90d4242fd6635630360820ace01e562fa2648f9f7f8a444be3170c5a204af"
+        },
+        {
+          "path": "src/__tests__/sqlCompletionForeignKeyCache.test.ts",
+          "sha256": "67b5cae9e7c8be5d3b3d43faa5ec6be068b3a518f33686090b19e53075c2f0cc"
+        },
+        {
+          "path": "src/__tests__/sqlCompletionJoin.test.ts",
+          "sha256": "43bedaf5424c05ea7bf9c45d66a53c024e5bc295ce35e296e07c29e95b05e5d9"
+        },
+        {
+          "path": "src/__tests__/sqlCompletionJoinProvider.test.ts",
+          "sha256": "0aa26db77eeddf1454d589e6936c5be7c6c6eb1b7da24681ee2670b60209510f"
+        },
+        {
+          "path": "src/__tests__/sqlCompletionPerformance.test.ts",
+          "sha256": "f9f12a4cf3840c1a0d1253f109060a559f9cb4438c7f734060c5d301d47c8550"
+        },
+        {
+          "path": "src/__tests__/sqlCompletionProjection.test.ts",
+          "sha256": "5bc41ae4d061f76929c39e7f66fce27803bd8d5800ec1c7f23697027ae3347ac"
+        },
+        {
+          "path": "src/__tests__/sqlCompletionProvider.test.ts",
+          "sha256": "8e8c5df506c11872473e31a0490c27b19bcac3a57b38e4d22b5986decf60e1c7"
+        },
+        {
+          "path": "src/__tests__/sqlCompletionSchema.test.ts",
+          "sha256": "c7668ccdd9e8cca75bec73c8698f7a92435af35cd577dc289ef320ac5156116e"
+        },
+        {
+          "path": "src/__tests__/sqlCompletionScopeParser.test.ts",
+          "sha256": "4c744104c0c8be61fee8029d407a65232f1ff24709aa327a315c8e54de598481"
+        },
+        {
+          "path": "src/__tests__/sqlCompletionScopes.test.ts",
+          "sha256": "4ab06f1380e1422c0fe69785ed1750822791dad239de0d2f81b39e05b3f45bfd"
+        },
+        {
+          "path": "src/__tests__/sqlCompletionTokenizer.test.ts",
+          "sha256": "632b6218b55a52aaff9fa605fb5a05025ac3fc78062d7d5d1227c100823182c9"
+        },
+        {
+          "path": "src/__tests__/sqlExecutionCommands.test.ts",
+          "sha256": "64ef0ae2ebc47836fee776b7fded616ac5710558887b9dbe2382dcca3053b365"
+        },
+        {
+          "path": "src/__tests__/sqlFileIoUi.test.ts",
+          "sha256": "941dde0a91beb3320dec44916822bbb7448e28eca58567a762d3dca53300bbd5"
+        },
+        {
+          "path": "src/__tests__/sqlFormat.test.ts",
+          "sha256": "59cac6ae819c0807a51d4843baf807010302115f6cc540629d2a707af41979e4"
+        },
+        {
+          "path": "src/__tests__/sqlIoProgress.test.ts",
+          "sha256": "6cd89fbff9388e90134019214a9e67eefc7027c3f76867bd99f87283a9bae4af"
+        },
+        {
+          "path": "src/__tests__/sqlResultState.test.ts",
+          "sha256": "ccd7e40223c8d8513d0497ee2b6c7660796a2076395af875a97e8f40e6e3375a"
+        },
+        {
+          "path": "src/__tests__/sqlUtils.test.ts",
+          "sha256": "3b46e7ac6ca767a5ce6e6de65700574de88321507b55a331dbc2503773782bea"
+        },
+        {
+          "path": "src/__tests__/structurePreviewCommands.test.ts",
+          "sha256": "84fdbdeda6160d3f422ad162d0163f88220af8be8f44496571e030fac746441b"
+        },
+        {
+          "path": "src/__tests__/systemDatabase.test.ts",
+          "sha256": "06d10b645c47004728ee07a11d42873c734a42476f645dc593d105a43cb575b5"
+        },
+        {
+          "path": "src/__tests__/tableColumnReorder.test.ts",
+          "sha256": "e1d49e9a0ee2b4d593573bb0e30dc97b2b2192fe75c62c84f6c4a67e5e10091a"
+        },
+        {
+          "path": "src/__tests__/tableColumnSettingsStore.test.ts",
+          "sha256": "fdb30529dadb0f6152e3d03a6168c503c51f139ad794ad5e853a26fd3fb85223"
+        },
+        {
+          "path": "src/__tests__/tableDataCancellation.test.ts",
+          "sha256": "e1bcf197843ea909cf150475d9a10506689bedd5c0a79b3bc4e5a14c003f4de1"
+        },
+        {
+          "path": "src/__tests__/tableDataColumnHints.test.ts",
+          "sha256": "4b0f407a350bb261d571f2840fa4baf904460cd64fe8f5f5f30a22460f079c33"
+        },
+        {
+          "path": "src/__tests__/tableDataKeysetStore.test.ts",
+          "sha256": "6debcfc6a975203fa9830dd8ec4af06a3a604c140d0b20408532773cd64bc2cc"
+        },
+        {
+          "path": "src/__tests__/tableDataPagination.test.tsx",
+          "sha256": "59b348f7be39b9ae65b31a2d1491883e90abc7b30f8163cc4801cd454d1eed29"
+        },
+        {
+          "path": "src/__tests__/tableDataRowKeys.test.ts",
+          "sha256": "9a2146ab033706a46e4206c16c27b0f18187c1630124392100c31ddc1fd3ad2f"
+        },
+        {
+          "path": "src/__tests__/tableDataStore.test.ts",
+          "sha256": "6d2dbfb91ad72534be6f26494504d6a389b9703e84303c5b1eaeb3ba75e1eba9"
+        },
+        {
+          "path": "src/__tests__/tableHeightResize.test.ts",
+          "sha256": "df83548f209193ce3929c0c974a34bd664600715af2789c5cae0afe12bfa6788"
+        },
+        {
+          "path": "src/__tests__/tablePageCommands.test.ts",
+          "sha256": "25c98de489ef157a50da1ea2c47ecac6c3ef2bd69c97cf010c71fae89b20fb8d"
+        },
+        {
+          "path": "src/__tests__/tableRowSource.test.ts",
+          "sha256": "adc38fb73e7140b5ee27f38fa0b0dc59ec3954ff25a8492a1443af8513d1b1c0"
+        },
+        {
+          "path": "src/__tests__/tableSqlExamples.test.ts",
+          "sha256": "bf068b340982877d211f02e518c3c05d1c7ab2ad82d5747a0320ad825434abda"
+        },
+        {
+          "path": "src/__tests__/tableStorageStats.test.ts",
+          "sha256": "2e28560d33bfb86dfccf7b8dfd649b75913cd50b3fea1fa782e866fc20740349"
+        },
+        {
+          "path": "src/__tests__/tauriBundleIcons.test.ts",
+          "sha256": "606f6740efbb69f547f5ce3a0702f227e58c34ed33e87d1f6eeb61990442dbce"
+        },
+        {
+          "path": "src/__tests__/tauriWindowLaunch.test.ts",
+          "sha256": "c4e170d6f4eeed70c91a4d845d41de7d4364b81b2e63fd65b2f841ceac4bd858"
+        },
+        {
+          "path": "src/__tests__/temporalValue.test.ts",
+          "sha256": "f50d9c8b5c5f17c24cd98b901fc48394ce6c11d438d0eb8f9b79714579472630"
+        },
+        {
+          "path": "src/__tests__/themeStore.test.ts",
+          "sha256": "b2aca742d561c464c7695783ef28a57d2dcfaf9a92e0acad8e7d92f3650f6f97"
+        },
+        {
+          "path": "src/__tests__/triggerList.test.ts",
+          "sha256": "d24ca4f12fc643d56eca5e329a50140471130a7ccf8792e2bf02a8cf56313b62"
+        },
+        {
+          "path": "src/__tests__/truncateTableErrors.test.ts",
+          "sha256": "4e41cb239e0780d8215e50c4e49a9dff641ced8da4c3102965caab7c153ed442"
+        },
+        {
+          "path": "src/__tests__/useAntTableScrollY.test.ts",
+          "sha256": "68208294c6c792d5789d942008a88ccc9995acdd86fd1f8e216e06c8983705ee"
+        },
+        {
+          "path": "src/__tests__/useConnectionRecovery.test.ts",
+          "sha256": "be01431dffb145fedacddf07c973117d06f0160ea5cb6ba7e20dfa50d739bd97"
+        },
+        {
+          "path": "src/__tests__/useElementHeight.test.ts",
+          "sha256": "3a7ec3f016518763db78a436da5e3f6eb34b40f002ae069899b478f09e0317e3"
+        },
+        {
+          "path": "src/__tests__/useGlobalErrorHandler.test.ts",
+          "sha256": "d68d369782459029fec0bd0ff747404fe7ffe30584257f8cf2e6c0520307df52"
+        },
+        {
+          "path": "src/__tests__/useIdleDisconnect.test.ts",
+          "sha256": "212c0c03099a12cfdc124ade559999004a88d962d46b33b2c3fb6061e7de4806"
+        },
+        {
+          "path": "src/__tests__/useKeyboardShortcuts.test.ts",
+          "sha256": "bd2ad8372220cd5ca3f98f0d41adaba907fe19ba7ae8fcfc05d252edad908c44"
+        },
+        {
+          "path": "src/__tests__/useSidebarResize.test.tsx",
+          "sha256": "1e398c919713f41403a000551f5604e6d0eb9f93590d5ee2b5251da84ceb841f"
+        },
+        {
+          "path": "src/__tests__/useWindowLaunchState.test.ts",
+          "sha256": "f9786301254dbdf1e7ef64409eec3314824e10042ff144c3f7a6d4167d197d07"
+        },
+        {
+          "path": "src/__tests__/whereFilterUtils.test.ts",
+          "sha256": "e56c259f890ed64bd0b26b18400329cf284f604d3e6b335e5b61dd3c701794c9"
+        },
+        {
+          "path": "src/__tests__/windowLaunch.test.ts",
+          "sha256": "0163b6a6a9fa4273fdfd74cfdd2d5f798d25c36c12f95f5804bc46d703737082"
+        },
+        {
+          "path": "src/appVersion.ts",
+          "sha256": "ca79405a14bbe2e8e4700319453d017740f86961877bb329eebff50e1d1b00d5"
+        },
+        {
+          "path": "src/components/common/CrashIssueUploadModal.tsx",
+          "sha256": "c5b3424fdc59cbc91a31f3ac112e99d0999cdfff46d45e4635d8920703e38700"
+        },
+        {
+          "path": "src/components/common/DeferredFeatureBoundary.tsx",
+          "sha256": "db1ef95a9842dcad5d2d4b066d5af4ff877b0996067115d70dfca92d62425f1f"
+        },
+        {
+          "path": "src/components/common/ErrorBoundary.tsx",
+          "sha256": "8e482ce6870be8dbc74e1ff60c53ee199174d6d36a9d55bb3414ec10063b9150"
+        },
+        {
+          "path": "src/components/common/FilePathInput.tsx",
+          "sha256": "1228403066cac0bc62d5be1e8ae863b2e3c0b2cd83be76157f81cae0476edbdb"
+        },
+        {
+          "path": "src/components/common/GlobalLoadingBar.tsx",
+          "sha256": "b312dc3ccbc5d539c1fc48554ebbabeeb0de7a86e379eb3741bc6c04d7047339"
+        },
+        {
+          "path": "src/components/common/IdleTimeoutSetting.tsx",
+          "sha256": "684023449653fcd2f52b9be2980dcbd1fb8a1922f9b9cc851f7ee7fd35a8b5c1"
+        },
+        {
+          "path": "src/components/common/MermaidBlock.tsx",
+          "sha256": "306b932001816030d2120964e4a5d8ad24a6765bcf80557f43a6f2f365aa691a"
+        },
+        {
+          "path": "src/components/common/ProjectIntroModal.tsx",
+          "sha256": "ba4413faaee132e36f7b6b584b3e048630623f9a3a96196548423a01d247de89"
+        },
+        {
+          "path": "src/components/common/ProjectIntroTrigger.tsx",
+          "sha256": "1a0b56c4fb2747620302779edbb5f97f7e9c4aace25cc864efce0995907db7aa"
+        },
+        {
+          "path": "src/components/common/ResizableTableHeaderCell.tsx",
+          "sha256": "ef00cf974a891d5ce60e20ec2edca67d8f7f8c33be3b9fc7d25f907bd6ee4f78"
+        },
+        {
+          "path": "src/components/common/SafeInput.tsx",
+          "sha256": "5352697e3b4acd37687f324dc5fcd6d3e311eadded85755d48cf55375dedf87f"
+        },
+        {
+          "path": "src/components/common/ShortcutsHelpModal.tsx",
+          "sha256": "d388c147fcefdf43827f9e58bf55e18ee7d554957ad0d8bb7a7d241cf539676f"
+        },
+        {
+          "path": "src/components/common/SortableListTable.tsx",
+          "sha256": "be4e0045ff797bd0e8b83309cf41749a2a362cb2663a0955fed7f78d38754337"
+        },
+        {
+          "path": "src/components/common/SortableResizableTableHeaderCell.tsx",
+          "sha256": "e5bf49e892fe12d277fc1bbd04fed7eaa5e446e22b030914e6359df0e6f1eef0"
+        },
+        {
+          "path": "src/components/common/SqlPreviewModal.tsx",
+          "sha256": "8bfa0b39bc4dadb90cc354a294103d9eda00ac804eda0d365e2ca246eb3b7739"
+        },
+        {
+          "path": "src/components/common/ThemeToggle.tsx",
+          "sha256": "4cfe025e03dfcec558c610ed2c781e51a9e7bf1c69cd3931db795bf25209750b"
+        },
+        {
+          "path": "src/components/common/WindowLaunchSetting.tsx",
+          "sha256": "b9ac3a3b951b30e4220a19c1f542c565113e31abb5a557431b7cb5044e7e61de"
+        },
+        {
+          "path": "src/components/connection/ConnectionForm.tsx",
+          "sha256": "40a9134a1348608dd436260fd5a131ec1743c41f518f55cc2d95681859fe3339"
+        },
+        {
+          "path": "src/components/connection/ConnectionList.tsx",
+          "sha256": "b5f49be63a772865629e79a4a26a1b15697939c7db7d9cc2237c4a943b730e73"
+        },
+        {
+          "path": "src/components/connection/SshTunnelFields.tsx",
+          "sha256": "33830e56e4fffb171a878dcd0f6452ee2bf67bfd29991636e46c6c131b39117f"
+        },
+        {
+          "path": "src/components/connection/SslTlsSection.tsx",
+          "sha256": "7269653f43820205c190ee366304a1ec0090c745a75b6e6884659b6a74bfed7e"
+        },
+        {
+          "path": "src/components/database/CreateTableModal.tsx",
+          "sha256": "40b05ae76112888b8dd6c609765199560003a961439857c566bb1fb9ff6d4733"
+        },
+        {
+          "path": "src/components/database/CreateTableSql.tsx",
+          "sha256": "0abf00d881f3ab7e892838b4f0fdc8c2721e46973f5526ed25c1fdac7ff4d623"
+        },
+        {
+          "path": "src/components/database/DatabaseCreateModal.tsx",
+          "sha256": "e6a2f242964e297336b8a27f60e51dac523bedfb01ac918b04b2fcbd1c705a8e"
+        },
+        {
+          "path": "src/components/database/DatabaseEditModal.tsx",
+          "sha256": "1cc89871a5efbe997f177ebada1454fe207c90fc8983fb4c6854d5b20c9fe916"
+        },
+        {
+          "path": "src/components/database/DatabaseOverview.tsx",
+          "sha256": "0baa6e98c32ca5374171c3dc9ea690406dd97c06b9182aa4e142abb9945c46f0"
+        },
+        {
+          "path": "src/components/database/DatabaseSqlFileActions.tsx",
+          "sha256": "8bbbd9e8b31d77fff44c30bf4779490e1a059dd63aa6d2e01f3d33db747a29f6"
+        },
+        {
+          "path": "src/components/database/DatabaseTree.tsx",
+          "sha256": "99a653bd5fb38472a76648293d1262a6e8987d117ccbf587a5f0f32476228c63"
+        },
+        {
+          "path": "src/components/database/EventList.tsx",
+          "sha256": "047bc3439e09c86839e9a481c5d77eb1a6b43f95667a86264e19db9b85aab777"
+        },
+        {
+          "path": "src/components/database/FavoriteTables.tsx",
+          "sha256": "9c9c58f6cd488a2e1575f2f4422d8da5ca99464e0ed368d4f08c6d26644f0a6a"
+        },
+        {
+          "path": "src/components/database/RoutineList.tsx",
+          "sha256": "4d841a8beb99b9bff31de26319c7abacfdce52f04b206706a5f48ddc2daf1c68"
+        },
+        {
+          "path": "src/components/database/SavedSqlDropdown.tsx",
+          "sha256": "d0b2d587e6fcdf45847cdcc00106ceb62c24d9f5ab33133635eaea94f30ffa6a"
+        },
+        {
+          "path": "src/components/databaseCompare/DatabaseCompareModal.css",
+          "sha256": "83d216d7438d89c72118cc77120605ae1dcfe696b201cf388effd0eca7762057"
+        },
+        {
+          "path": "src/components/databaseCompare/DatabaseCompareModal.tsx",
+          "sha256": "85f69419ec00a78f15294791691d9f924e6f1f62ad5bc07cb1ee1e902ca57e2a"
+        },
+        {
+          "path": "src/components/databaseCompare/DatabaseCompareResults.tsx",
+          "sha256": "3e0c2d6c6c5ebd7460d83b02c3a1c63e8b031d901555500eb0e3f31c43b7d3c9"
+        },
+        {
+          "path": "src/components/databaseCompare/DatabaseSyncPreviewModal.tsx",
+          "sha256": "98e8520c12794946b29331f25ec8892c0d99c632b51248490750285f512cbe6c"
+        },
+        {
+          "path": "src/components/foreignKey/ForeignKeyList.tsx",
+          "sha256": "4ec5e8809ab20ff565250c47de0a6022badf1a22b1be46b97bd919bdfccd4a28"
+        },
+        {
+          "path": "src/components/index/IndexEditor.tsx",
+          "sha256": "38e7a7ad8d1bde41024e36d884486211c53a5aeb63e4f21d8f2abdd35747efef"
+        },
+        {
+          "path": "src/components/index/IndexList.tsx",
+          "sha256": "a2d92401a3ca16c6f3850f5f8b9a6b1a72feed871b55a2ca46733087d099bdcc"
+        },
+        {
+          "path": "src/components/sql/SqlEditor.tsx",
+          "sha256": "d5ede7b5cdb800d59e78a0a2d6185f00f795e843a1887784fcc127f8e2715bd9"
+        },
+        {
+          "path": "src/components/sql/SqlEditorLazy.tsx",
+          "sha256": "c28a6f6c2f3e43aba41a0fb3545b83a088a1104d05958f5653dadc22a850e5bb"
+        },
+        {
+          "path": "src/components/table/EditableCell.tsx",
+          "sha256": "9caa2ea8fcdbcde7f94cfb747b9fdac41f33e10ec14c98899985a137442fbaf0"
+        },
+        {
+          "path": "src/components/table/TableContent.tsx",
+          "sha256": "841883d04af95b65cf748292e20c7df2ac18a0fc679e04897be5120c0145e7b4"
+        },
+        {
+          "path": "src/components/table/TableData.tsx",
+          "sha256": "2e81623c6b5b3f8818fe6e524a10ba5aea38e5c0d15412a2f0d9602335fdf679"
+        },
+        {
+          "path": "src/components/table/TableSqlExamples.tsx",
+          "sha256": "5d0289c103a6f2cfb2a5d9890e56b24a8b7156888ad6cd63c6fd7611627f55c9"
+        },
+        {
+          "path": "src/components/table/TableStructure.tsx",
+          "sha256": "15eb5f1d021b30bb75c1cb4833e88bcd2ebdf8f59074434a578a3d01b852f264"
+        },
+        {
+          "path": "src/components/table/TableTabsBar.tsx",
+          "sha256": "ae4cdd640578f47b9899a820015859fa024cbd5eb3dfd7a208c22e0e25e9d380"
+        },
+        {
+          "path": "src/components/table/TemporalInput.tsx",
+          "sha256": "cec4198d3a95d7cc3d267c90bc066f5ec885d0da562d18b3cda8d38f4895aabb"
+        },
+        {
+          "path": "src/components/table/VirtualDataTable.tsx",
+          "sha256": "d6be49bcf074c248faccf16c736758588077dc6b03ecad2fcda9d5f641187b18"
+        },
+        {
+          "path": "src/components/table/WhereFilterBuilder.tsx",
+          "sha256": "e35235917f442b97aa03ca12fc2bd311e72372afda48a1fde6560af9766901dc"
+        },
+        {
+          "path": "src/components/table/deferredFields.ts",
+          "sha256": "508d51d1d2d791ea70e713431c6b003c47fbcca483b6bd8b04921c85036dd8ca"
+        },
+        {
+          "path": "src/components/table/tableDataColumnHints.ts",
+          "sha256": "e104dfd69fa45cf54377e4e52302477ca5e172594c716c134b75abafe1b9c7e0"
+        },
+        {
+          "path": "src/components/table/tableDataEditEvents.ts",
+          "sha256": "600a3a06de6baf117f6c12f85ad768cab833939cd29ed001e84da4eeb9a8d0ce"
+        },
+        {
+          "path": "src/components/table/tableDataRowKeys.ts",
+          "sha256": "d5e93dc1cb97e838090a56269be3374f4af5bf65ec28492f7e79cda169aed65a"
+        },
+        {
+          "path": "src/components/table/tableDataUtils.ts",
+          "sha256": "56cc08c2e68abb9b210512e0deffd1713e18953f562ef04cc6a5d91cadd55966"
+        },
+        {
+          "path": "src/components/table/tableRowSource.ts",
+          "sha256": "6998c37f9699ce993da16ad257c02e6027b376de48038354b1527179ea7022e2"
+        },
+        {
+          "path": "src/components/trigger/TriggerEditor.tsx",
+          "sha256": "b9fb09f26cbb2ac67f0195fe9f5ef32aa639cf94d2a89c8f8a50a4474bbfb73c"
+        },
+        {
+          "path": "src/components/trigger/TriggerList.tsx",
+          "sha256": "0b7c1d1d2d8f6116726e798e8d0022fa37c8fb8e24ec4db8cdc8f3544aba5658"
+        },
+        {
+          "path": "src/hooks/useAntTableScrollY.ts",
+          "sha256": "beed1ebe9ec155a8faf5eed728627079ccb4c3a9ea97d483a554bbc0b9997b7a"
+        },
+        {
+          "path": "src/hooks/useClientReadOnly.ts",
+          "sha256": "00ae76c6350333e87ac730d30216ae892f1e739682282580aab1a5c5a622d623"
+        },
+        {
+          "path": "src/hooks/useConnectionRecovery.ts",
+          "sha256": "d4798dd1b998119db13de9b0c4554103a97c8d7b0f2b2e5b7392ca87082eacd2"
+        },
+        {
+          "path": "src/hooks/useElementHeight.ts",
+          "sha256": "d73340aba0183eeba85874228fae3c49bc64ac6b72281d665c1a949cdb59c580"
+        },
+        {
+          "path": "src/hooks/useGlobalErrorHandler.ts",
+          "sha256": "feb6d3e3c0bd858ce489b9110785c973a64cc4ede971dd26a8f806c42755bf05"
+        },
+        {
+          "path": "src/hooks/useIdleDisconnect.ts",
+          "sha256": "04866fda5729c20da1eb441cb70f63cfa47a2baed268e39f8565f1280b53288a"
+        },
+        {
+          "path": "src/hooks/useKeyboardShortcuts.ts",
+          "sha256": "f926419b3c8e260237cb085a804e9a2414ec169c583f9d9b4ecd226c7b7af442"
+        },
+        {
+          "path": "src/hooks/useListTableSettings.ts",
+          "sha256": "2e2c66b49076eddcd641d1698976b4ca25682610377575ac5c0f875ff6042d5e"
+        },
+        {
+          "path": "src/hooks/useSidebarResize.ts",
+          "sha256": "b022486173d7a26d843da1accad9521639541441c10c6ff05fb537ea40af65d9"
+        },
+        {
+          "path": "src/hooks/useSqlCompletionMetadata.ts",
+          "sha256": "1d70d4273c9d5667523f232ec7ea289516c8afeca95835872a1e26db3bbad297"
+        },
+        {
+          "path": "src/hooks/useWindowLaunchState.ts",
+          "sha256": "2d69911f9633572601e09bb157fdf1080c919e3a25371787b712a3abb0da6a1d"
+        },
+        {
+          "path": "src/main.tsx",
+          "sha256": "69d913819f0e216eb17466fab28ba931394cce344620ebf5775bb0b1d03d6ae0"
+        },
+        {
+          "path": "src/services/tauriCommands.ts",
+          "sha256": "b53181a25b0d206ee9b9be5d0104ca9d563efb11600364e02b6a8a9327ad7eaa"
+        },
+        {
+          "path": "src/stores/connectionStore.ts",
+          "sha256": "4c08a22e34b5e1632176914b74235ecdb30719166ffe72509373c91129385913"
+        },
+        {
+          "path": "src/stores/databaseStore.ts",
+          "sha256": "d473cbe75942d3cf86d76f43c9ef2cbf6e3a6b0793e893e71b15cc69c569f8a9"
+        },
+        {
+          "path": "src/stores/databaseStoreState.ts",
+          "sha256": "7108b33fc33f9cf3c6f347f7d168989b880ca57fb5895216b864ac90e397282e"
+        },
+        {
+          "path": "src/stores/databaseStoreView.ts",
+          "sha256": "7e241a0a06d5f0e8b3334d45a8ed5aa579762b7ffbeb530797c4638b51bf3d5c"
+        },
+        {
+          "path": "src/stores/favoriteStore.ts",
+          "sha256": "99a030062117e0c81d5760b71183b9e72e1976d53ebd1ca06b493a45236dabb1"
+        },
+        {
+          "path": "src/stores/savedSqlStore.ts",
+          "sha256": "3e19501ad3ed053e6551511214ed59b4fa6fd109b85650e7a517ee0ba22df52e"
+        },
+        {
+          "path": "src/stores/settingsStore.ts",
+          "sha256": "fd181d952b8341f77e109b45afe4ccd1b1c86478dfc42336fce9fa6e6f646d05"
+        },
+        {
+          "path": "src/stores/tableColumnSettingsStore.ts",
+          "sha256": "ea70be21a1b2a43944c3f4493c89ac6bac3e55668424ae85fc0cdcacd76e5758"
+        },
+        {
+          "path": "src/stores/tableDataStore.ts",
+          "sha256": "766b294b82c4cb8fbbd3d795bc5fbd1f3bbccb664ed40cc4ee25e1899093455b"
+        },
+        {
+          "path": "src/stores/themeStore.ts",
+          "sha256": "48fdd32bfbd54a4a66837483acfd6e511dfbc8ef6fa771e894c3ad4cec8d9234"
+        },
+        {
+          "path": "src/types/index.ts",
+          "sha256": "8ea8ba071a2fc7f760c41c8462ff3bf9437f309e2dfd2fd181bc0e27239c39b0"
+        },
+        {
+          "path": "src/utils/antTableLayout.ts",
+          "sha256": "0d12708ee7984513189497602f2dad391c418d1ec4f5dd7c3aa5a4e2eab1377e"
+        },
+        {
+          "path": "src/utils/columnAutoFitWidth.ts",
+          "sha256": "a2afa43023b7ae7b77816a0a956a472f8c8ae0917f2882583894a2b36ff9ab35"
+        },
+        {
+          "path": "src/utils/columnTypeUtils.ts",
+          "sha256": "9e8bc8f0050494d8d6a91ac5dc7cc46fbb1ca3f0c2af7e85f29e88a1a2b63140"
+        },
+        {
+          "path": "src/utils/connectionConfig.ts",
+          "sha256": "1671c5e584469f64cef46695c155174597af4da0e842434504dce17eda5fc78b"
+        },
+        {
+          "path": "src/utils/connectionErrors.ts",
+          "sha256": "6802ec3ec23e1c2b085726fec9b022617e696e46eb876b0e6df4eeb62387912b"
+        },
+        {
+          "path": "src/utils/connectionGroups.ts",
+          "sha256": "62f7163f72e602643353108cb40312e771734c1a0a270b1ef4f68ab60a2c9bab"
+        },
+        {
+          "path": "src/utils/crashBreadcrumbs.ts",
+          "sha256": "0d158730dbcac4733cb123d89d11b253461a3197de2e4248f6d1f0f7e37f4137"
+        },
+        {
+          "path": "src/utils/crashReport.ts",
+          "sha256": "49e24b4658c7cacceae57e436092c5511255ff365faf560da69671e3d0d8da18"
+        },
+        {
+          "path": "src/utils/createTableFormUtils.ts",
+          "sha256": "d365075af920a03cc92c755c3ed2a5ee4bd478c11ca631a0c22a69e492a0d1ab"
+        },
+        {
+          "path": "src/utils/csvExport.ts",
+          "sha256": "aa15943195d344ce28950df6508db0ba0046e1cb01d75165607bf4cb6771b20b"
+        },
+        {
+          "path": "src/utils/dangerousSql.ts",
+          "sha256": "2078ba74af19874f22aec70819e797b5f2c1bfc918b2fa22c7db853f0344c1b5"
+        },
+        {
+          "path": "src/utils/databaseCapabilities.ts",
+          "sha256": "a4b27025679d6528864c502b72e4f131e4926d504ea5f6d8fc7a98beba13184f"
+        },
+        {
+          "path": "src/utils/databaseCompare.ts",
+          "sha256": "12b546ca8d1e22d49e52974866d6a4c234cef2aee8d49d5bf56caab768c33282"
+        },
+        {
+          "path": "src/utils/databaseCompareExport.ts",
+          "sha256": "77b495f65a451d49ac968a00d5fdbd908d0688b490df0975840371b5923e2411"
+        },
+        {
+          "path": "src/utils/databaseOverviewUtils.ts",
+          "sha256": "b9ae0f209beb5701f55e61d22e6a39c2da6246ba2db344fc5c6009fc8ebe38da"
+        },
+        {
+          "path": "src/utils/databaseSync.ts",
+          "sha256": "5a8eeb37f52c3f126ffb3a9c7347a1f638caafd2ac61822558d3a2ae7852b84d"
+        },
+        {
+          "path": "src/utils/databaseSyncProgress.ts",
+          "sha256": "26364e3176b14fe2c1a2f2f679b73304cfa245a96a44c45a3bafc2f5e0193a04"
+        },
+        {
+          "path": "src/utils/errorMessage.ts",
+          "sha256": "224525b258a0efaf75b3b9d49ed0f7c34ce3f094fa66f8d05701caf01edb88e3"
+        },
+        {
+          "path": "src/utils/excelExport.ts",
+          "sha256": "68f210a3cbdb3bbdf9ecc8ce96504fd569f434a71aabd7d5e60ec7376991cfbd"
+        },
+        {
+          "path": "src/utils/excelWorkbook.ts",
+          "sha256": "fdd175b21e43e89c534232b18d65ac46949235215a4bfd6665ac01d3c24c5e73"
+        },
+        {
+          "path": "src/utils/favoriteConnection.ts",
+          "sha256": "68d1b1b978ec3f2deb386d9d7cfee44b8c53b3df1dda9d55ea16ceabe23eb755"
+        },
+        {
+          "path": "src/utils/foreignKeyMermaid.ts",
+          "sha256": "2011682fac341bf12fdbcea5162f7f40cc933e0f5ba2478787beb7b66d592af0"
+        },
+        {
+          "path": "src/utils/foreignKeySql.ts",
+          "sha256": "b66ea79f6f7b0fed71711a7d6a5610020ecb378051b7b948d63e0038981ba8b4"
+        },
+        {
+          "path": "src/utils/formatBytes.ts",
+          "sha256": "d6cb8125752020ca604d3144bd451a3b32a4b2f2b063f250bccdddcb030db430"
+        },
+        {
+          "path": "src/utils/indexUtils.ts",
+          "sha256": "0a28f2a7b86c60f7b4a8d3791a54c292aa7d0522f599086e061f6787a11812ed"
+        },
+        {
+          "path": "src/utils/listTableColumns.ts",
+          "sha256": "bd4d2babd089ab5d46020cac8582f1ff4b9d9048d203aa145db078cd11099f8e"
+        },
+        {
+          "path": "src/utils/monacoSetup.ts",
+          "sha256": "65753ef7c46b59c45004a3752197e5c37eee0860692e2ceac56ab05786ec1714"
+        },
+        {
+          "path": "src/utils/mysqlVersion.ts",
+          "sha256": "d542ab6f14ad77a82d820e985cba45e033fd4403d836647c6010c6a45e2c64b7"
+        },
+        {
+          "path": "src/utils/resultCacheBudget.ts",
+          "sha256": "b5463888300b3280602160e73677a8b522dc9caac1c3f21ce21b1c11f45fab9f"
+        },
+        {
+          "path": "src/utils/safeInputUtils.ts",
+          "sha256": "cb62ffc6886eebef5b50daec47dbb66c4a1818f90aa589ef077400610f5638ce"
+        },
+        {
+          "path": "src/utils/savedSqlConnection.ts",
+          "sha256": "71a7b66eced9e3d20aee68ed2770bca485026cb2894a4ae0b1168d8232bb07e8"
+        },
+        {
+          "path": "src/utils/sqlCompletion.ts",
+          "sha256": "866be91c90f77b248684ec95c3f0e4735d006cfc03cf22560b3965d19d101382"
+        },
+        {
+          "path": "src/utils/sqlCompletionCache.ts",
+          "sha256": "c13312c76deb3c3e67a275c0678e3c98d5e27c82accb926332148e37b9fe5118"
+        },
+        {
+          "path": "src/utils/sqlCompletionCandidates.ts",
+          "sha256": "e2c2c2fd3e5b8a4123576c540c4fd54a809019d3d964c7214b34830747578b9b"
+        },
+        {
+          "path": "src/utils/sqlCompletionContext.ts",
+          "sha256": "f1c5c811e47eecb0df031cf0e6ad89d855ead3a58e60a6268a38b0c393e261d4"
+        },
+        {
+          "path": "src/utils/sqlCompletionDocumentCache.ts",
+          "sha256": "bb5fe1abb23cf0a1a213002a9a104860b0d76f8800b4f6c4acd31b67770310e9"
+        },
+        {
+          "path": "src/utils/sqlCompletionEditor.ts",
+          "sha256": "c44e4ebc3e74a69cb4bb7bbdc83289bd811d169fde874a970f3561492af43ccf"
+        },
+        {
+          "path": "src/utils/sqlCompletionForeignKeyCache.ts",
+          "sha256": "ed4cdb1a65bc0ecec23810686c687bdd0ae9718293970ed83fb4a365d1c4fcb0"
+        },
+        {
+          "path": "src/utils/sqlCompletionInvalidation.ts",
+          "sha256": "939415649fa38504c204266c2901460dd37a0362e595c34b2d85b2d13938c647"
+        },
+        {
+          "path": "src/utils/sqlCompletionJoin.ts",
+          "sha256": "f9c396db8446225403b98f298d7ff49f62ffb7305dafe3f0aaf41ce65d11de97"
+        },
+        {
+          "path": "src/utils/sqlCompletionMetadataIndex.ts",
+          "sha256": "7c6c2fd3f8acace856f4e484ee94d9d88a7adef57c4d734755cee84184d89615"
+        },
+        {
+          "path": "src/utils/sqlCompletionProjection.ts",
+          "sha256": "1e3a594d6b4daed5ca891731196061ffcd85d0d5af43c4484d1cf1498903393e"
+        },
+        {
+          "path": "src/utils/sqlCompletionSchema.ts",
+          "sha256": "342681a53fc5b4c6f90cc455931ed991b1719acf8c276e29ac1ed668e8d63b30"
+        },
+        {
+          "path": "src/utils/sqlCompletionScopeParser.ts",
+          "sha256": "f03579484cf54b27e2dcba03326940a16687311feb7d053599806dd641e0eb69"
+        },
+        {
+          "path": "src/utils/sqlCompletionScopes.ts",
+          "sha256": "84ecd9c406628bac161dcd8d1a94124b2ed10cd42848b730125074a63d669660"
+        },
+        {
+          "path": "src/utils/sqlCompletionTokenizer.ts",
+          "sha256": "356731920ec03a1dee3bc8e6f8ee4f3ee00620b9a79b2ba859af8d0e769f37d6"
+        },
+        {
+          "path": "src/utils/sqlCompletionTypes.ts",
+          "sha256": "45ee132b3f10649bf78926d01aed8ccd48404535e71ceca2e213c802b8cd5fb6"
+        },
+        {
+          "path": "src/utils/sqlFileIoUi.ts",
+          "sha256": "f86de78d38e36bddc577e3dff9dad3b153e7475f214b1de2f8069ac73b976977"
+        },
+        {
+          "path": "src/utils/sqlFormat.ts",
+          "sha256": "0523000950cda0036500bb229e4fd940f601538e19155f24bfbafafe5bcf2059"
+        },
+        {
+          "path": "src/utils/sqlIoProgress.ts",
+          "sha256": "8927ea802e7aa9950b7c81e04677ee17caf1f8befaf67c5bbeb6598c89d189b2"
+        },
+        {
+          "path": "src/utils/sqlUtils.ts",
+          "sha256": "a43f058149549cb40789764a460e56b49c75adcdaa0378050e7c7b83e713ddb4"
+        },
+        {
+          "path": "src/utils/systemDatabase.ts",
+          "sha256": "78e4187393e54232ea76f108360aacbacf1398fd924d19fc76bed8518245ea50"
+        },
+        {
+          "path": "src/utils/tableColumnReorder.ts",
+          "sha256": "bece9c05d2bff34b1e5b0f28ba9eab8cac2266fa47a38d097c8ae9671fa26fd1"
+        },
+        {
+          "path": "src/utils/tableListSearchFocus.ts",
+          "sha256": "39734776ee0e55be2013775314362d9ed5745644685aa0a7f461eb3aeb3cc5d8"
+        },
+        {
+          "path": "src/utils/tableSqlExamples.ts",
+          "sha256": "128503294ec37cafb3b1acb9bb1ff4328e291b7c82646c588692968cbf851ad6"
+        },
+        {
+          "path": "src/utils/tableStorageStats.ts",
+          "sha256": "d385ff05c467f4c319f04d3c9abf5bb98c086ed44cdeba51418e4fae56c4c351"
+        },
+        {
+          "path": "src/utils/temporalValue.ts",
+          "sha256": "ff66b362257a0fad9a5f13b4eb25da99bcae8f2027975939e2f32104f7e53351"
+        },
+        {
+          "path": "src/utils/truncateTableErrors.ts",
+          "sha256": "fefdbf43c7358dad237101e1755f062b631088b74e0069e9f5d2287342b35520"
+        },
+        {
+          "path": "src/utils/whereFilterUtils.ts",
+          "sha256": "b6c5ee07e973682dc12efaf489a38874c70d41d64020a94f828f43ad64efa39a"
+        },
+        {
+          "path": "src/utils/windowLaunch.ts",
+          "sha256": "afeb4b9d760d9a9c2c75417e3e5574263f0761f322e765aa222b64b78f73c346"
+        },
+        {
+          "path": "src/vite-env.d.ts",
+          "sha256": "1915265bb8d07abaaff0a0b07e02ed681f190747db7ae45fafa88eb1599916cc"
+        },
+        {
+          "path": "src/workers/excelExport.worker.ts",
+          "sha256": "b094511dc323bc51c85b3910a1b1b2d7070ad4605f2158b3b79a9491ca46a40e"
+        },
+        {
+          "path": "tsconfig.json",
+          "sha256": "8c90f229d37238aa2bd57fdac59b8024d75f7b2bf9c9c250024a234c29356610"
+        },
+        {
+          "path": "vite.config.ts",
+          "sha256": "8db27b0acc1adf0d8949c1e70d530ac26a8e33594f1881f40a2b5b6bc017d4af"
+        }
+      ]
+    },
+    "generatedRustSha256": "74919d887f3783bee3e22d37550939fe183d032fee8273cf03fa4527f59b921b",
+    "generatedConfigSha256": "c4da29348fdc78945a8c933faa65d52d779fe53722a16ed56e031957ae5ba144",
+    "benchmarkPageSha256": "618849aa94bc2eff10cf28477c9713bf432b4004cdc4ea02b03ce4e8c99b185c",
+    "binaryPath": "/Volumes/CaseSensitive/workspace/myself/db-connect/src-tauri/target/release/examples/excel_export_probe_4207",
+    "binarySha256": "6d9d69e73b4e99415051251c4cf6f10fbdd81f044167df363e2a5d62416ff43e",
+    "buildCommand": [
+      "cargo",
+      "build",
+      "--offline",
+      "--manifest-path",
+      "src-tauri/Cargo.toml",
+      "--example",
+      "excel_export_probe_4207",
+      "--release"
+    ]
+  },
+  "latencySummary": [
+    {
+      "byteLength": 1048576,
+      "roundTripMs": {
+        "count": 20,
+        "p50": 1,
+        "p95": 2
+      },
+      "rustProcessingMs": {
+        "count": 20,
+        "p50": 0.235666,
+        "p95": 0.56275
+      },
+      "ipcWaitingAndOverheadMs": {
+        "count": 20,
+        "p50": 0.7643340000000001,
+        "p95": 1.375416
+      },
+      "fsWriteMs": {
+        "count": 20,
+        "p50": 0.13504200000000002,
+        "p95": 0.16387500000000002
+      }
+    },
+    {
+      "byteLength": 10485760,
+      "roundTripMs": {
+        "count": 20,
+        "p50": 5,
+        "p95": 5
+      },
+      "rustProcessingMs": {
+        "count": 20,
+        "p50": 1.891,
+        "p95": 2.254208
+      },
+      "ipcWaitingAndOverheadMs": {
+        "count": 20,
+        "p50": 2.978584,
+        "p95": 3.371417
+      },
+      "fsWriteMs": {
+        "count": 20,
+        "p50": 1.5026659999999998,
+        "p95": 2.1423330000000003
+      }
+    }
+  ],
+  "environment": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cargoProfile": "release",
+    "osRelease": "27.0.0",
+    "node": "v25.5.0",
+    "buildEnvironment": {
+      "SDKROOT": "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk",
+      "RUSTFLAGS": null,
+      "CARGO_BUILD_TARGET": null,
+      "CARGO_TARGET_DIR": null
+    },
+    "tauriVersion": "2.11.3",
+    "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; worker-src 'self' blob:",
+    "runDirectory": "/tmp/excel-export-tauri.HUGm98",
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)"
+  },
+  "methodology": {
+    "transport": "真实 Tauri WKWebView 原始 ArrayBuffer IPC；包装命令直接调用生产 file_io::write_binary_export",
+    "fixture": "1 MiB/10 MiB 固定合成字节，index mod 256；每种大小按 warmups 预热、repetitions 正式采样，复用缓冲区并覆盖同一中文/空格临时路径",
+    "rustProcessingMs": "Rust Instant 包围真实生产命令，含请求校验、登记领取、Vec 克隆、spawn_blocking 排队和 fs::write；无 fsync，不是隔离的纯写盘耗时",
+    "ipcWaitingAndOverheadMs": "前端 performance.now 调用往返持续时间减 Rust 处理持续时间；包含调度、传输及响应处理，不跨进程相减时间戳",
+    "diskMicrobenchmark": "独立微基准：预先分配填充同尺寸 Vec，在 spawn_blocking 内用 Instant 仅包围同一 std::fs::write API，覆盖另一临时文件；不含排队/分配、不含 fsync，不是生产命令内部阶段拆解",
+    "percentiles": "每种字节数分别统计；nearest-rank，p50=排序后ceil(n×0.5)，p95=ceil(n×0.95)；全部正式样本保留于 cases/diskCases，预热不入统计",
+    "isolation": "独立临时 Context、最小 AppState、无痕 WebView；不启动主应用、不加载连接管理器或用户数据库配置"
+  },
+  "memory": {
+    "method": "ps 每 20ms 采样；Rust PID 来自本次 spawn，仅给采样最大 RSS；候选 WebContent 通过新 PID 识别且未经归属确认，候选汇总仅为未归属观察的采样下界，不能作为本应用 WebContent 内存或瞬时峰值结论；不是 JS 堆/全部分配字节",
+    "samplingError": null,
+    "measuredSampleCount": 3,
+    "sampledPeakRustProcessRSSBytes": 160006144,
+    "sampledPeakCandidateWebContentRSSBytes": 97599488,
+    "samples": [
+      {
+        "phase": "setup",
+        "timestampMs": 153485.521167,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 153526.965542,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 153568.383667,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 153610.18475,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 153652.515917,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 153694.868709,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 153735.827167,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 153776.537542,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 153818.837292,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 153859.800459,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 153901.736625,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 153943.608209,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 153985.064375,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154027.41225,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154069.490834,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154110.524792,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154152.421167,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154194.765,
+        "rustProcessRSSBytes": 32768,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154236.060792,
+        "rustProcessRSSBytes": 13058048,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154278.774209,
+        "rustProcessRSSBytes": 21528576,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154320.890542,
+        "rustProcessRSSBytes": 28950528,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154361.698959,
+        "rustProcessRSSBytes": 37470208,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154403.421417,
+        "rustProcessRSSBytes": 39305216,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154444.102667,
+        "rustProcessRSSBytes": 39305216,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154486.514417,
+        "rustProcessRSSBytes": 39337984,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154528.965584,
+        "rustProcessRSSBytes": 42254336,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154568.672584,
+        "rustProcessRSSBytes": 47382528,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154610.081167,
+        "rustProcessRSSBytes": 53346304,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154652.789709,
+        "rustProcessRSSBytes": 58966016,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154694.612834,
+        "rustProcessRSSBytes": 63193088,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154736.102125,
+        "rustProcessRSSBytes": 67256320,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154776.024042,
+        "rustProcessRSSBytes": 68272128,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154818.235292,
+        "rustProcessRSSBytes": 73629696,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154859.455417,
+        "rustProcessRSSBytes": 77594624,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154899.458209,
+        "rustProcessRSSBytes": 80936960,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154940.437,
+        "rustProcessRSSBytes": 82411520,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 154982.359584,
+        "rustProcessRSSBytes": 83345408,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 155023.148917,
+        "rustProcessRSSBytes": 84393984,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 155065.122584,
+        "rustProcessRSSBytes": 87572480,
+        "candidateWebContentRSSBytes": 1228800,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 155106.674334,
+        "rustProcessRSSBytes": 91258880,
+        "candidateWebContentRSSBytes": 11698176,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 155148.096292,
+        "rustProcessRSSBytes": 93978624,
+        "candidateWebContentRSSBytes": 12533760,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 155190.458084,
+        "rustProcessRSSBytes": 97107968,
+        "candidateWebContentRSSBytes": 13221888,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 155232.422292,
+        "rustProcessRSSBytes": 101744640,
+        "candidateWebContentRSSBytes": 13189120,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 155296.79175,
+        "rustProcessRSSBytes": 106872832,
+        "candidateWebContentRSSBytes": 19185664,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 155337.744625,
+        "rustProcessRSSBytes": 106856448,
+        "candidateWebContentRSSBytes": 23724032,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 155378.580209,
+        "rustProcessRSSBytes": 106905600,
+        "candidateWebContentRSSBytes": 26492928,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 155419.291,
+        "rustProcessRSSBytes": 108593152,
+        "candidateWebContentRSSBytes": 30179328,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 155460.605792,
+        "rustProcessRSSBytes": 110559232,
+        "candidateWebContentRSSBytes": 33767424,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 155501.43375,
+        "rustProcessRSSBytes": 110788608,
+        "candidateWebContentRSSBytes": 33783808,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "setup",
+        "timestampMs": 155542.046459,
+        "rustProcessRSSBytes": 110772224,
+        "candidateWebContentRSSBytes": 37765120,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "measure",
+        "timestampMs": 155603.633084,
+        "rustProcessRSSBytes": 116867072,
+        "candidateWebContentRSSBytes": 62308352,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "verify",
+        "timestampMs": 155643.433125,
+        "rustProcessRSSBytes": 117932032,
+        "candidateWebContentRSSBytes": 62849024,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "verify",
+        "timestampMs": 155685.184959,
+        "rustProcessRSSBytes": 159956992,
+        "candidateWebContentRSSBytes": 97517568,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "warmup",
+        "timestampMs": 155726.497125,
+        "rustProcessRSSBytes": 159989760,
+        "candidateWebContentRSSBytes": 97533952,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "measure",
+        "timestampMs": 155766.728209,
+        "rustProcessRSSBytes": 160006144,
+        "candidateWebContentRSSBytes": 97583104,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "measure",
+        "timestampMs": 155807.264792,
+        "rustProcessRSSBytes": 159989760,
+        "candidateWebContentRSSBytes": 97599488,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "verify",
+        "timestampMs": 155848.988834,
+        "rustProcessRSSBytes": 159989760,
+        "candidateWebContentRSSBytes": 97599488,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "verify",
+        "timestampMs": 155889.214834,
+        "rustProcessRSSBytes": 159989760,
+        "candidateWebContentRSSBytes": 97599488,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "verify",
+        "timestampMs": 155929.803625,
+        "rustProcessRSSBytes": 159989760,
+        "candidateWebContentRSSBytes": 97599488,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "verify",
+        "timestampMs": 155970.950667,
+        "rustProcessRSSBytes": 160006144,
+        "candidateWebContentRSSBytes": 97632256,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "verify",
+        "timestampMs": 156011.019584,
+        "rustProcessRSSBytes": 160006144,
+        "candidateWebContentRSSBytes": 97632256,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "disk-benchmark",
+        "timestampMs": 156052.55875,
+        "rustProcessRSSBytes": 160137216,
+        "candidateWebContentRSSBytes": 97632256,
+        "candidateWebContentPids": [
+          19415
+        ]
+      },
+      {
+        "phase": "disk-benchmark",
+        "timestampMs": 156093.650667,
+        "rustProcessRSSBytes": 0,
+        "candidateWebContentRSSBytes": 0,
+        "candidateWebContentPids": []
+      }
+    ]
+  },
+  "unmeasured": [
+    "完整主应用交互/窗口关闭",
+    "Windows/Linux 实机",
+    "生产命令内部纯写盘阶段和 fsync",
+    "磁盘满和物理磁盘故障",
+    "采样间瞬时峰值与精确 WebContent 进程归属",
+    "完整主应用 Release 性能（本次仅独立 example）",
+    "1万/10万行宽字段的完整导出阶段测量",
+    "Worker 输入克隆及保持期内存"
+  ]
+}

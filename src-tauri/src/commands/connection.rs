@@ -19,7 +19,9 @@ use sha2::Sha256;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
-use tauri::{AppHandle, Manager, State};
+#[cfg(not(feature = "performance-desktop"))]
+use tauri::Manager;
+use tauri::{AppHandle, State};
 
 const CONNECTION_EXPORT_FORMAT: &str = "db-connect.connections";
 const CONNECTION_EXPORT_VERSION: u32 = 1;
@@ -271,6 +273,12 @@ pub(crate) fn mask_passwords(config: &mut ConnectionConfig) {
 
 /// 获取连接配置文件路径
 fn get_connections_file(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    #[cfg(feature = "performance-desktop")]
+    let data_dir = {
+        let _ = app;
+        crate::performance_desktop::data_dir()?
+    };
+    #[cfg(not(feature = "performance-desktop"))]
     let data_dir = app
         .path()
         .app_data_dir()

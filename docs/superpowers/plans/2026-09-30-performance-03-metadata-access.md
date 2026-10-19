@@ -183,3 +183,19 @@ SQL Server、ClickHouse 未有可用隔离服务器，本轮只有离线断言�
 本轮全量Rust/前端回归通过，既有离线SQL、缓存和生命周期断言继续有效。只读环境探测确认Docker可用但无PostgreSQL/SQL Server/ClickHouse镜像；没有新增实库权限、服务端计数或完整主应用p95样本。任务4的测量复选框及本专项总进度继续保留未完成；旧多库端到端对照依然缺失。
 
 本轮环境、命令及逐项限制见 [收尾执行归档](../../performance/remaining-status-2026-10-14.md) 和 [剩余任务清单](2026-10-13-performance-remaining-tasks.md)。带日期的旧检查结果不改写为本轮结果。
+
+## 2026-10-15—17 本机续验
+
+交付 PostgreSQL 分页实库夹具及 `--preflight --suite pagination --output` 入口，覆盖服务端冷/热/失效1/0/1计数、连续20次非游标页、5次预热/20次正式采样及可信键/旧游标；数据库调用显式列出，不在循环中查询SQL。夹具通过编译，当前预检缺少 `postgres:17-alpine`，退出2；未拉取镜像、未产生实测样本。
+
+见 [夹具说明](../../performance/remaining-postgres-pagination-2026-10-15.md) 与 [本机续验汇总](../../performance/remaining-local-validation-2026-10-16.md)。SQL Server/ClickHouse权限矩阵、PG实际分页计数及完整应用分段p95保持待验，任务4和总进度不变。
+
+## 2026-10-17：授权下载镜像后的 PostgreSQL 补验
+
+用户允许下载 Docker 镜像后，官方 `postgres:17-alpine`（PG 17.11、arm64）独立容器通过目录和生产分页实库验收。5 次预热、20 次正式；每组冷读/20 次热读/失效后读的元数据、数据页、COUNT 计数严格为 `[1,1,0]` / `[0,20,0]` / `[1,1,0]`。正式热读 400/400 命中缓存，可信主键、继承重复键等回退、整数精度和旧游标失效均通过。
+
+生产 Rust 表页函数冷读/热读/失效后 p95 分别为 2.503 / 0.461209 / 2.541083 ms；包含连接池借出、loopback TCP、必要元数据及数据页解码，不包含 Tauri IPC、WebView、渲染或 COUNT。目录管理员/受限账号各 1 条集合 SQL，字段与独立旧查询一致。样本、分位数、25 组服务端计数及源码哈希已独立复核，专属容器/匿名卷与临时凭据清理成功。见 [原始证据](../../performance/metadata-postgres-pagination-2026-10-17.json)。
+
+此结果补齐 T04 的 PostgreSQL 子项，不完成完整应用目录刷新与分页的端到端验收；原任务 4 测量复选框保持未勾选。
+
+同轮 ClickHouse 25.8.33.6 完成真实目录权限和查询计数：普通账号 1/5/256 名称及受限/无授权账号各一次集合执行，空/257 名称零查询，独立旧单目录字段/顺序/隐藏目录语义一致。SQL Server 2022 模拟启动与夹具 DDL 成功，但生产连接 TLS 握手在默认及 7 天自签证书对照后仍阻断，未进入目录权限/计数断言；6 次失败保留且专属容器与凭据均清理。T03 整体保持未完成。详情见 [Docker 补验汇总](../../performance/docker-database-validation-2026-10-17.md)。

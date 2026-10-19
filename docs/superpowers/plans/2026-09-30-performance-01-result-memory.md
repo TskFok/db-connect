@@ -154,3 +154,9 @@ interface ResultCacheController {
 生产命令级页大小补验已完成：持连接管理器锁时，0/10,001/u32::MAX 首次轮询即拒绝；1/10,000 等待锁后进入连接查找。删除校验的负向变异被新测试捕获，恢复后定向3项通过、全量Rust786通过18忽略。仅为测试启用同版Tauri MockRuntime，生产行为未改，不代表真实IPC。历史“仅源码顺序确认”的边界由本次命令回归补齐；完整应用1/10/30标签内存及远程驱动矩阵仍待验。
 
 本轮环境、命令及逐项限制见 [收尾执行归档](../../performance/remaining-status-2026-10-14.md) 和 [剩余任务清单](2026-10-13-performance-remaining-tasks.md)。带日期的旧检查结果不改写为本轮结果。
+
+## 2026-10-15—17 本机续验
+
+MySQL 8.4.11 隔离实例通过生产 `query_table_data` / `query_full_rows` / `cancel_table_query` 命令函数：6×9 MiB 大字段超32 MiB整次失败，后续查询可用，无键/单键/复合键/空表、连接前取消与旧句柄隔离均覆盖。使用测试 MockRuntime；不代表实际 IPC、活动查询服务端中断或完整应用 RSS。新版 runner 清理异常保留证据的5项故障注入测试通过，原实测JSON不改写为新版运行。
+
+见 [MySQL 验收说明](../../performance/mysql-budget-validation-2026-10-15.md) 与 [本机续验汇总](../../performance/remaining-local-validation-2026-10-16.md)。完整应用1/10/30标签内存及其他驱动矩阵仍待验，预算仍不是进程RSS上限。

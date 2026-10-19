@@ -4,16 +4,21 @@ import { promisify } from "node:util";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
+import { release as osRelease } from "node:os";
+import { verifyExcelWorkbook } from "./excel-export-validation.mjs";
 import { setInterval, clearInterval, setTimeout, clearTimeout } from "node:timers";
 import { createHash } from "node:crypto";
-import { unzipSync, strFromU8 } from "fflate";
 
 const exec = promisify(execFile);
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const runDirectory = resolve(process.argv[2]);
 const outputPath = resolve(process.argv[3]);
-const repetitions = Number(process.env.EXCEL_TAURI_REPETITIONS ?? 5);
+const repetitions = Number(process.env.EXCEL_TAURI_REPETITIONS ?? 20);
+const warmups = Number(process.env.EXCEL_TAURI_WARMUPS ?? 5);
+const cargoProfile = process.env.EXCEL_TAURI_PROFILE ?? "debug";
 if (!Number.isInteger(repetitions) || repetitions < 1) throw new Error("重复次数必须为正整数");
+if (!Number.isInteger(warmups) || warmups < 0) throw new Error("预热次数必须为非负整数");
+if (!["debug", "release"].includes(cargoProfile)) throw new Error("EXCEL_TAURI_PROFILE 仅支持 debug/release");
 const exampleName = `excel_export_probe_${process.pid}`;
 const examplePath = join(repo, "src-tauri/examples", `${exampleName}.rs`);
 const assetsPath = join(runDirectory, "assets");
@@ -54,7 +59,7 @@ async function workerSmoke(path) {
         if (data.error) reject(new Error(data.error)); else resolve(data.buffer);
       };
       worker.postMessage({ id: "native-smoke", sheets: [
-        { sheet: "真实:导出", data: [["文本", "日期", "整数", "布尔", "空值"], ["中文🙂", new Date("2026-09-30T01:02:03.000Z"), 9007199254740993n, true, null]] },
+        { sheet: "真实:导出", data: [["文本", "日期", "整数", "布尔", "空值"], ["中文🙂<&", new Date("2026-09-30T01:02:03.000Z"), 9007199254740993n, true, null], ["末行🙂", new Date("2000-01-01T00:00:00.000Z"), -9007199254740993n, false, null]] },
         { sheet: "明细", data: [["名称"], ["第二表"]] },
       ] });
     });
@@ -74,15 +79,17 @@ async function run() {
   for (const byteLength of [1048576, 10485760]) {
     const bytes = new Uint8Array(byteLength);
     for (let index = 0; index < bytes.length; index++) bytes[index] = index & 255;
-    for (let iteration = 0; iteration <= config.repetitions; iteration++) {
+    for (let sampleIndex = 0; sampleIndex < config.warmups + config.repetitions; sampleIndex++) {
+      const isWarmup = sampleIndex < config.warmups;
+      const iteration = isWarmup ? sampleIndex + 1 : sampleIndex - config.warmups + 1;
       const exportId = await invoke("prepare_binary_export", { path: config.path });
-      await invoke("benchmark_phase", { phase: iteration === 0 ? "warmup" : "measure" });
+      await invoke("benchmark_phase", { phase: isWarmup ? "warmup" : "measure" });
       const started = performance.now();
       const rustProcessingMs = await invoke("benchmark_write", bytes.buffer, { headers: { "x-db-connect-export-id": exportId } });
       const roundTripMs = performance.now() - started;
       await invoke("benchmark_phase", { phase: "verify" });
       await invoke("benchmark_verify", { length: byteLength });
-      if (iteration > 0) cases.push({ byteLength, iteration, roundTripMs, rustProcessingMs, ipcWaitingAndOverheadMs: roundTripMs - rustProcessingMs });
+      if (!isWarmup) cases.push({ byteLength, iteration, roundTripMs, rustProcessingMs, ipcWaitingAndOverheadMs: roundTripMs - rustProcessingMs });
       assert(await rejected(() => invoke("benchmark_write", bytes.buffer, { headers: { "x-db-connect-export-id": exportId } })), "重复 ID 写入必须失败");
     }
   }
@@ -103,9 +110,11 @@ async function run() {
   await invoke("benchmark_verify", { length: 17 });
   await invoke("benchmark_phase", { phase: "disk-benchmark" });
   for (const byteLength of [1048576, 10485760]) {
-    for (let iteration = 0; iteration <= config.repetitions; iteration++) {
+    for (let sampleIndex = 0; sampleIndex < config.warmups + config.repetitions; sampleIndex++) {
+      const isWarmup = sampleIndex < config.warmups;
+      const iteration = isWarmup ? sampleIndex + 1 : sampleIndex - config.warmups + 1;
       const fsWriteMs = await invoke("benchmark_disk_write", { length: byteLength });
-      if (iteration > 0) diskCases.push({ byteLength, iteration, fsWriteMs });
+      if (!isWarmup) diskCases.push({ byteLength, iteration, fsWriteMs });
     }
   }
   assert(cspViolations.length === 0, "真实 Tauri 页面出现 CSP 违规");
@@ -128,6 +137,34 @@ async function processes() {
   }).filter(Boolean);
 }
 
+function sha256(value) { return createHash("sha256").update(value).digest("hex"); }
+async function sourceIdentity() {
+  // 覆盖独立 example 的 Rust 命令、生产 Worker 的全部前端输入、依赖锁及生成器。
+  const paths = new Set([
+    "src-tauri/Cargo.toml", "src-tauri/Cargo.lock", "src-tauri/build.rs", "src-tauri/tauri.conf.json",
+    "package.json", "package-lock.json", "vite.config.ts", "tsconfig.json",
+    "scripts/performance/excel-export-tauri.mjs", "scripts/performance/excel-export-tauri.rs",
+    "scripts/performance/excel-export-tauri.sh", "scripts/performance/excel-export-validation.mjs",
+  ]);
+  for (const directory of ["src", "src-tauri/src"]) {
+    const visit = async (relative) => {
+      for (const entry of await readdir(join(repo, relative), { withFileTypes: true })) {
+        const path = `${relative}/${entry.name}`;
+        if (entry.isDirectory()) await visit(path); else if (entry.isFile()) paths.add(path);
+      }
+    };
+    await visit(directory);
+  }
+  const files = [];
+  for (const path of [...paths].sort()) files.push({ path, sha256: sha256(await readFile(join(repo, path))) });
+  return { manifestSha256: sha256(JSON.stringify(files)), files };
+}
+function summary(values) {
+  const ordered = [...values].sort((a, b) => a - b);
+  const percentile = (fraction) => ordered[Math.ceil(ordered.length * fraction) - 1] ?? null;
+  return { count: ordered.length, p50: percentile(0.5), p95: percentile(0.95) };
+}
+
 let activeChild;
 let exampleCreated = false;
 try {
@@ -141,13 +178,19 @@ try {
   const source = (await readFile(join(repo, "scripts/performance/excel-export-tauri.rs"), "utf8")).replace("__BENCHMARK_CONFIG_PATH__", configPath);
   await writeFile(examplePath, source, { flag: "wx" });
   exampleCreated = true;
-  await runCommand("cargo", ["build", "--offline", "--manifest-path", "src-tauri/Cargo.toml", "--example", exampleName]);
+  const sourcesBeforeBuild = await sourceIdentity();
+  const buildArguments = ["build", "--offline", "--manifest-path", "src-tauri/Cargo.toml", "--example", exampleName, ...(cargoProfile === "release" ? ["--release"] : [])];
+  await runCommand("cargo", buildArguments);
+  const sourcesAfterBuild = await sourceIdentity();
+  if (sourcesBeforeBuild.manifestSha256 !== sourcesAfterBuild.manifestSha256) throw new Error("构建期间源码变化，请在工作区稳定后重跑以保留可信产物身份");
+  const binaryPath = join(repo, "src-tauri/target", cargoProfile, "examples", exampleName);
+  const binarySha256 = sha256(await readFile(binaryPath));
   const previousPids = new Set((await processes()).map((item) => item.pid));
   const samples = [];
   let phase = "setup";
   let sampling = false;
   let sampleError;
-  const child = spawn(join(repo, "src-tauri/target/debug/examples", exampleName), [runDirectory, casePath, String(repetitions)], { stdio: ["ignore", "pipe", "inherit"] });
+  const child = spawn(binaryPath, [runDirectory, casePath, String(warmups), String(repetitions)], { stdio: ["ignore", "pipe", "inherit"] });
   activeChild = child;
   child.stdout.on("data", (data) => {
     for (const line of data.toString().split("\n")) if (line.startsWith("PHASE:")) phase = line.slice(6).trim();
@@ -176,26 +219,25 @@ try {
   result.validations.permissionFailurePreservesFile = true;
   const workbookBytes = await readFile(join(runDirectory, "真实 Worker 导出.xlsx"));
   if (workbookBytes.byteLength !== result.worker.byteLength) throw new Error("生产 Worker 与真实落盘长度不一致");
-  const files = unzipSync(workbookBytes);
-  const workbook = strFromU8(files["xl/workbook.xml"]);
-  const strings = strFromU8(files["xl/sharedStrings.xml"]);
-  if (!workbook.includes('name="真实_导出"') || !workbook.includes('name="明细"') || (workbook.match(/<sheet\b/g) ?? []).length !== 2) throw new Error("真实 Tauri 导出的工作表数量或名称不一致");
-  for (const value of ["中文🙂", "2026-09-30T01:02:03.000Z", "9007199254740993", "第二表"]) if (!strings.includes(value)) throw new Error(`真实 Tauri 导出丢失夹具值：${value}`);
-  result.worker = { ...result.worker, productionAsset: productionWorkerNames[0], productionAssetSha256: productionWorkerSha256, workbookSha256: createHash("sha256").update(workbookBytes).digest("hex"), twoWorksheetXMLAndValuesVerified: true };
+  const workbookValidation = verifyExcelWorkbook(workbookBytes);
+  result.worker = { ...result.worker, productionAsset: productionWorkerNames[0], productionAssetSha256: productionWorkerSha256, workbookSha256: sha256(workbookBytes), workbookValidation };
   const measured = samples.filter((item) => item.phase === "measure");
   const report = {
-    schemaVersion: 1, recordedAt: new Date().toISOString(), repetitions, ...result,
-    environment: { platform: process.platform, arch: process.arch, cargoProfile: "debug", tauriVersion, csp: sourceConfig.app.security.csp, runDirectory, rustc: execFileSync("rustc", ["--version"], { encoding: "utf8" }).trim() },
+    schemaVersion: 2, recordedAt: new Date().toISOString(), warmups, repetitions, ...result,
+    artifactIdentity: { kind: "isolated-tauri-example", mainApplication: false, gitHead: execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim(), gitStatus: execFileSync("git", ["status", "--porcelain"], { cwd: repo, encoding: "utf8" }).trim(), sources: sourcesBeforeBuild, generatedRustSha256: sha256(source), generatedConfigSha256: sha256(await readFile(configPath)), benchmarkPageSha256: sha256(benchmark), binaryPath, binarySha256, buildCommand: ["cargo", ...buildArguments] },
+    latencySummary: [1048576, 10485760].map((byteLength) => ({ byteLength, roundTripMs: summary(result.cases.filter((item) => item.byteLength === byteLength).map((item) => item.roundTripMs)), rustProcessingMs: summary(result.cases.filter((item) => item.byteLength === byteLength).map((item) => item.rustProcessingMs)), ipcWaitingAndOverheadMs: summary(result.cases.filter((item) => item.byteLength === byteLength).map((item) => item.ipcWaitingAndOverheadMs)), fsWriteMs: summary(result.diskCases.filter((item) => item.byteLength === byteLength).map((item) => item.fsWriteMs)) })),
+    environment: { platform: process.platform, arch: process.arch, cargoProfile, osRelease: osRelease(), node: process.version, buildEnvironment: { SDKROOT: process.env.SDKROOT ?? null, RUSTFLAGS: process.env.RUSTFLAGS ?? null, CARGO_BUILD_TARGET: process.env.CARGO_BUILD_TARGET ?? null, CARGO_TARGET_DIR: process.env.CARGO_TARGET_DIR ?? null }, tauriVersion, csp: sourceConfig.app.security.csp, runDirectory, rustc: execFileSync("rustc", ["--version"], { encoding: "utf8" }).trim() },
     methodology: {
       transport: "真实 Tauri WKWebView 原始 ArrayBuffer IPC；包装命令直接调用生产 file_io::write_binary_export",
-      fixture: "1 MiB/10 MiB 固定合成字节，index mod 256；每种大小先热身一次，复用缓冲区并覆盖同一中文/空格临时路径",
+      fixture: "1 MiB/10 MiB 固定合成字节，index mod 256；每种大小按 warmups 预热、repetitions 正式采样，复用缓冲区并覆盖同一中文/空格临时路径",
       rustProcessingMs: "Rust Instant 包围真实生产命令，含请求校验、登记领取、Vec 克隆、spawn_blocking 排队和 fs::write；无 fsync，不是隔离的纯写盘耗时",
       ipcWaitingAndOverheadMs: "前端 performance.now 调用往返持续时间减 Rust 处理持续时间；包含调度、传输及响应处理，不跨进程相减时间戳",
       diskMicrobenchmark: "独立微基准：预先分配填充同尺寸 Vec，在 spawn_blocking 内用 Instant 仅包围同一 std::fs::write API，覆盖另一临时文件；不含排队/分配、不含 fsync，不是生产命令内部阶段拆解",
+      percentiles: "每种字节数分别统计；nearest-rank，p50=排序后ceil(n×0.5)，p95=ceil(n×0.95)；全部正式样本保留于 cases/diskCases，预热不入统计",
       isolation: "独立临时 Context、最小 AppState、无痕 WebView；不启动主应用、不加载连接管理器或用户数据库配置",
     },
-    memory: { method: "ps 每 20ms 采样；候选 WebContent 通过运行后新 PID 识别，归属是启发式，峰值是采样下界；不是 JS 堆/全部分配字节", samplingError: sampleError ?? null, measuredSampleCount: measured.length, sampledPeakRustProcessRSSBytes: measured.length ? Math.max(...measured.map((item) => item.rustProcessRSSBytes)) : null, sampledPeakCandidateWebContentRSSBytes: measured.length ? Math.max(...measured.map((item) => item.candidateWebContentRSSBytes)) : null, samples },
-    unmeasured: ["完整主应用交互/窗口关闭", "Windows/Linux 实机", "生产命令内部纯写盘阶段和 fsync", "磁盘满和物理磁盘故障", "采样间瞬时峰值与精确 WebContent 进程归属", "Release 构建性能"],
+    memory: { method: "ps 每 20ms 采样；Rust PID 来自本次 spawn，仅给采样最大 RSS；候选 WebContent 通过新 PID 识别且未经归属确认，候选汇总仅为未归属观察的采样下界，不能作为本应用 WebContent 内存或瞬时峰值结论；不是 JS 堆/全部分配字节", samplingError: sampleError ?? null, measuredSampleCount: measured.length, sampledPeakRustProcessRSSBytes: measured.length ? Math.max(...measured.map((item) => item.rustProcessRSSBytes)) : null, sampledPeakCandidateWebContentRSSBytes: measured.length ? Math.max(...measured.map((item) => item.candidateWebContentRSSBytes)) : null, samples },
+    unmeasured: ["完整主应用交互/窗口关闭", "Windows/Linux 实机", "生产命令内部纯写盘阶段和 fsync", "磁盘满和物理磁盘故障", "采样间瞬时峰值与精确 WebContent 进程归属", ...(cargoProfile === "debug" ? ["Release 构建性能"] : []), "完整主应用 Release 性能（本次仅独立 example）", "1万/10万行宽字段的完整导出阶段测量", "Worker 输入克隆及保持期内存"],
   };
   await mkdir(dirname(outputPath), { recursive: true });
   await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`);

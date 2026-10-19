@@ -2,6 +2,8 @@ mod commands;
 mod crypto;
 mod db;
 mod models;
+#[cfg(feature = "performance-desktop")]
+mod performance_desktop;
 mod util;
 
 use commands::{
@@ -57,6 +59,16 @@ impl Default for AppState {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
+    #[cfg(feature = "performance-desktop")]
+    let context = {
+        let mut context = context;
+        performance_desktop::initialize(&context.config().identifier)
+            .expect("完整应用验收隔离校验失败，拒绝启动");
+        performance_desktop::configure_window_storage(context.config_mut())
+            .expect("完整应用验收 WebView 存储隔离失败，拒绝启动");
+        context
+    };
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
@@ -157,6 +169,6 @@ pub fn run() {
             routine_event::drop_event,
             routine_event::set_event_enabled,
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }

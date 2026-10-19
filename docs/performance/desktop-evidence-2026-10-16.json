@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "measurementDate": "2026-10-16",
+  "archivedDate": "2026-10-17",
+  "timezone": "Asia/Shanghai",
+  "build": {
+    "appPath": "/private/var/folders/s6/43v9whz142j8qh9y203s7_bc0000gn/T/db-connect-desktop-3663a2fdb8f74ebb9380a7974ca4945c/DB Connect Performance 3663a2fd.app",
+    "executable": "/private/var/folders/s6/43v9whz142j8qh9y203s7_bc0000gn/T/db-connect-desktop-3663a2fdb8f74ebb9380a7974ca4945c/DB Connect Performance 3663a2fd.app/Contents/MacOS/db-connect-performance-3663a2fd",
+    "mode": "debug",
+    "sourceFingerprint": "d8c9eaf7b7e5d9ec7b9e7e70da178ec1237d5fc62f9f045912e4f0026d0e992a",
+    "gitHead": "e43940a50159cf6e075c49f5faf115e19c047958",
+    "binarySha256": "b102579a53c851bdf3658fb4ac027f219e40643dc80ecac5a8d4074d3b7de7f9",
+    "productionCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; worker-src 'self' blob:",
+    "builtAt": "2026-10-16T02:38:53.367Z",
+    "feature": "performance-desktop",
+    "instrumentation": "React profiling build; AppInner layout effects; native trusted input; no DOM commit duration claim"
+  },
+  "sourceFingerprintVerifiedAtArchive": "d8c9eaf7b7e5d9ec7b9e7e70da178ec1237d5fc62f9f045912e4f0026d0e992a",
+  "processSessions": [
+    {
+      "label": "native-save-cancel",
+      "pid": 21645,
+      "launchedAt": "2026-10-16T02:39:47.780Z",
+      "identitySource": "launch.json read during initial session; subsequently replaced by relaunch",
+      "evidenceFile": "desktop-save-cancel-2026-10-16.json",
+      "sha256": "a5953c87cd3ef3f7ada2834c41c2d66cbb8fbd196135a67776ab36ec1beadb91",
+      "manualObservation": {
+        "mechanism": "CUA native app accessibility/screenshot and native input",
+        "steps": [
+          "开始保存框取消观察",
+          "真实表格导出本页为Excel",
+          "观察macOS系统保存sheet",
+          "点击Cancel",
+          "保存观测"
+        ],
+        "dialogCancelObserved": true
+      },
+      "exitObservation": "PID 21645 absent before relaunch; exit cause was not measured"
+    },
+    {
+      "label": "native-interactions",
+      "pid": 58660,
+      "launchedAt": "2026-10-16T07:36:32.420Z",
+      "identitySource": "relaunch launch.json",
+      "evidenceFile": "desktop-interactions-2026-10-16.json",
+      "sha256": "0f40bd2c31b2b07a9c22fccc9e4d0829b9a169819ae8fa76ced5041a0b85d3aa",
+      "manualObservation": {
+        "mechanism": "CUA native app accessibility/screenshot and native input",
+        "dragScenesInOrder": [
+          "synthetic_wide table",
+          "SQL editor"
+        ],
+        "confirmed": [
+          "ProjectIntro injected load failure, close, reopen, visible successful content",
+          "Shortcuts help opened with Command+/ and closed with Escape",
+          "small table shows 20 rows, switched back to wide table",
+          "wide table page 2 shows row 51, vertical scroll shows row 74 onward",
+          "index and trigger tabs show zero entries",
+          "CreateTableSql displays SQLite unsupported operation"
+        ],
+        "moduleLoadOnly": [
+          "DatabaseCompareModal",
+          "ForeignKeyList"
+        ],
+        "inputLimitations": [
+          "drag API produced 40ms and 14ms gestures, not 2 seconds",
+          "some single clicks had no visible result; double-click retries used for idempotent table/paging/save actions",
+          "no reliable same-width/blur/unmount or comparison-list result recorded"
+        ]
+      },
+      "exitObservation": "Command+Q issued to unique test app; native tool returned App quit"
+    }
+  ],
+  "limitations": [
+    "same runId identifies build/fixture directory, not process continuity",
+    "do not subtract counters across the two evidence files",
+    "React profiler actualDuration is render time, not DOM commit duration",
+    "rAF observed frame counts do not measure production hook DOM-write counts",
+    "Debug instrumented synthetic main application, not production latency benchmark",
+    "native system cancel observation is separate from script counters; script manual-confirmation flag remains unchanged"
+  ]
+}

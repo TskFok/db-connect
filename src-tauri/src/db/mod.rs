@@ -26,6 +26,12 @@ pub mod table_query;
 #[cfg(test)]
 mod metadata_bench_tests;
 #[cfg(test)]
+mod metadata_clickhouse_tests;
+#[cfg(test)]
 mod metadata_mysql8_tests;
 #[cfg(test)]
+mod metadata_pg_pagination_tests;
+#[cfg(test)]
 mod metadata_pg_tests;
+#[cfg(test)]
+mod metadata_sqlserver_tests;

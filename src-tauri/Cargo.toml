@@ -9,6 +9,11 @@ edition = "2021"
 name = "db_connect_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = []
+# 验收专用构建；缺少独立身份/临时目录时拒绝启动，默认发行构建不包含。
+performance-desktop = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

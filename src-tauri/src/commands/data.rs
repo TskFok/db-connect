@@ -31,6 +31,10 @@ use tauri::State;
 #[path = "data_batch_tests.rs"]
 mod batch_tests;
 
+#[cfg(test)]
+#[path = "data_mysql_budget_tests.rs"]
+mod mysql_budget_tests;
+
 // ─── 辅助函数 ──────────────────────────────────────────────────────────
 
 /// JavaScript Number.MAX_SAFE_INTEGER (2^53 - 1)，超出此范围的整数在 JSON 中以字符串形式保留，避免前端精度丢失

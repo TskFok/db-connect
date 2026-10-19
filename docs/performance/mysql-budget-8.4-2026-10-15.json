@@ -1,0 +1,64 @@
+{
+  "started_at": "2026-10-15T02:51:08.121270+00:00",
+  "image": "mysql:8.4",
+  "marker": "fe72596e1b95416bbd37195544b85706",
+  "status": "passed",
+  "scope": "production Rust commands with MockRuntime; no IPC/WebView/RSS measurement",
+  "host": {
+    "system": "Darwin",
+    "release": "27.0.0",
+    "machine": "arm64"
+  },
+  "build_mode": "cargo test debug",
+  "sdkroot": "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk",
+  "source_sha256": {
+    "scripts/performance/mysql-budget-validation.py": "18faeda1dd2dd8a48747a504767ab297c2528dd3e47ef3caed4eddabf430a6ae",
+    "src-tauri/src/commands/data.rs": "5315bbab88b0e8f00fe01eb163b445e9c209e056f402581a0609f894b1d9ec77",
+    "src-tauri/src/commands/data_mysql_budget_tests.rs": "9dc428b62010854590cf63a625841d8950ab18fa1a520c9e37a2e97b713408d6",
+    "src-tauri/src/db/result_budget.rs": "9e5c634fb53fd696be0bcabf26d5e6d0242a8b56070aa1d92176c8ec1abfa0a6",
+    "src-tauri/src/db/mysql_deferred_fields.rs": "57bd0577e6e0086d8564c6e932ded16d0b65df70deec23f6bd9342f32cb76d25",
+    "src-tauri/src/db/connection.rs": "0284811588590a10e0ce8bbad1361b229f2f101d930a36d219fab5edc2de4f74",
+    "src-tauri/src/db/table_pagination.rs": "78f1b56e28cb43010df1627cb6e34ba3f45f03d93556d9bc36b00ddbca26aeed",
+    "src-tauri/Cargo.lock": "7dc8410823fa4ef430e748953fb9a08409d0e397448ea67c4a53b073f81cff73"
+  },
+  "image_id": "sha256:6ea90827b1100f8f2ae306a539f86d2c264a26ed435a2a9f75551dd5c3aeb242",
+  "version": "8.4.11",
+  "server_uuid": "467808cd-c843-11f1-b0a1-e21f06927680",
+  "port": 52834,
+  "command": "cargo test --offline --locked --manifest-path src-tauri/Cargo.toml --lib mysql_budget_isolated_commands -- --ignored --nocapture --test-threads=1",
+  "git_head": "e43940a50159cf6e075c49f5faf115e19c047958",
+  "cargo_exit_code": 0,
+  "assertions": {
+    "cancellation_scope": "deterministic pre-connection cancellation and stale-handle isolation; not active server query termination",
+    "field_bytes": 9437184,
+    "large_rows_per_table": 6,
+    "not_measured": [
+      "in_flight_server_cancellation",
+      "IPC",
+      "WebView",
+      "RSS",
+      "100000_row_limit"
+    ],
+    "passed": [
+      "no_key_page_over_budget_returns_error",
+      "single_key_preview",
+      "single_key_full_over_budget_returns_error",
+      "composite_key_preview",
+      "composite_key_full_over_budget_returns_error",
+      "post_failure_page_and_full_row_queries",
+      "no_key_full_row_rejected",
+      "empty_no_key_page_columns",
+      "empty_composite_page_and_full_row_columns",
+      "pre_cancel_before_connection_access",
+      "finished_and_cancelled_old_handles_do_not_cancel_new_real_query"
+    ],
+    "production_commands": [
+      "query_table_data",
+      "query_full_rows",
+      "cancel_table_query"
+    ],
+    "result_budget_bytes": 33554432
+  },
+  "container_and_volumes_removed": true,
+  "finished_at": "2026-10-15T02:51:31.193269+00:00"
+}

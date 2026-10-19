@@ -14,6 +14,7 @@ pub struct AppState {
 struct BenchmarkState {
     directory: PathBuf,
     result_path: PathBuf,
+    warmups: usize,
     repetitions: usize,
 }
 
@@ -24,6 +25,7 @@ struct BenchmarkConfig {
     missing_parent_path: String,
     read_only_path: String,
     worker_path: String,
+    warmups: usize,
     repetitions: usize,
 }
 
@@ -50,6 +52,7 @@ fn benchmark_config(state: State<'_, BenchmarkState>) -> BenchmarkConfig {
             .join("真实 Worker 导出.xlsx")
             .to_string_lossy()
             .into_owned(),
+        warmups: state.warmups,
         repetitions: state.repetitions,
     }
 }
@@ -118,9 +121,17 @@ fn benchmark_finish(
 
 fn main() {
     let arguments: Vec<_> = std::env::args_os().skip(1).collect();
-    assert_eq!(arguments.len(), 3, "参数：临时目录 结果路径 重复次数");
+    assert_eq!(
+        arguments.len(),
+        4,
+        "参数：临时目录 结果路径 预热次数 正式次数"
+    );
     let directory = PathBuf::from(&arguments[0]);
-    let repetitions: usize = arguments[2]
+    let warmups: usize = arguments[2]
+        .to_string_lossy()
+        .parse()
+        .expect("预热次数必须为整数");
+    let repetitions: usize = arguments[3]
         .to_string_lossy()
         .parse()
         .expect("重复次数必须为整数");
@@ -131,6 +142,7 @@ fn main() {
         .manage(BenchmarkState {
             directory,
             result_path: PathBuf::from(&arguments[1]),
+            warmups,
             repetitions,
         })
         .invoke_handler(tauri::generate_handler![

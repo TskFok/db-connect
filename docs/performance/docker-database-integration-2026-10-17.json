@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "archivedDate": "2026-10-17",
+  "timezone": "Asia/Shanghai",
+  "branch": "dd",
+  "baseCommit": "e43940a50159cf6e075c49f5faf115e19c047958",
+  "mode": "uncommitted-working-tree",
+  "kind": "docker-isolated-database-acceptance-and-rust-regression",
+  "checks": [
+    {
+      "id": "rust-default",
+      "command": "cargo test --offline --locked --manifest-path src-tauri/Cargo.toml",
+      "exitCode": 0,
+      "localLog": "/private/tmp/db-connect-docker-final-rust-2026-10-17.log",
+      "outputSha256": "3d03f1c22af09de917bc7af4bf8d0fc58a4f23831463f0b51de5ee9d33dba0d2",
+      "counts": {
+        "passed": 786,
+        "failed": 0,
+        "ignored": 22,
+        "binCases": 0,
+        "docCases": 0
+      },
+      "environment": {
+        "SDKROOT": "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"
+      }
+    },
+    {
+      "id": "python-runner-faults",
+      "command": "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/performance -p 'test_*validation.py'",
+      "exitCode": 0,
+      "localLog": "/private/tmp/db-connect-docker-final-python-2026-10-17.log",
+      "outputSha256": "00de94844bab8e5ea91924feb4fac557a3b34721a4df7209cafa28dfc6579e67",
+      "counts": {
+        "passed": 29,
+        "failed": 0
+      }
+    },
+    {
+      "id": "rust-fmt",
+      "command": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
+      "exitCode": 0,
+      "localLog": "/private/tmp/db-connect-docker-final-fmt-2026-10-17.log",
+      "outputSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "environment": {}
+    },
+    {
+      "id": "rust-clippy-default",
+      "command": "cargo clippy --offline --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+      "exitCode": 0,
+      "localLog": "/private/tmp/db-connect-docker-final-clippy-2026-10-17.log",
+      "outputSha256": "447e531f0684cacfbd8fde21b537e07fcda4689eb1a66a8034391104836971a7",
+      "environment": {
+        "SDKROOT": "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"
+      }
+    },
+    {
+      "id": "rust-clippy-desktop",
+      "command": "cargo clippy --offline --locked --manifest-path src-tauri/Cargo.toml --all-targets --features performance-desktop -- -D warnings",
+      "exitCode": 0,
+      "localLog": "/private/tmp/db-connect-docker-final-clippy-desktop-2026-10-17.log",
+      "outputSha256": "b93bd68157a1f92632ef55892481a552024c60953406c5db3e02c058f397dba0",
+      "environment": {
+        "SDKROOT": "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"
+      }
+    }
+  ],
+  "sourceSha256": {
+    "scripts/performance/metadata-postgres-validation.py": "1ae7f9c73cce3abc7bca9b3e1ec9c5cc24ef1817803476524fdb3ca5f485d395",
+    "scripts/performance/metadata-clickhouse-validation.py": "590c09aca0d4da3067393be80fdd7fb951cc4158150328c17a9c3563c0e9412b",
+    "scripts/performance/metadata-sqlserver-validation.py": "e16bed8182b604fce8891b6582eee3ee164034b6f68a658255f5cdc70eed9546",
+    "scripts/performance/test_metadata_postgres_validation.py": "d72623915006fa302440e308db691956c5119f1f1a40ae2095496ce1c5d99bee",
+    "scripts/performance/test_metadata_clickhouse_validation.py": "40d446544c2f9bb6b0d22a2f5a8bd919e5e6c044c89251b47aaae61577331364",
+    "scripts/performance/test_metadata_sqlserver_validation.py": "183b28a9c98850f0e4972f9e1a6839be2ff701b91a2bcab348bf0e7b933d92a3",
+    "src-tauri/src/db/mod.rs": "c8e6a786eba292616f55c8e1bfbce58fb519f0851ee1d73c18bcd2d95ffd3de6",
+    "src-tauri/src/db/metadata_pg_tests.rs": "f876d541342359d19e4a1c1c596d7035e5ef104daaf130faa59eca2506e9ddad",
+    "src-tauri/src/db/metadata_pg_pagination_tests.rs": "b8410e42913ec2864a024f37bc7126dc2455c48cecc2df9d105882deafb9a02f",
+    "src-tauri/src/db/metadata_clickhouse_tests.rs": "442217b8b7ad57a27ef85a591bffe1f4e3bcb748db9e52da172ec2bbf7bc572d",
+    "src-tauri/src/db/metadata_sqlserver_tests.rs": "8aabb333d638d909d377cc5ae7d205c3b728862a0e71b7a75589b6fb1d4cb654",
+    "src-tauri/src/db/postgres.rs": "3127d030f0f6c25cecd08fc5befd5cc1b56695c06f599b00387fe6b381809cab",
+    "src-tauri/src/db/clickhouse.rs": "5bbe14d65bc74597b6235d0b44acc2a3913ff70b03161b53be4959f992907e85",
+    "src-tauri/src/db/sqlserver.rs": "595bb599c938c736c7d31169478efeb4efa37bc98093ef914bba081610b1c28c",
+    "src-tauri/src/db/metadata_batch.rs": "cccd37a7acc8738ebf74e58da836dea60b86b778a2916d23d63e72c73f867ad6",
+    "src-tauri/Cargo.toml": "498a55e43ec5b72c47df1ed61d18fb7c6baa9bf00ab8ccf016ea888914669ad6",
+    "src-tauri/Cargo.lock": "7dc8410823fa4ef430e748953fb9a08409d0e397448ea67c4a53b073f81cff73"
+  },
+  "isolatedAcceptance": {
+    "postgres": {
+      "status": "passed",
+      "explicitIgnoredTestsPassed": 2,
+      "evidence": "metadata-postgres-pagination-2026-10-17.json"
+    },
+    "clickhouse": {
+      "status": "passed",
+      "explicitIgnoredTestsPassed": 1,
+      "evidence": "metadata-clickhouse-2026-10-17.json"
+    },
+    "sqlserver": {
+      "status": "failed-tls-before-catalog",
+      "attemptsPreserved": 6,
+      "metadataAcceptancePassed": false,
+      "evidence": "metadata-sqlserver-2022-attempt6-2026-10-17.json"
+    }
+  },
+  "cleanup": {
+    "ownedContainersAbsentVerified": true,
+    "imagesRetainedForReproduction": true,
+    "businessContainersModified": false
+  },
+  "review": {
+    "blockingFindings": 0,
+    "scope": "new runners, fixtures, raw evidence, source hashes and status documentation"
+  },
+  "notes": [
+    "Ignored default tests are not passes; only explicitly executed isolated tests count above.",
+    "SQL Server arm64-to-amd64 emulation is not a Microsoft-supported host configuration.",
+    "No production adapter changes, dependency installation, host trust or Docker global settings changes.",
+    "T03 overall, T04 full Tauri end-to-end and original remaining performance criteria are not complete."
+  ],
+  "archiveChecks": {
+    "localMarkdownLinksChecked": 111,
+    "brokenLinks": [],
+    "sourceHashesMatched": true,
+    "gitDiffCheckExitCode": 0
+  }
+}

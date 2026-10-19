@@ -388,6 +388,8 @@ impl ConnectionManager {
     pub async fn prepare_connection(
         config: ConnectionConfig,
     ) -> Result<(String, ActiveConnection), String> {
+        #[cfg(feature = "performance-desktop")]
+        crate::performance_desktop::validate_connection(&config)?;
         match config.database_type {
             DatabaseType::MySql => Self::prepare_mysql_connection(config).await,
             DatabaseType::Postgres => Self::prepare_postgres_connection(config).await,
@@ -791,6 +793,8 @@ impl ConnectionManager {
 
     /// 测试连接配置是否可用
     pub async fn test_connection(config: &ConnectionConfig) -> Result<u64, String> {
+        #[cfg(feature = "performance-desktop")]
+        crate::performance_desktop::validate_connection(config)?;
         match config.database_type {
             DatabaseType::MySql => Self::test_mysql_connection(config).await,
             DatabaseType::Postgres => Self::test_postgres_connection(config).await,

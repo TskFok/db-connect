@@ -1,6 +1,6 @@
 # 性能验证基线
 
-最新仓库检查与验收状态见 [2026-10-14 收尾记录](performance/remaining-status-2026-10-14.md)：全仓检查通过，T03—T09 仍有待验指标。下文带日期的历史样本和检查结果保留，不与本轮环境混合。
+最新数据库补验见 [2026-10-17 Docker 隔离验收](performance/docker-database-validation-2026-10-17.md)：PG 分页和 ClickHouse 元数据实库通过，SQL Server 因生产 TLS 握手阻断仍待验。此前全仓检查见 [10 月 17 日集成归档](performance/remaining-integration-2026-10-17.json)；T03—T09 仍有原指标缺口。下文带日期的历史样本和检查结果保留，不混合不同环境。
 
 ## 01：结果预算与共享缓存（2026-09-30）
 
@@ -525,3 +525,23 @@ T03 缺 SQL Server/ClickHouse 隔离环境；T04 缺 PostgreSQL 当前实库分�
 本轮在同一Apple M2 Pro/macOS 27.0.1/Node 25.5.0，以同一bundle比较只读提取的旧转换与当前行源；10000×200数字矩阵，旧/新各3个独立进程，正式测量独占运行。V8累计托管堆分配中位数为250,970,960 B / 5,793,664 B，下降97.6915%；旧样本极差48 B、新样本极差0 B，不将样本极差当作全局误差界。该方法计入已GC对象，但外部ArrayBuffer对照明确漏计backing store，且未覆盖原生累计分配。
 
 **此为新增辅助指标，原“全部分配量下降至少70%”仍待验。** 原始JSON明确 `originalCriterionVerified=false`，不得用该比例替代原指标。全部6样本、14校准进程和环境/源码hash见 [原始证据](performance/table-row-source-allocation-2026-10-14.json)；可复现脚本、命令、限制与具体后续方法见 [方法记录](performance/remaining-allocation-method-2026-10-14.md)。
+
+## 2026-10-15—17：本机续验与归档
+
+用户确认没有额外数据库及 Windows/Linux 环境，本轮限本机，当前 `dd` / `e43940a` 工作区。完整结果、复现入口和限制见 [本机续验记录](performance/remaining-local-validation-2026-10-16.md)，原始检查见 [10 月 17 日集成归档](performance/remaining-integration-2026-10-17.json)。历史记录按原日期保留。
+
+- **01 / T05**：MySQL 8.4.11 隔离实库通过生产表页/完整行预算、失败后恢复、键形状、空表、连接前取消与旧句柄隔离；不代表活动查询服务端中断、实际 IPC 或完整应用 RSS。见 [MySQL 证据](performance/mysql-budget-8.4-2026-10-15.json)。
+- **03 / T04**：新增 PostgreSQL 分页服务端计数和采样夹具，通过编译；本机预检缺镜像，未拉取、未测量。SQL Server/ClickHouse 权限矩阵、PG 分页实测及完整元数据端到端仍待验。
+- **05 / T07**：当前源码完整隔离 Tauri 应用完成宽表与 SQL 编辑器两次短拖动，分别 40/14 ms；松手前根提交/设置写入均 0，含松手均 1/1。实际切表、翻页、滚动和部分懒加载已记录；不替代约 2 秒拖动、全部失败/重开矩阵及大对比列表。见 [原始交互](performance/desktop-interactions-2026-10-16.json) 与 [人工步骤/构建索引](performance/desktop-evidence-2026-10-16.json)。
+- **06 / T08**：独立最小 Tauri example 的 Release 构建，每组 5 预热 / 20 正式。1/10 MiB 原始体往返 p50/p95 为 1/2 与 5/5 ms；Rust 包装处理 0.236/0.563 与 1.891/2.254 ms，独立写盘 0.135/0.164 与 1.503/2.142 ms。保留 40+40 样本、本夹具覆盖的文件错误场景及两表17坐标 XML 验证。毫秒计时可产生零往返和负的派生持续时间差；不与历史 Debug/不同系统样本推导加速比例。见 [Release 原始证据](performance/excel-export-tauri-release-2026-10-16.json)。
+- **06 / T09**：完整应用真实 macOS 系统保存框 Cancel 后，完整行回查、prepare、Excel Worker 和登记增量均 0。见 [取消观测](performance/desktop-save-cancel-2026-10-16.json)。与交互文件同一构建、不同进程，不跨文件相减。
+
+全部分配原指标、归属准确内存/瞬时峰值/最长任务、完整大导出和跨平台/关窗/磁盘满场景仍待验。前端2060项、发布42项、Rust库786项通过（20忽略），构建、lint、fmt及两种配置Clippy通过；这些检查不替代未取得的性能证据。
+
+## 2026-10-17：授权 Docker 镜像后的数据库补验
+
+本节为上述归档之后的新执行。PG 17.11（arm64）目录和分页实库验收通过：5 次预热、20 次正式组的元数据/数据页/COUNT 计数为冷 `[1,1,0]`、20 次热读 `[0,20,0]`、失效后 `[1,1,0]`；正式热读 400/400 命中。生产 Rust 表页函数冷/热/失效后 p50 为 2.253459 / 0.384417 / 2.2345 ms，p95 为 2.503 / 0.461209 / 2.541083 ms，包含 pool acquire、loopback TCP 和解码，不含 Tauri IPC/WebView/渲染/COUNT。[原始样本](performance/metadata-postgres-pagination-2026-10-17.json)。
+
+ClickHouse 25.8.33.6（arm64）真实权限、字段/顺序及旧单目录等价通过；1/5/256 目录和受限账号各一次集合 SQL，空/257 名称零查询。[最终证据](performance/metadata-clickhouse-2026-10-17.json)。SQL Server 2022 amd64 镜像在本机 ARM 模拟环境能启动，但默认证书及容器内 7 天短期证书对照后，生产 Tiberius TLS 仍未连接成功；6 次失败与清理证据保留，元数据权限/计数不能计为通过。[SQL Server 边界](performance/metadata-sqlserver-validation-2026-10-17.md)。
+
+此轮补齐 T03 的 ClickHouse 和 T04 的 PG 子项；完整应用端到端与其他原验收仍待完成。没有改生产驱动、宿主信任或依赖；各次专属容器、匿名卷与临时凭据均已清理。命令、独立复核及最终检查见 [本轮汇总](performance/docker-database-validation-2026-10-17.md)。

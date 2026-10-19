@@ -8,11 +8,11 @@ use tokio_postgres::{Client, NoTls};
 
 const SPECIAL_SCHEMA: &str = "metadata'quote\"|]";
 
-fn checked<T, E>(result: Result<T, E>, stage: &str) -> T {
+pub(super) fn checked<T, E>(result: Result<T, E>, stage: &str) -> T {
     result.unwrap_or_else(|_| panic!("PostgreSQL 隔离验收失败：{stage}"))
 }
 
-fn pool(config: &Value, limited: bool) -> Pool {
+pub(super) fn pool(config: &Value, limited: bool) -> Pool {
     let mut pg = Config::new();
     pg.host = Some("127.0.0.1".into());
     let port = config["port"].as_u64().expect("端口必须是整数");
@@ -44,7 +44,7 @@ fn pool(config: &Value, limited: bool) -> Pool {
     )
 }
 
-async fn fixture() -> (Value, Pool) {
+pub(super) async fn fixture() -> (Value, Pool) {
     let path = checked(
         std::env::var("DB_CONNECT_METADATA_PG_FIXTURE"),
         "缺少夹具路径",

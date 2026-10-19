@@ -211,6 +211,36 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "performance-desktop")]
+    #[tokio::test]
+    async fn performance_temporary_connections_reject_network_before_io() {
+        let config = config("synthetic-rejected", DatabaseType::MySql, false);
+        let result = TemporaryDatabaseConnection::open(config.clone()).await;
+        assert!(matches!(result, Err(error) if error == "验收构建只允许本次合成 SQLite 连接"));
+        assert_eq!(
+            ConnectionManager::test_connection(&config)
+                .await
+                .unwrap_err(),
+            "验收构建只允许本次合成 SQLite 连接"
+        );
+    }
+
+    #[cfg(feature = "performance-desktop")]
+    #[tokio::test]
+    async fn performance_temporary_connections_reject_nonfixture_sqlite_before_file_access() {
+        let mut config = config("synthetic-rejected", DatabaseType::Sqlite, false);
+        config.password = None;
+        config.sqlite_path = Some("/not-a-performance-fixture.sqlite3".to_string());
+        let result = TemporaryDatabaseConnection::open(config.clone()).await;
+        assert!(
+            matches!(result, Err(error) if error.contains("验收隔离") || error.contains("验收数据库路径"))
+        );
+        let error = ConnectionManager::test_connection(&config)
+            .await
+            .unwrap_err();
+        assert!(error.contains("验收隔离") || error.contains("验收数据库路径"));
+    }
+
     #[test]
     fn redaction_removes_database_ssh_and_certificate_passwords() {
         let saved = vec![config_with_secrets("db-pass", "ssh-pass", "cert-pass")];

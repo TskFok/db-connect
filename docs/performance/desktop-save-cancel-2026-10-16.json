@@ -1,0 +1,1324 @@
+{
+  "schemaVersion": 1,
+  "runId": "3663a2fd-b8f7-4ebb-9380-a7974ca4945c",
+  "identifier": "com.tskfok.dbconnect.performance.3663a2fdb8f74ebb9380a7974ca4945c",
+  "gitHead": "e43940a50159cf6e075c49f5faf115e19c047958",
+  "sourceFingerprint": "d8c9eaf7b7e5d9ec7b9e7e70da178ec1237d5fc62f9f045912e4f0026d0e992a",
+  "timestamp": "2026-10-16T02:41:35.579Z",
+  "webview": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+  "limitations": [
+    "React actualDuration 是渲染耗时，不是 DOM 提交阶段耗时",
+    "800ms 懒加载延迟属于测试插桩，不是加载性能",
+    "App 根提交计数来自真实 AppInner useLayoutEffect",
+    "rAF 观察帧数不是生产 hook 的精确 DOM 写入次数",
+    "本记录不自动判定手工场景通过"
+  ],
+  "metrics": {
+    "appRootCommits": 11,
+    "storageWrites": 6,
+    "settingsKeyWrites": 0,
+    "sidebarWidthValueChanges": 0,
+    "exportPrepareCalls": 0,
+    "workerCreated": 0,
+    "excelWorkerCreated": 0,
+    "commands": {
+      "get_table_column_settings": 1,
+      "get_runtime_info": 1,
+      "list_saved_connections": 2,
+      "list_connection_groups": 1,
+      "connect": 1,
+      "get_session_info": 1,
+      "plugin:window|maximize": 1,
+      "list_databases": 2,
+      "plugin:window|show": 1,
+      "list_tables_batch": 1,
+      "plugin:event|listen": 2,
+      "ping_connection": 4,
+      "get_table_structure": 1,
+      "query_table_data": 1,
+      "query_table_count": 1,
+      "check_idle_disconnect": 1,
+      "plugin:dialog|save": 1
+    },
+    "profile": [
+      {
+        "id": "AppTree",
+        "phase": "mount",
+        "actualDurationMs": 40,
+        "atMs": 244
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 5,
+        "atMs": 253
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 2,
+        "atMs": 263
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 267
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 1,
+        "atMs": 268
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 1,
+        "atMs": 270
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 1,
+        "atMs": 298
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 0,
+        "atMs": 298
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 10,
+        "atMs": 318
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 5,
+        "atMs": 339
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 1,
+        "atMs": 340
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 1,
+        "atMs": 348
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 0,
+        "atMs": 350
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 7,
+        "atMs": 360
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 1,
+        "atMs": 368
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 0,
+        "atMs": 368
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 11,
+        "atMs": 390
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 2,
+        "atMs": 394
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 0,
+        "atMs": 395
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 0,
+        "atMs": 395
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 0,
+        "atMs": 395
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 27,
+        "atMs": 433
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 11,
+        "atMs": 446
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 1,
+        "atMs": 449
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 0,
+        "atMs": 449
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 10,
+        "atMs": 461
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 1,
+        "atMs": 463
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 0,
+        "atMs": 463
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 9,
+        "atMs": 474
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 1,
+        "atMs": 475
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 0,
+        "atMs": 475
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 6,
+        "atMs": 498
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 2,
+        "atMs": 501
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 0,
+        "atMs": 501
+      },
+      {
+        "id": "TableContent",
+        "phase": "mount",
+        "actualDurationMs": 20,
+        "atMs": 548
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 27,
+        "atMs": 548
+      },
+      {
+        "id": "TableContent",
+        "phase": "nested-update",
+        "actualDurationMs": 4,
+        "atMs": 555
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 4,
+        "atMs": 555
+      },
+      {
+        "id": "TableContent",
+        "phase": "nested-update",
+        "actualDurationMs": 0,
+        "atMs": 555
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 0,
+        "atMs": 555
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 0,
+        "atMs": 560
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 5,
+        "atMs": 560
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 1,
+        "atMs": 570
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 2,
+        "atMs": 570
+      },
+      {
+        "id": "TableContent",
+        "phase": "nested-update",
+        "actualDurationMs": 0,
+        "atMs": 570
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 0,
+        "atMs": 570
+      },
+      {
+        "id": "TableContent",
+        "phase": "nested-update",
+        "actualDurationMs": 1,
+        "atMs": 571
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 1,
+        "atMs": 571
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 0,
+        "atMs": 571
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 0,
+        "atMs": 571
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 17,
+        "atMs": 603
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 17,
+        "atMs": 603
+      },
+      {
+        "id": "TableContent",
+        "phase": "nested-update",
+        "actualDurationMs": 5,
+        "atMs": 610
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 5,
+        "atMs": 610
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 0,
+        "atMs": 698
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 0,
+        "atMs": 698
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 2,
+        "atMs": 702
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 2,
+        "atMs": 702
+      },
+      {
+        "id": "TableContent",
+        "phase": "nested-update",
+        "actualDurationMs": 0,
+        "atMs": 703
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 0,
+        "atMs": 703
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 1,
+        "atMs": 732
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 1,
+        "atMs": 732
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 8,
+        "atMs": 741
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 8,
+        "atMs": 741
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 8,
+        "atMs": 16000
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 8,
+        "atMs": 16000
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 6,
+        "atMs": 16066
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 6,
+        "atMs": 16066
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 5,
+        "atMs": 16132
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 5,
+        "atMs": 16132
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 6,
+        "atMs": 16151
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 6,
+        "atMs": 16151
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 16199
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 16199
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 16233
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 16233
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 16266
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 16266
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 16416
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 16416
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 16436
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 16436
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 16465
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 16465
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 16486
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 16486
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 5,
+        "atMs": 16503
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 5,
+        "atMs": 16503
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 16519
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 16519
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 16535
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 16535
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 16552
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 16552
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 16567
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 16567
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 16585
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 16585
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 16602
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 16602
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 16618
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 16618
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 16635
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 16635
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 16650
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 16650
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 16666
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 16666
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 16683
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 16683
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 2,
+        "atMs": 16699
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 2,
+        "atMs": 16699
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 1,
+        "atMs": 16715
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 1,
+        "atMs": 16715
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 2,
+        "atMs": 16732
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 2,
+        "atMs": 16732
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 2,
+        "atMs": 17380
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 2,
+        "atMs": 17380
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 18556
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 18556
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 2,
+        "atMs": 18647
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 2,
+        "atMs": 18647
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 18713
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 18713
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 18747
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 18747
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 18779
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 18779
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 18815
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 18815
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 18847
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 18847
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 2,
+        "atMs": 18898
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 2,
+        "atMs": 18898
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 18948
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 18948
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 19120
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 19120
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 5,
+        "atMs": 19143
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 5,
+        "atMs": 19143
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 19165
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 19165
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 19184
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 19184
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19200
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19200
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19217
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19217
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19234
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19234
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 19251
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 19251
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19267
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19267
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19284
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19284
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19300
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19300
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19317
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19317
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 2,
+        "atMs": 19332
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 2,
+        "atMs": 19332
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19349
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19349
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19382
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19382
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19401
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19401
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 19417
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 4,
+        "atMs": 19417
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19448
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19448
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19480
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 19480
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 2,
+        "atMs": 19663
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 2,
+        "atMs": 19663
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 1,
+        "atMs": 89292
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 1,
+        "atMs": 89292
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 89390
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 3,
+        "atMs": 89390
+      },
+      {
+        "id": "TableContent",
+        "phase": "nested-update",
+        "actualDurationMs": 1,
+        "atMs": 89392
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 1,
+        "atMs": 89392
+      },
+      {
+        "id": "TableContent",
+        "phase": "nested-update",
+        "actualDurationMs": 0,
+        "atMs": 89392
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 0,
+        "atMs": 89392
+      },
+      {
+        "id": "TableContent",
+        "phase": "nested-update",
+        "actualDurationMs": 0,
+        "atMs": 89392
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 0,
+        "atMs": 89392
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 1,
+        "atMs": 89398
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 1,
+        "atMs": 89398
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 0,
+        "atMs": 89398
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 0,
+        "atMs": 89398
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 0,
+        "atMs": 90405
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 0,
+        "atMs": 90405
+      },
+      {
+        "id": "TableContent",
+        "phase": "nested-update",
+        "actualDurationMs": 0,
+        "atMs": 90405
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 0,
+        "atMs": 90405
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 0,
+        "atMs": 90422
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 0,
+        "atMs": 90422
+      },
+      {
+        "id": "TableContent",
+        "phase": "nested-update",
+        "actualDurationMs": 0,
+        "atMs": 90422
+      },
+      {
+        "id": "AppTree",
+        "phase": "nested-update",
+        "actualDurationMs": 0,
+        "atMs": 90422
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 0,
+        "atMs": 90456
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 0,
+        "atMs": 90456
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 0,
+        "atMs": 90559
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 0,
+        "atMs": 90559
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 0,
+        "atMs": 90560
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 0,
+        "atMs": 90560
+      },
+      {
+        "id": "TableContent",
+        "phase": "update",
+        "actualDurationMs": 0,
+        "atMs": 90562
+      },
+      {
+        "id": "AppTree",
+        "phase": "update",
+        "actualDurationMs": 0,
+        "atMs": 90562
+      }
+    ],
+    "lazy": [],
+    "drags": [],
+    "checkpoints": [
+      {
+        "kind": "export-cancel-window",
+        "before": {
+          "appRootCommits": 11,
+          "storageWrites": 6,
+          "settingsKeyWrites": 0,
+          "sidebarWidthValueChanges": 0,
+          "exportPrepareCalls": 0,
+          "excelWorkerCreated": 0,
+          "queryFullRows": 0,
+          "registrations": 0,
+          "profiles": 176
+        },
+        "after": {
+          "appRootCommits": 11,
+          "storageWrites": 6,
+          "settingsKeyWrites": 0,
+          "sidebarWidthValueChanges": 0,
+          "exportPrepareCalls": 0,
+          "excelWorkerCreated": 0,
+          "queryFullRows": 0,
+          "registrations": 0,
+          "profiles": 206
+        },
+        "delta": {
+          "appRootCommits": 0,
+          "storageWrites": 0,
+          "settingsKeyWrites": 0,
+          "sidebarWidthValueChanges": 0,
+          "exportPrepareCalls": 0,
+          "excelWorkerCreated": 0,
+          "queryFullRows": 0,
+          "registrations": 0,
+          "profiles": 30
+        },
+        "systemCancelRequiresManualConfirmation": true
+      }
+    ],
+    "cspViolations": []
+  }
+}
