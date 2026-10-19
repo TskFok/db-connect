@@ -203,8 +203,12 @@
 
 ### F05：整理 service 动态导入依赖方向
 
-- [ ] 核查 `src/services/tauriCommands.ts` 与 `src/stores/connectionStore.ts` 的静态/动态依赖，形成最小整理方案，避免顺带大规模重构。
-- [ ] 验证连接切换、失效事件和启动顺序不变，重新构建并记录初始静态依赖闭包；消除提示不能以初始资源或行为退化为代价。
+- [x] 核查 `src/services/tauriCommands.ts` 与 `src/stores/connectionStore.ts` 的静态/动态依赖，形成最小整理方案，避免顺带大规模重构。
+- [x] 验证连接切换、失效事件和启动顺序不变，重新构建并记录初始静态依赖闭包；消除提示不能以初始资源或行为退化为代价。
+
+2026-10-19 完成：新增 `src/services/databaseSync.ts` 编排同步命令与目标连接元数据失效，`tauriCommands.ts` 恢复纯同步 IPC 包装并移除对连接 store 的反向依赖。对比窗口调用编排服务，在判断界面结果是否过期前完成失效；关闭或卸载不影响已成功执行语句的失效通知。连接匹配在命令完成后读取当前活动连接，覆盖同一保存配置的所有活动连接；遍历只发送内存事件，不查询 SQL。
+
+验证：两个关闭/卸载回归用例先失败后通过，新增编排服务 10 项回归；全量前端 161 文件 / 2189 项通过，修改文件 ESLint、格式及 `git diff --check` 通过，独立代码审查未发现问题。`npm run build` 通过且不再出现 `INEFFECTIVE_DYNAMIC_IMPORT`，原有大 chunk 提示保留。同配置重构前后，入口 `imports` 的递归静态 JS 闭包均为 6 个文件（入口、antd、dnd、core、image、rolldown-runtime），总大小从 1,696,327 字节变为 1,696,064 字节，未增加初始加载资源。
 
 ## 2026-10-14 执行记录
 

@@ -2,6 +2,7 @@ import { EyeOutlined, LoadingOutlined, SwapOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Form, Modal, Select, message } from "antd";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { executeDatabaseSync } from "../../services/databaseSync";
 import * as api from "../../services/tauriCommands";
 import { useConnectionStore } from "../../stores/connectionStore";
 import type {
@@ -546,7 +547,7 @@ export function DatabaseCompareModal({
       }
       if (unlisten) syncProgressUnlistenRef.current = unlisten;
 
-      const execution = await api.executeDatabaseSync({
+      const execution = await executeDatabaseSync({
         request: syncRequest,
         plan_fingerprint: planFingerprint,
       });

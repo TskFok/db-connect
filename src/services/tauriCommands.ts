@@ -182,30 +182,8 @@ export const previewDatabaseSync = (request: DatabaseSyncRequest) =>
   invoke<DatabaseSyncPreview>("preview_database_sync", { request });
 
 /** 按后端重新校验后的计划执行数据库结构同步 */
-export async function executeDatabaseSync(
-  input: ExecuteDatabaseSyncRequest
-): Promise<DatabaseSyncExecutionResult> {
-  const result = await invoke<DatabaseSyncExecutionResult>(
-    "execute_database_sync",
-    { input }
-  );
-  if (result.completed_statements.length > 0) {
-    // 同步使用临时连接；按保存配置定位当前已打开的目标连接。
-    const { useConnectionStore } = await import("../stores/connectionStore");
-    for (const connection of Object.values(
-      useConnectionStore.getState().activeConnections
-    )) {
-      if (connection.config.id === input.request.target.saved_connection_id) {
-        invalidateSqlCompletion({
-          connId: connection.connId,
-          database: input.request.target.database,
-          reason: "schema-change",
-        });
-      }
-    }
-  }
-  return result;
-}
+export const executeDatabaseSync = (input: ExecuteDatabaseSyncRequest) =>
+  invoke<DatabaseSyncExecutionResult>("execute_database_sync", { input });
 
 /** 获取连接分组 */
 export async function listConnectionGroups(): Promise<ConnectionGroup[]> {

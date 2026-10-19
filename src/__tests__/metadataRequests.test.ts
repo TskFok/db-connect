@@ -5,7 +5,6 @@ import {
   invalidateSqlCompletion,
   subscribeSqlCompletionInvalidation,
 } from "../utils/sqlCompletionInvalidation";
-import { useConnectionStore } from "../stores/connectionStore";
 import type { DatabaseTableList } from "../types";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 function deferred<T>() {
@@ -134,64 +133,6 @@ describe("metadata_requests", () => {
     await request;
     expect(completed).toBe(true);
   });
-});
-
-describe("结构同步失效", () => {
-  it.each(["succeeded", "partially_succeeded", "failed"])(
-    "%s 只清理有成功语句的目标库连接",
-    async (status) => {
-      const connection = (id: string, connId: string) => ({
-        connId,
-        config: {
-          id,
-          name: id,
-          host: "localhost",
-          port: 3306,
-          username: "test",
-        },
-      });
-      useConnectionStore.setState({
-        activeConnections: {
-          source: connection("src", "source"),
-          target: connection("dst", "target"),
-          other: connection("other", "other"),
-        },
-      });
-      mockInvoke.mockResolvedValue({
-        status,
-        completed_statements:
-          status === "failed"
-            ? []
-            : [{ operation_id: "op", statement_index: 0 }],
-        failed: null,
-        pending_operation_ids: [],
-        cleanup_errors: [],
-        latest_compare_result: null,
-      });
-      const listener = vi.fn();
-      const stop = subscribeSqlCompletionInvalidation(listener);
-      try {
-        await api.executeDatabaseSync({
-          request: {
-            source: { saved_connection_id: "src", database: "from" },
-            target: { saved_connection_id: "dst", database: "to" },
-            selected_tables: [],
-            include_drops: false,
-          },
-          plan_fingerprint: "test",
-        } as never);
-        if (status === "failed") expect(listener).not.toHaveBeenCalled();
-        else
-          expect(listener).toHaveBeenCalledExactlyOnceWith({
-            connId: "target",
-            database: "to",
-            reason: "schema-change",
-          });
-      } finally {
-        stop();
-      }
-    }
-  );
 });
 
 describe("索引修改失效", () => {

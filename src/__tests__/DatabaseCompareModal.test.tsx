@@ -28,6 +28,7 @@ import type {
   DatabaseSyncProgress,
 } from "../types";
 import { saveDatabaseCompareWorkbook } from "../utils/databaseCompareExport";
+import { subscribeSqlCompletionInvalidation } from "../utils/sqlCompletionInvalidation";
 
 vi.mock("../services/tauriCommands", () => ({
   listCompareDatabases: vi.fn(),
@@ -1213,6 +1214,48 @@ describe("DatabaseCompareModal", () => {
       await execution.promise;
     });
   });
+
+  it.each(["程序关闭", "组件卸载"])(
+    "%s后同步完成仍使活动目标连接的元数据失效",
+    async (exit) => {
+      const execution = deferred<DatabaseSyncExecutionResult>();
+      vi.mocked(api.executeDatabaseSync).mockReturnValue(execution.promise);
+      useConnectionStore.setState({
+        activeConnections: {
+          target: { connId: "target-runtime", config: SAVED_CONNECTIONS[1] },
+        },
+      });
+      const listener = vi.fn();
+      const stop = subscribeSqlCompletionInvalidation(listener);
+      try {
+        const { rerender, unmount } = render(
+          <DatabaseCompareModal open onClose={vi.fn()} />
+        );
+        await openSafePreview();
+        acknowledgeSyncPlan();
+        fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+        await waitFor(() =>
+          expect(api.executeDatabaseSync).toHaveBeenCalledOnce()
+        );
+
+        if (exit === "组件卸载") unmount();
+        else rerender(<DatabaseCompareModal open={false} onClose={vi.fn()} />);
+        await act(async () => {
+          execution.resolve(sampleSucceededExecution());
+          await execution.promise;
+        });
+
+        expect(listener).toHaveBeenCalledExactlyOnceWith({
+          connId: "target-runtime",
+          database: "audit",
+          reason: "schema-change",
+        });
+      } finally {
+        stop();
+        act(() => useConnectionStore.setState({ activeConnections: {} }));
+      }
+    }
+  );
 
   it("程序关闭使尚未返回的执行成功失效并完全重置状态", async () => {
     const execution = deferred<DatabaseSyncExecutionResult>();
