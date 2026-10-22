@@ -8,8 +8,10 @@ import subprocess
 import sys
 import time
 import unittest
+from unittest.mock import patch
 from urllib.parse import urlsplit
 
+from validate_mariadb_versions import MariaDBVersionValidation
 import validate_mysql_versions_test as mysql_tests
 
 RUNNER = Path(__file__).with_name("validate_mariadb_versions.py")
@@ -108,24 +110,29 @@ class MariaDBVersionRunnerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         report = json.loads(self.report.read_text())
         state = json.loads(self.state.read_text())
-        self.assertEqual(report['images'], ['mariadb:11.0', 'mariadb:11.1', 'mariadb:11.2', 'mariadb:11.3',
+        self.assertEqual(report['images'], ['mariadb:10.0', 'mariadb:10.1', 'mariadb:10.2', 'mariadb:10.3',
+                                            'mariadb:10.4', 'mariadb:10.5', 'mariadb:10.6', 'mariadb:10.7',
+                                            'mariadb:10.8', 'mariadb:10.9', 'mariadb:10.10', 'mariadb:10.11',
+                                            'mariadb:11.0', 'mariadb:11.1', 'mariadb:11.2', 'mariadb:11.3',
                                             'mariadb:11.4', 'mariadb:11.5', 'mariadb:11.6', 'mariadb:11.7',
                                             'mariadb:11.8', 'mariadb:12.0', 'mariadb:12.1', 'mariadb:12.2', 'mariadb:12.3'])
+        self.assertEqual(len(report['results']), 76)
+        self.assertTrue(all(row['status'] == 'passed' for row in report['results']))
         creates = [c for c in state['commands'] if c[0] == 'create']
-        self.assertEqual(len(creates), 14)
-        self.assertEqual(len({c[c.index('--name') + 1] for c in creates}), 14)
+        self.assertEqual(len(creates), 26)
+        self.assertEqual(len({c[c.index('--name') + 1] for c in creates}), 26)
         for command in creates:
             self.assertIn('--pull=never', command)
             self.assertEqual(command[command.index('-p') + 1], '127.0.0.1::3306')
             self.assertEqual(command[command.index('--volume') + 1], '/var/lib/mysql')
             self.assertTrue(command[command.index('--label') + 1].startswith('io.db-connect.mariadb-version-validation='))
             self.assertFalse(Path(command[command.index('--env-file') + 1]).exists())
-        self.assertEqual(state['env_modes'], [0o600] * 14)
+        self.assertEqual(state['env_modes'], [0o600] * 26)
         self.assertFalse(state['containers'])
         self.assertTrue(all(row['status'] == 'removed' and row['anonymous_data_volume'] == 'removed' for row in report['cleanup']))
         self.assertEqual(report['binary_sha256'], hashlib.sha256(self.binary.read_bytes()).hexdigest())
         self.assertRegex(report['source_revision'], r'^[0-9a-f]{40}$')
-        self.assertEqual(len(report['resolved_images']), 14)
+        self.assertEqual(len(report['resolved_images']), 26)
         output = result.stdout + result.stderr + self.report.read_text()
         for test in state['tests']:
             self.assertNotIn(test['url'], output)
@@ -165,17 +172,26 @@ class MariaDBVersionRunnerTests(unittest.TestCase):
                                    ('startup_timeout', 2), ('mysql5_temporary', 2), ('mysql5_nonadjacent', 2),
                                    ('test_timeout', 1)):
             with self.subTest(scenario=scenario):
-                result, report, state = self.run_matrix(scenario, '--startup-timeout', '0.2', '--test-timeout', '0.2')
+                timeouts = []
+                if scenario in ('startup_timeout', 'mysql5_temporary', 'mysql5_nonadjacent'):
+                    timeouts = ['--startup-timeout', '0.2']
+                elif scenario == 'test_timeout':
+                    timeouts = ['--test-timeout', '0.2']
+                result, report, state = self.run_matrix(scenario, *timeouts)
                 self.assertEqual(result.returncode, expected, result.stderr + result.stdout)
                 self.assertTrue(all(row['status'] != 'passed' for row in report['results']))
                 self.assertFalse(state['containers'])
                 self.assertNotIn('private database value', result.stdout + result.stderr + self.report.read_text())
 
-    def test_two_line_mariadb_readiness_and_no_pull_allow_contracts(self):
-        result, report, state = self.run_matrix('mysql5_ready', '--no-pull')
+    def test_two_line_mariadb_readiness_and_no_pull_allow_old_contracts(self):
+        result, report, state = self.run_matrix('mysql5_ready', '--no-pull', '--images',
+                                              'mariadb:10.0', 'mariadb:10.1', 'mariadb:10.5',
+                                              'mariadb:10.6', 'mariadb:10.11')
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(len(report['results']), 16)
         self.assertTrue(all(row['status'] == 'passed' for row in report['results']))
         self.assertFalse(any(c[0] == 'pull' for c in state['commands']))
+        self.assertFalse(state['containers'])
 
     def test_missing_cross_version_markers_do_not_count_as_transfer_success(self):
         result, report, state = self.run_matrix('no_cross_version')
@@ -213,6 +229,18 @@ class MariaDBVersionRunnerTests(unittest.TestCase):
         self.assertTrue(all(row['status'] == 'not_run' for row in report['results']))
         self.assertTrue(report['interrupted'])
         self.assertFalse(json.loads(self.state.read_text())['containers'])
+
+
+class MariaDBImagePlatformTests(unittest.TestCase):
+    def test_auto_platform_handles_legacy_10x_images_and_native_106_boundary(self):
+        with patch('validate_mysql_versions.platform.machine', return_value='arm64'):
+            for image in ('mariadb:10.0', 'mariadb:10.1', 'mariadb:10.2', 'mariadb:10.3',
+                          'mariadb:10.4', 'mariadb:10.5', 'mariadb:10.5.29'):
+                with self.subTest(image=image):
+                    self.assertEqual(MariaDBVersionValidation.select_platform(image, 'auto'), 'linux/amd64')
+            for image in ('mariadb:10.6', 'mariadb:10.6.0', 'mariadb:10.11', 'mariadb:11.4', 'mysql:8.4'):
+                with self.subTest(image=image):
+                    self.assertEqual(MariaDBVersionValidation.select_platform(image, 'auto'), 'linux/arm64')
 
 
 if __name__ == '__main__':

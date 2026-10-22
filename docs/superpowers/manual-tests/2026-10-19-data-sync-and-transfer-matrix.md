@@ -21,9 +21,56 @@
 
 ## 自动证据
 
+### MariaDB 10.x 兼容（2026-10-22）
+
+在 11.x/12.x 支持基础上，继续开放 **10.0–10.11 各系列首个 GA 起的稳定版本**，最低补丁依据[官方发行记录](https://mariadb.org/mariadb/all-releases/)。版本门禁单测覆盖全部 12 个下限及其前一补丁，继续拒绝预发布后缀、未知系列和无法识别的发行包。实际验收使用下面列出的补丁版本，不代表每个补丁版本均已实测。
+
+10.0/10.1 的 `information_schema.COLUMNS.EXTRA` 使用独立 `PERSISTENT`、`VIRTUAL` 标记，适配器现在将其识别为生成列，并保留 `STORED GENERATED`、`VIRTUAL GENERATED` 的既有行为；`DEFAULT_GENERATED` 仍为普通默认值。真实夹具同时创建存储与虚拟生成列，旧系列采用其支持的 `AS (...) PERSISTENT/VIRTUAL` 语法。兼容官方旧镜像的 `1~xenial`、`1~bionic`、`1:10.2.44+maria~bionic` 等发行包版本后缀。
+
+10.x 复用全局 `wsrep_on` 检查；10.0 不含该目录项的构建按关闭处理。10.3 起的真实夹具继续验证系统版本表与序列不会被当作普通物理表。单库合约涵盖合并、镜像、追加、替换、值保真、取消、回滚、权限和锁，并持续核对 100 表元数据固定 **5 次 SELECT + 1 次 SHOW GRANTS**、多表快照 **1 次 SELECT**，没有增加循环内 SQL 查询。
+
+MariaDB 验收器的默认候选范围已扩展为 10.0–10.11、11.0–11.8、12.0–12.3。ARM64 主机对 10.0–10.5 使用官方 amd64 镜像及仿真，10.6 起使用原生 ARM64 镜像；这不代表所有平台均已单独验收。验收仍只访问专属隔离容器，使用日志与 TCP 探活，结束后清理容器和匿名数据卷。
+
+复验命令（可用 `--binary <Rust测试程序>` 复用当前工作区构建）：
+
+```sh
+python3 scripts/data-tasks/validate_mariadb_versions.py \
+  --images mariadb:10.0 mariadb:10.1 mariadb:10.2 mariadb:10.3 \
+    mariadb:10.4 mariadb:10.5 mariadb:10.6 mariadb:10.7 \
+    mariadb:10.8 mariadb:10.9 mariadb:10.10 mariadb:10.11 \
+  --reference-image mysql:8.4 \
+  --report artifacts/data-tasks/mariadb10-versions.json
+
+python3 scripts/data-tasks/validate_mariadb_versions.py \
+  --images mariadb:10.0 mariadb:10.1 mariadb:10.2 mariadb:10.6 mariadb:10.11 \
+  --reference-image mariadb:12.3 \
+  --report artifacts/data-tasks/mariadb10-cross-series.json
+```
+
+10.x 完整矩阵 **37 passed / 0 failed / 0 not_run**：MySQL 8.4.13 参考单库合约、12 个 MariaDB 单库合约及 24 个双向跨实例合约；13 个专属容器和匿名数据卷均已清理。实际版本、镜像摘要与清理记录见[10.x 完整版本报告](data-task-mariadb10-versions-2026-10-22.json)。
+
+|系列|最低稳定版|实际服务端版本|单库及与 MySQL 8.4 双向合约|
+|---|---|---|---|
+|`10.0`|`10.0.10`|`10.0.38-MariaDB-1~xenial`|passed|
+|`10.1`|`10.1.8`|`10.1.48-MariaDB-1~bionic`|passed|
+|`10.2`|`10.2.6`|`10.2.44-MariaDB-1:10.2.44+maria~bionic`|passed|
+|`10.3`|`10.3.7`|`10.3.39-MariaDB-1:10.3.39+maria~ubu2004`|passed|
+|`10.4`|`10.4.6`|`10.4.34-MariaDB-1:10.4.34+maria~ubu2004`|passed|
+|`10.5`|`10.5.4`|`10.5.29-MariaDB-ubu2004`|passed|
+|`10.6`|`10.6.3`|`10.6.28-MariaDB-ubu2204`|passed|
+|`10.7`|`10.7.3`|`10.7.8-MariaDB-1:10.7.8+maria~ubu2004`|passed|
+|`10.8`|`10.8.3`|`10.8.8-MariaDB-1:10.8.8+maria~ubu2204`|passed|
+|`10.9`|`10.9.2`|`10.9.8-MariaDB-1:10.9.8+maria~ubu2204`|passed|
+|`10.10`|`10.10.2`|`10.10.7-MariaDB-1:10.10.7+maria~ubu2204`|passed|
+|`10.11`|`10.11.2`|`10.11.19-MariaDB-ubu2204`|passed|
+
+另以 MariaDB 12.3.3 为参考，对 10.0.38、10.1.48、10.2.44、10.6.28、10.11.19 执行单库及双向跨系列合约，**16 passed / 0 failed / 0 not_run**；6 个专属容器和匿名数据卷均清理，见[10.x 跨系列报告](data-task-mariadb10-cross-series-2026-10-22.json)。两份报告使用同一当前工作区测试二进制，合计 **53 项真实合约通过**，均记录了二进制 SHA-256。
+
+本轮 `cargo test --manifest-path src-tauri/Cargo.toml --lib` 为 **898 passed / 0 failed / 108 ignored**；显式忽略的真实数据库用例按上述矩阵独立执行。Python 验收脚本全量测试 **53 passed**。新增版本下限、旧生成列标记与默认矩阵测试均先确认失败再修复；Rust 格式、Python 语法与差异空白检查通过。
+
 ### MariaDB 11.x / 12.x 兼容（2026-10-22）
 
-按照用户指定的优先范围，版本门禁扩展至 **11.0–11.8、12.0–12.3**；根据[官方发行记录](https://mariadb.org/mariadb/all-releases/)，每个系列的首个稳定版本均为 `.2`，因此拒绝 `.0`、`.1`、明确的预发布后缀和未知系列。接受常见 Ubuntu/Debian 发行包、原生 `-log` 后缀和 `5.5.5-` 兼容前缀。10.x 与 13.x 未在本次开放；版本范围不代表逐个补丁均已实测。
+按照用户指定的优先范围，先将版本门禁扩展至 **11.0–11.8、12.0–12.3**；根据[官方发行记录](https://mariadb.org/mariadb/all-releases/)，每个系列的首个稳定版本均为 `.2`，因此拒绝 `.0`、`.1`、明确的预发布后缀和未知系列。接受常见 Ubuntu/Debian 发行包、原生 `-log` 后缀和 `5.5.5-` 兼容前缀。10.x 的后续扩展见上节，13.x 仍未开放；版本范围不代表逐个补丁均已实测。
 
 在专属 MariaDB 12.3.3 实例中先复现了单库合约和与 MySQL 双向跨版本合约失败：`@@global.read_only` 返回字符串 `OFF`，原来的 `u8` 解码失败。依据[官方变量说明](https://mariadb.com/docs/server/server-management/variables-and-modes/server-system-variables#read_only)，改为 SQL 中将旧版布尔和 12.x 枚举统一为 0/1，真实合约分别验证 `ON`、`NO_LOCK`、`NO_LOCK_NO_ADMIN` 均阻止目标写入。
 
@@ -33,6 +80,9 @@
 
 ```sh
 python3 scripts/data-tasks/validate_mariadb_versions.py \
+  --images mariadb:11.0 mariadb:11.1 mariadb:11.2 mariadb:11.3 \
+    mariadb:11.4 mariadb:11.5 mariadb:11.6 mariadb:11.7 mariadb:11.8 \
+    mariadb:12.0 mariadb:12.1 mariadb:12.2 mariadb:12.3 \
   --report artifacts/data-tasks/mariadb-versions.json
 
 python3 scripts/data-tasks/validate_mariadb_versions.py \

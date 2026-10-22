@@ -184,8 +184,16 @@ fn mariadb_version_verified(version: &str) -> bool {
         })
         .collect::<Option<Vec<_>>>();
     let Some(parts) = parts else { return false };
-    // 11.0–11.8、12.0–12.3 各系列的首个稳定版本均为 x.y.2。
-    if !matches!(parts.as_slice(), [11, 0..=8, patch] | [12, 0..=3, patch] if *patch >= 2) {
+    let [major, minor, patch] = parts.as_slice() else {
+        return false;
+    };
+    // 10.x 各系列首个 GA 不同；11.0–11.8、12.0–12.3 均从 x.y.2 稳定版起。
+    let minimum_patch = match (*major, *minor) {
+        (10, 0..=11) => [10, 8, 6, 7, 6, 4, 3, 3, 3, 2, 2, 2][*minor as usize],
+        (11, 0..=8) | (12, 0..=3) => 2,
+        _ => return false,
+    };
+    if *patch < minimum_patch {
         return false;
     }
     let suffix = suffix.strip_suffix("-log").unwrap_or(suffix);
@@ -195,9 +203,32 @@ fn mariadb_version_verified(version: &str) -> bool {
     let Some(distribution) = suffix.strip_prefix('-') else {
         return false;
     };
-    let distribution = distribution
+    let package_distribution = distribution
         .strip_prefix(&format!("1:{release}+maria~"))
-        .unwrap_or(distribution);
+        .or_else(|| distribution.strip_prefix("1~"));
+    let distribution = package_distribution.unwrap_or(distribution);
+    // 旧官方镜像使用发行代号，例如 10.0 的 1~xenial、10.2 的 +maria~bionic。
+    if package_distribution.is_some()
+        && matches!(
+            distribution,
+            "wheezy"
+                | "jessie"
+                | "stretch"
+                | "buster"
+                | "bullseye"
+                | "bookworm"
+                | "trixie"
+                | "precise"
+                | "trusty"
+                | "xenial"
+                | "bionic"
+                | "focal"
+                | "jammy"
+                | "noble"
+        )
+    {
+        return true;
+    }
     ["ubu", "deb", "0+deb", "0ubuntu"].iter().any(|prefix| {
         distribution.strip_prefix(prefix).is_some_and(|tail| {
             tail.as_bytes().first().is_some_and(u8::is_ascii_digit)
@@ -209,14 +240,24 @@ fn mariadb_version_verified(version: &str) -> bool {
 }
 fn server_facts_sql(version: (u16, u16, u16)) -> String {
     // 驱动从 MariaDB 握手解析实际版本。当前 MySQL 支持至 9.x；MariaDB
-    // 支持 11.x/12.x，仅这两类会话读取 MariaDB 的变量目录。未编译
+    // 支持 10.x/11.x/12.x，仅这些会话读取 MariaDB 的变量目录。未编译
     // Galera 的构建没有 WSREP_ON 这一行，COUNT 为 0，不会报未知变量。
-    let wsrep = if matches!(version.0, 11 | 12) {
+    let wsrep = if matches!(version.0, 10..=12) {
         "(SELECT COUNT(*) FROM information_schema.GLOBAL_VARIABLES WHERE VARIABLE_NAME='WSREP_ON' AND UPPER(VARIABLE_VALUE) NOT IN ('0','OFF'))"
     } else {
         "0"
     };
     format!("SELECT @@version,CAST(@@global.read_only AS CHAR) NOT IN ('0','OFF'),@@innodb_table_locks,@@lower_case_table_names,@@hostname,@@port,@@server_id,DATABASE(),{wsrep}")
+}
+fn is_generated_column(extra: &str) -> bool {
+    // MariaDB 10.0/10.1 使用独立 VIRTUAL/PERSISTENT 标记，后续版本和
+    // MySQL 使用 VIRTUAL GENERATED/STORED GENERATED。DEFAULT_GENERATED 仍是普通默认值。
+    extra.split_ascii_whitespace().any(|part| {
+        matches!(
+            part.to_ascii_uppercase().as_str(),
+            "VIRTUAL" | "PERSISTENT" | "STORED"
+        )
+    })
 }
 fn verify_grants(grants: &[String], database: &str, read_only: bool) -> bool {
     // MySQL 8.0.16+ 的 partial_revokes 会在全局 GRANT 后附加 REVOKE。
@@ -480,7 +521,7 @@ impl MySqlSession {
             .ok_or(DATABASE_ERROR)?;
         if !server_version_verified(&cell::<String>(&facts, 0)?) {
             return Err(
-                "unsupported_capability: 数据任务支持 MySQL 5.5（至少 5.5.8）、5.6（至少 5.6.10）、5.7（至少 5.7.8）、8.0（至少 8.0.11）、8.4、9.7 与 MariaDB 11.0–11.8、12.0–12.3（各系列至少 x.y.2 稳定版）原生会话"
+                "unsupported_capability: 数据任务支持 MySQL 5.5（至少 5.5.8）、5.6（至少 5.6.10）、5.7（至少 5.7.8）、8.0（至少 8.0.11）、8.4、9.7 与 MariaDB 10.0–10.11（各系列首个 GA 起）、11.0–11.8、12.0–12.3（各系列至少 x.y.2 稳定版）原生会话"
                     .into(),
             );
         }
@@ -544,8 +585,7 @@ impl MySqlSession {
                 declared_type,
                 nullable: cell::<String>(&row, 5)? == "YES",
                 default_sql: cell(&row, 6)?,
-                generated: extra.to_ascii_uppercase().contains("VIRTUAL GENERATED")
-                    || extra.to_ascii_uppercase().contains("STORED GENERATED"),
+                generated: is_generated_column(&extra),
                 primary_key_ordinal: cell(&row, 9)?,
                 collation: cell(&row, 8)?,
                 identity,
@@ -982,6 +1022,74 @@ mod tests {
         }
     }
     #[test]
+    fn mariadb_10_series_start_at_each_first_stable_release() {
+        for version in [
+            "10.0.10-MariaDB",
+            "10.1.8-MariaDB",
+            "10.2.6-MariaDB",
+            "10.3.7-MariaDB",
+            "10.4.6-MariaDB",
+            "10.5.4-MariaDB",
+            "10.6.3-MariaDB",
+            "10.7.3-MariaDB",
+            "10.8.3-MariaDB",
+            "10.9.2-MariaDB",
+            "10.10.2-MariaDB",
+            "10.11.2-MariaDB",
+            "5.5.5-10.0.38-MariaDB-log",
+            "10.11.10-MariaDB-0+deb12u1",
+            "10.0.38-MariaDB-1~xenial",
+            "10.1.48-MariaDB-1~bionic",
+            "10.2.44-MariaDB-1:10.2.44+maria~bionic",
+        ] {
+            assert!(server_version_verified(version), "{version}");
+        }
+        for version in [
+            "10.0.9-MariaDB",
+            "10.1.7-MariaDB",
+            "10.2.5-MariaDB",
+            "10.3.6-MariaDB",
+            "10.4.5-MariaDB",
+            "10.5.3-MariaDB",
+            "10.6.2-MariaDB",
+            "10.7.2-MariaDB",
+            "10.8.2-MariaDB",
+            "10.9.1-MariaDB",
+            "10.10.1-MariaDB",
+            "10.11.1-MariaDB",
+            "10.12.2-MariaDB",
+            "10.1.48-MariaDB-rc",
+            "10.0.38",
+            "10.1.48-MariaDB-1~unverified-fork",
+            "10.1.48-MariaDB-1~bionic-beta",
+        ] {
+            assert!(!server_version_verified(version), "{version}");
+        }
+    }
+    #[test]
+    fn mariadb_legacy_generated_columns_are_not_writable_defaults() {
+        for extra in [
+            "VIRTUAL",
+            "PERSISTENT",
+            "STORED",
+            "VIRTUAL GENERATED",
+            "STORED GENERATED",
+            "PERSISTENT GENERATED",
+            "VIRTUAL GENERATED INVISIBLE",
+        ] {
+            assert!(is_generated_column(extra), "{extra}");
+        }
+        for extra in [
+            "",
+            "DEFAULT_GENERATED",
+            "auto_increment",
+            "on update CURRENT_TIMESTAMP",
+            "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+        ] {
+            assert!(!is_generated_column(extra), "{extra}");
+        }
+    }
+    #[test]
     fn mariadb_prereleases_unknown_series_and_malformed_versions_are_rejected() {
         for version in [
             "11.0.1-MariaDB",
@@ -992,7 +1100,7 @@ mod tests {
             "11.9.2-MariaDB",
             "12.4.2-MariaDB",
             "13.0.2-MariaDB",
-            "10.11.10-MariaDB",
+            "10.12.10-MariaDB",
             "11.8.2",
             "11.8.-MariaDB",
             "11.8.2.1-MariaDB",
@@ -1018,6 +1126,7 @@ mod tests {
         );
         assert!(sql.contains("information_schema.GLOBAL_VARIABLES"));
         assert!(sql.contains("VARIABLE_NAME='WSREP_ON'"));
+        assert!(server_facts_sql((10, 0, 38)).contains("GLOBAL_VARIABLES"));
         assert!(
             !server_facts_sql((8, 4, 11)).contains("GLOBAL_VARIABLES"),
             "MySQL 不提供 MariaDB 的变量目录"
@@ -1197,6 +1306,8 @@ mod tests {
         use std::sync::{atomic::AtomicBool, Arc};
         let (mut observer, config, endpoint) = fixture(env).await;
         let db = id(&endpoint.database);
+        let mariadb = env == "DB_CONNECT_DATA_TASK_MARIADB_URL";
+        let special_tables = mariadb && observer.server_version() >= (10, 3, 7);
         let fractional = observer.server_version() >= (5, 6, 4);
         let generated = observer.server_version() >= (5, 7, 6);
         let datetime_type = if fractional {
@@ -1209,15 +1320,17 @@ mod tests {
         } else {
             "2026-10-20 12:34:56"
         };
-        let generated_definition = if generated {
-            "g INT GENERATED ALWAYS AS(n+1) STORED"
+        let generated_definition = if mariadb && observer.server_version() < (10, 2, 0) {
+            "g INT AS(n+1) PERSISTENT,v INT AS(n+2) VIRTUAL"
+        } else if generated {
+            "g INT GENERATED ALWAYS AS(n+1) STORED,v INT GENERATED ALWAYS AS(n+2) VIRTUAL"
         } else {
-            "g INT DEFAULT 2"
+            "g INT DEFAULT 2,v INT DEFAULT 3"
         };
         observer.query_drop(format!("CREATE TABLE {db}.exact_values(id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,n DECIMAL(65,20) NULL,b VARBINARY(100),ts {datetime_type},s VARCHAR(100)) ENGINE=InnoDB; CREATE TABLE {db}.heterogeneous(v TEXT) ENGINE=InnoDB; CREATE TABLE {db}.unsafe_engine(id INT) ENGINE=MyISAM; INSERT INTO {db}.exact_values VALUES(9007199254740993,123456789012345678901234567890.12345678901234567890,x'00ff','{datetime_value}','中文'); INSERT INTO {db}.heterogeneous VALUES(''),(NULL)" )).await.unwrap();
         observer.query_drop(format!("CREATE TABLE {db}.defaults(id INT PRIMARY KEY,n INT DEFAULT 1,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,{generated_definition}) ENGINE=InnoDB; CREATE TRIGGER {db}.default_trigger BEFORE UPDATE ON {db}.defaults FOR EACH ROW SET NEW.n=NEW.n")).await.unwrap();
         observer.query_drop(format!("CREATE TABLE {db}.limit_values(id BIGINT UNSIGNED PRIMARY KEY,v BIGINT UNSIGNED) ENGINE=InnoDB; CREATE TABLE {db}.limit_values_copy LIKE {db}.limit_values; INSERT INTO {db}.limit_values VALUES(18446744073709551615,18446744073709551615)")).await.unwrap();
-        if env == "DB_CONNECT_DATA_TASK_MARIADB_URL" {
+        if special_tables {
             observer.query_drop(format!("CREATE TABLE {db}.versioned_rows(id INT PRIMARY KEY) ENGINE=InnoDB WITH SYSTEM VERSIONING; CREATE SEQUENCE {db}.native_sequence ENGINE=InnoDB")).await.unwrap();
         }
         let catalog_sql=(0..100).map(|i|format!("CREATE TABLE {db}.catalog_{i}(id INT PRIMARY KEY,v VARCHAR(40)) ENGINE=InnoDB;")).collect::<String>();
@@ -1269,8 +1382,17 @@ mod tests {
             generated
         );
         assert!(defaults.enabled_user_triggers);
+        assert_eq!(
+            defaults
+                .columns
+                .iter()
+                .find(|c| c.name == "v")
+                .unwrap()
+                .generated,
+            generated
+        );
 
-        if env == "DB_CONNECT_DATA_TASK_MARIADB_URL" {
+        if special_tables {
             assert!(
                 !meta
                     .tables
@@ -1971,7 +2093,7 @@ mod tests {
         real_engine_contract("DB_CONNECT_DATA_TASK_MYSQL_URL").await;
     }
     #[tokio::test]
-    #[ignore = "需要显式配置 DB_CONNECT_DATA_TASK_MARIADB_URL 的专属 MariaDB 11.x/12.x 隔离容器"]
+    #[ignore = "需要显式配置 DB_CONNECT_DATA_TASK_MARIADB_URL 的专属 MariaDB 10.x/11.x/12.x 隔离容器"]
     async fn real_mariadb_session_contract() {
         real_contract("DB_CONNECT_DATA_TASK_MARIADB_URL").await;
         real_engine_contract("DB_CONNECT_DATA_TASK_MARIADB_URL").await;

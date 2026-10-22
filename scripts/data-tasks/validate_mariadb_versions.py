@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """MariaDB 多版本隔离验收：仅创建本次专属官方数据库容器。
 
-默认验收 MariaDB 11.0–11.8、12.0–12.3，并与 mysql:8.4 参考实例双向传输。
+默认验收 MariaDB 10.0–10.11、11.0–11.8、12.0–12.3，并与 mysql:8.4 参考实例双向传输。
 可用 --images 明确选择数字版本；列表只代表待验收范围，不代表已验证支持。
 示例：python3 scripts/data-tasks/validate_mariadb_versions.py
   --images mariadb:11.8 mariadb:12.0 --reference-image mariadb:11.4
@@ -22,7 +22,8 @@ import sys
 from validate import ROOT
 from validate_mysql_versions import MySQLVersionValidation, image_platform, mysql_image, positive_seconds
 
-DEFAULT_IMAGES = [*(f"mariadb:11.{minor}" for minor in range(9)),
+DEFAULT_IMAGES = [*(f"mariadb:10.{minor}" for minor in range(12)),
+                  *(f"mariadb:11.{minor}" for minor in range(9)),
                   *(f"mariadb:12.{minor}" for minor in range(4))]
 SINGLE_TEST = "db::data_tasks::adapters::mysql::tests::real_mariadb_session_contract"
 
@@ -62,7 +63,7 @@ class MariaDBVersionValidation(MySQLVersionValidation):
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--images", type=mariadb_image, nargs="+", default=DEFAULT_IMAGES,
-                        help="显式选择的官方 MariaDB 版本列表；默认覆盖 11.0–11.8、12.0–12.3")
+                        help="显式选择的官方 MariaDB 版本列表；默认覆盖 10.0–10.11、11.0–11.8、12.0–12.3")
     parser.add_argument("--reference-image", type=reference_image, default="mysql:8.4",
                         help="官方 MySQL 或 MariaDB 参考实例；默认 mysql:8.4")
     parser.add_argument("--binary", type=Path, help="复用当前工作区编译的 Rust 库测试程序")
