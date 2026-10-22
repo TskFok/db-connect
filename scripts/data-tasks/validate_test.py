@@ -68,6 +68,32 @@ class ValidationTests(unittest.TestCase):
             result = self.validation.tests("mysql:5.7.44", "real_mysql_session_contract")
         self.assertEqual(result.get("server_version"), "5.7.44")
 
+    def test_postgres_versions_are_preserved_without_retaining_package_or_url_text(self):
+        private_url = "postgres://business:private@production/database"
+        self.fixture(f"DATA_TASK_POSTGRES_VERSION 10.23 (Debian build) {private_url}\n"
+                     f"DATA_TASK_POSTGRES_CROSS_VERSION source=10.23 target=18.6 {private_url}\n"
+                     "test result: ok. 1 passed; 0 failed; 0 ignored")
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = self.validation.tests("postgres", "real_")
+        self.assertEqual(result.get("server_version"), "10.23")
+        self.assertEqual(result.get("source_server_version"), "10.23")
+        self.assertEqual(result.get("target_server_version"), "18.6")
+        self.assertNotIn("private", str(self.validation.results))
+
+    def test_postgres_version_metrics_reject_malformed_or_cross_line_tokens(self):
+        for token in ("18beta1", "18.6postgres://private", "postgres://private", "18.6.1", "18.6-rc1"):
+            with self.subTest(token=token):
+                self.fixture(f"DATA_TASK_POSTGRES_VERSION {token}\n"
+                             f"DATA_TASK_POSTGRES_CROSS_VERSION source={token} target=10.23\n"
+                             f"DATA_TASK_POSTGRES_CROSS_VERSION source=10.23 target={token}\n"
+                             "DATA_TASK_POSTGRES_CROSS_VERSION source=10.23\ntarget=18.6\n"
+                             "test result: ok. 1 passed; 0 failed; 0 ignored")
+                with contextlib.redirect_stdout(io.StringIO()):
+                    result = self.validation.tests("postgres", "real_", required_metrics=("server_version",))
+                self.assertIsNone(result)
+                self.assertFalse({"server_version", "source_server_version", "target_server_version"}
+                                 & self.validation.results[-1].keys())
+
     def test_mysql_cross_versions_are_preserved_without_database_output(self):
         self.fixture("DATA_TASK_MYSQL_CROSS_VERSION source=5.7.44 target=9.7.4\ntest result: ok. 1 passed; 0 failed; 0 ignored")
         with contextlib.redirect_stdout(io.StringIO()):
@@ -130,6 +156,40 @@ class ValidationTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             self.validation.real_driver("postgres")
         self.assertEqual(self.validation.results[-1]["status"], "not_run")
+
+    def test_postgres_single_instance_runner_excludes_cross_version_contract(self):
+        self.validation.urls = {"postgres": "postgres://isolated@127.0.0.1:55432/postgres"}
+        selected_path = Path(self.directory.name) / "selected.txt"
+        executable = Path(self.directory.name) / "postgres_tests"
+        executable.write_text("""#!/usr/bin/env python3
+import os, sys
+from pathlib import Path
+tests = [
+    'db::data_tasks::adapters::postgres::tests::real_postgres_native_snapshot_and_lock_contract',
+    'db::data_tasks::adapters::postgres::end_to_end_tests::real_postgres_end_to_end_merge_stale_and_rollback',
+    'db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_identity_sequence_lock_cancel_and_default_insert',
+    'db::data_tasks::adapters::postgres::version_tests::real_postgres_cross_version_contract',
+    'db::data_tasks::cross_type_tests::real_postgres_same_type_all_modes',
+    'db::data_tasks::acceptance_network_tests::real_postgres_one_table_has_fixed_query_budget',
+]
+selected = [test for test in tests if sys.argv[1] in test]
+with Path(SELECTED_PATH).open('a') as log:
+    log.write('\\n'.join(selected) + '\\n')
+failed = sum('::version_tests::' in test and 'DB_CONNECT_DATA_TASK_PG_TARGET_URL' not in os.environ for test in selected)
+print(f'test result: {"FAILED" if failed else "ok"}. {len(selected)-failed} passed; {failed} failed; 0 ignored')
+raise SystemExit(101 if failed else 0)
+""".replace("SELECTED_PATH", repr(str(selected_path))), encoding="utf-8")
+        executable.chmod(0o700)
+        self.validation.binary = executable
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.validation.real_driver("postgres")
+        self.assertTrue(all(result["status"] == "passed" for result in self.validation.results))
+        selected = selected_path.read_text().splitlines()
+        self.assertEqual(len(selected), 5)
+        self.assertFalse(any("::version_tests::" in name for name in selected))
+        for module in ("::postgres::tests::", "::end_to_end_tests::", "::atomicity_tests::",
+                       "::cross_type_tests::", "::acceptance_network_tests::"):
+            self.assertTrue(any(module in name for name in selected), module)
 
     def test_real_drivers_share_explicit_fixture_environment_with_matrix(self):
         self.validation.urls = {"postgres": "postgres://isolated@127.0.0.1:55432/postgres",

@@ -104,6 +104,12 @@ class Validation:
         cross_versions = re.search(r"DATA_TASK_MYSQL_CROSS_VERSION source=([0-9][A-Za-z0-9.+_:~-]{0,127}) target=([0-9][A-Za-z0-9.+_:~-]{0,127})(?=\s|$)", output)
         if cross_versions:
             metrics["source_server_version"], metrics["target_server_version"] = cross_versions.groups()
+        postgres_version = re.search(r"DATA_TASK_POSTGRES_VERSION ([1-9][0-9]*\.[0-9]+)(?=\s|$)", output)
+        if postgres_version:
+            metrics["server_version"] = postgres_version.group(1)
+        postgres_cross_versions = re.search(r"DATA_TASK_POSTGRES_CROSS_VERSION source=([1-9][0-9]*\.[0-9]+) target=([1-9][0-9]*\.[0-9]+)(?=\s|$)", output)
+        if postgres_cross_versions:
+            metrics["source_server_version"], metrics["target_server_version"] = postgres_cross_versions.groups()
         data = re.search(r"DATA_TASK_METRICS ([^\n]+)", output)
         if data:
             for key, value in re.findall(r"(\w+)=(\d+)", data.group(1)):
@@ -196,10 +202,15 @@ class Validation:
                 environment[ENV_NAMES["mysql"]] = url
             test_filter = (f"db::data_tasks::adapters::mysql::tests::real_{driver}_session_contract"
                            if driver in ("mysql", "mariadb") else REAL_PREFIX.format(driver=module))
-            self.tests("clickhouse_native_and_source" if driver == "clickhouse" else driver, test_filter, env=environment, ignored=True)
             if driver == "postgres":
+                # 跨版本合约需要第二个专属实例，不能被单库入口的模块前缀误选中。
+                self.tests("postgres", test_filter + "tests::", env=environment, ignored=True)
+                self.tests("postgres_end_to_end", test_filter + "end_to_end_tests::", env=environment, ignored=True)
+                self.tests("postgres_atomicity", test_filter + "atomicity_tests::", env=environment, ignored=True)
                 self.tests("postgres_modes", "data_tasks::cross_type_tests::real_postgres_same_type_all_modes", env=environment, ignored=True)
                 self.tests("postgres_network_fault_and_query_budget", "data_tasks::acceptance_network_tests::", env=environment, ignored=True)
+            else:
+                self.tests("clickhouse_native_and_source" if driver == "clickhouse" else driver, test_filter, env=environment, ignored=True)
             if driver == "sqlserver":
                 self.tests("sqlserver_modes_and_cancel", "data_tasks::cross_type_tests::real_sqlserver_same_type_executor_and_cancel", env=environment, ignored=True)
 

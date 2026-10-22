@@ -21,6 +21,44 @@
 
 ## 自动证据
 
+### PostgreSQL 10–18 兼容（2026-10-22）
+
+数据同步与数据传输的版本门禁从仅 17 扩展至 **10–18 正式版本系列**。同一条实例事实查询同时核对 `server_version_num` 与 `server_version`，接受原生版本号及 Debian、Ubuntu、Homebrew 正式构建标记，拒绝 beta、RC、devel、未知系列、无法识别的分支及数字与文本不一致的版本。门禁覆盖系列范围；真实验收只代表下表列出的补丁版本，不代表每个补丁均已实测。
+
+10/11 的目录查询不引用尚不存在的 `pg_attribute.attgenerated`；12 起识别生成列，并保留原始生成类型标记。18 的 stored/virtual（`s`/`v`）生成类型，以及约束的 `conenforced`、`conperiod` 状态纳入结构指纹，执行前发生变化会使预览失效。旧系列使用兼容的目录表达式，保持元数据固定 **5 次 SELECT**、每个端点的多表快照 **1 次 SELECT**，没有增加循环内 SQL 查询。
+
+`REAL` 读取按其原生 `f32` 精度还原，再形成统一比较值，避免 PostgreSQL 12 前后浮点文本输出不同造成伪差异。双实例值用例覆盖超出 JavaScript 安全整数范围的主键、BIGINT 边界、高精度 NUMERIC、BYTEA、默认 TIMESTAMP、DATE、REAL、DOUBLE PRECISION、中文与 emoji、空值及空文本；同时验证源快照冻结、目标漂移、四种模式、identity/序列维护、外键与锁、取消及失败回滚。本轮只扩展版本兼容，沿用生成列、序列、继承、RLS、写规则、权限及实例身份预检，不新增 JSONB、数组、枚举等字段类型支持。
+
+新增 `scripts/data-tasks/validate_postgres_versions.py`：默认以 10–17 为候选、18 为参考，每版本按精确测试名运行 9 项适配器合约、1 项同类型四模式合约和 7 项网络故障/取消/查询预算合约；跨版本另用两个独立实例执行完整合约，避免把同实例的两个 schema 当作跨版本证据。验收器只创建本次专属容器，清除继承的 `DB_CONNECT_DATA_TASK_*` 配置，等待最终 PostgreSQL 进程就绪日志后进行 TCP 探活，不循环执行 SQL。18 使用 `/var/lib/postgresql` 数据卷，旧版使用 `/var/lib/postgresql/data`；删除容器和匿名卷后再核对卷已消失。报告记录实际版本、镜像摘要、测试程序 SHA-256 和清理结果，不保留密码、连接 URL 或原始数据库错误。
+
+复验命令（可用 `--binary <Rust测试程序>` 复用当前工作区构建；镜像已下载时可加 `--no-pull`）：
+
+```sh
+python3 scripts/data-tasks/validate_postgres_versions.py \
+  --images postgres:10 postgres:11 postgres:12 postgres:13 \
+    postgres:14 postgres:15 postgres:16 postgres:17 \
+  --reference-image postgres:18 \
+  --report artifacts/data-tasks/postgres-versions.json
+
+python3 -m unittest discover -s scripts/data-tasks -p '*_test.py'
+```
+
+最终版本矩阵 **25 passed / 0 failed / 0 not_run**：9 个版本各 17 项单库测试，共 **153 项单库测试 + 16 项双向跨版本测试 = 169 项真实测试通过**。9 个专属容器及 9 个匿名数据卷均已清理并核对；全部使用同一当前工作区测试程序，SHA-256 为 `66147d0ea6bfaf643edd0062158122ec590d4c75f574914fdad7ee763aa3f779`。原始结果及清理证据见[PostgreSQL 完整版本报告](data-task-postgres-versions-2026-10-22.json)。
+
+|系列镜像|实际服务端版本|单库合约|与 PostgreSQL 18.6 双向跨版本合约|
+|---|---|---|---|
+|`postgres:10`|`10.21`|17/17 passed|2/2 passed|
+|`postgres:11`|`11.16`|17/17 passed|2/2 passed|
+|`postgres:12`|`12.22`|17/17 passed|2/2 passed|
+|`postgres:13`|`13.23`|17/17 passed|2/2 passed|
+|`postgres:14`|`14.24`|17/17 passed|2/2 passed|
+|`postgres:15`|`15.19`|17/17 passed|2/2 passed|
+|`postgres:16`|`16.15`|17/17 passed|2/2 passed|
+|`postgres:17`|`17.11`|17/17 passed|2/2 passed|
+|`postgres:18`|`18.6`|17/17 passed|参考实例，参与上述 16 个方向|
+
+本轮真实矩阵在 macOS ARM64 主机上使用官方 ARM64 镜像，不代表其他平台均已单独验收。`cargo test --manifest-path src-tauri/Cargo.toml --lib` 为 **905 passed / 0 failed / 109 ignored**；默认忽略的真实数据库测试按上述矩阵独立执行。首次普通沙箱执行中，13 项监听本机端口的测试受权限限制；允许监听后全量 905 项通过。Python 验收脚本全量 **66 passed**；随后修复通用单实例入口误选双实例合约的问题，新增回归用例并复跑 `validate_test.py`，该模块 **16 passed**。Clippy、Rust 格式、Python 语法与差异空白检查通过。
+
 ### MariaDB 10.x 兼容（2026-10-22）
 
 在 11.x/12.x 支持基础上，继续开放 **10.0–10.11 各系列首个 GA 起的稳定版本**，最低补丁依据[官方发行记录](https://mariadb.org/mariadb/all-releases/)。版本门禁单测覆盖全部 12 个下限及其前一补丁，继续拒绝预发布后缀、未知系列和无法识别的发行包。实际验收使用下面列出的补丁版本，不代表每个补丁版本均已实测。

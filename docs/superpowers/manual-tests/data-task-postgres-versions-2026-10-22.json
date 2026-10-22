@@ -1,0 +1,1570 @@
+{
+  "scope": "disposable_official_postgres_versions_loopback",
+  "images": [
+    "postgres:10",
+    "postgres:11",
+    "postgres:12",
+    "postgres:13",
+    "postgres:14",
+    "postgres:15",
+    "postgres:16",
+    "postgres:17"
+  ],
+  "reference_image": "postgres:18",
+  "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "generated_at": "2026-10-22T09:23:38.212316+00:00",
+  "interrupted": false,
+  "source_revision": "67f76322174344a05ddd28520f8a1fc7e12dfb25",
+  "working_tree_dirty": true,
+  "binary_sha256": "66147d0ea6bfaf643edd0062158122ec590d4c75f574914fdad7ee763aa3f779",
+  "resolved_images": [
+    {
+      "image": "postgres:18",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6",
+      "repo_digests": [
+        "postgres@sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "postgres:10",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:b2baf8998630663d21370da06387c950e587071bdd307ee34e661cdcc7442bcc",
+      "repo_digests": [
+        "postgres@sha256:b2baf8998630663d21370da06387c950e587071bdd307ee34e661cdcc7442bcc"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "postgres:11",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:5d2aa4a7b5f9bdadeddcf87cf7f90a176737a02a30d917de4ab2e6a329bd2d45",
+      "repo_digests": [
+        "postgres@sha256:5d2aa4a7b5f9bdadeddcf87cf7f90a176737a02a30d917de4ab2e6a329bd2d45"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "postgres:12",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:2f2a8c2a7d10862e7fba2602e304523554f9df8244c632dafe2628ccb398fb5c",
+      "repo_digests": [
+        "postgres@sha256:2f2a8c2a7d10862e7fba2602e304523554f9df8244c632dafe2628ccb398fb5c"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "postgres:13",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:4689940c683801b4ab839ab3b0a0a3555a5fe425371422310944e89eca7d8068",
+      "repo_digests": [
+        "postgres@sha256:4689940c683801b4ab839ab3b0a0a3555a5fe425371422310944e89eca7d8068"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "postgres:14",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:8ab94f61668dc73bbab4dc13273ff2fc37e635536af62aef5306a49a9682a446",
+      "repo_digests": [
+        "postgres@sha256:8ab94f61668dc73bbab4dc13273ff2fc37e635536af62aef5306a49a9682a446"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "postgres:15",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:baa22e6286bf832cb147b8bb5aa9d8bc999846d69c21d11bf63f58fbeed1fa48",
+      "repo_digests": [
+        "postgres@sha256:baa22e6286bf832cb147b8bb5aa9d8bc999846d69c21d11bf63f58fbeed1fa48"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "postgres:16",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:9e2cf6287f25c3151f4c9421ccce2b17f3e60061c111a29165e0d2cdd9ff0a97",
+      "repo_digests": [
+        "postgres@sha256:9e2cf6287f25c3151f4c9421ccce2b17f3e60061c111a29165e0d2cdd9ff0a97"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "postgres:17",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:b8faeff7712663c2773a190181e1246e37e364b887611c04658c28b44e2408fe",
+      "repo_digests": [
+        "postgres@sha256:b8faeff7712663c2773a190181e1246e37e364b887611c04658c28b44e2408fe"
+      ],
+      "architecture": "arm64"
+    }
+  ],
+  "results": [
+    {
+      "name": "reference:postgres:18",
+      "status": "passed",
+      "detail": "17/17 项 PostgreSQL 单库合约通过",
+      "image": "postgres:18",
+      "docker_platform": "linux/arm64",
+      "server_version": "18.6",
+      "cases": [
+        {
+          "name": "reference:postgres:18:real_postgres_native_snapshot_and_lock_contract",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 1.511,
+          "server_version": "18.6",
+          "test_filter": "db::data_tasks::adapters::postgres::tests::real_postgres_native_snapshot_and_lock_contract"
+        },
+        {
+          "name": "reference:postgres:18:real_postgres_end_to_end_merge_stale_and_rollback",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.564,
+          "test_filter": "db::data_tasks::adapters::postgres::end_to_end_tests::real_postgres_end_to_end_merge_stale_and_rollback"
+        },
+        {
+          "name": "reference:postgres:18:real_postgres_identity_sequence_lock_cancel_and_default_insert",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.747,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_identity_sequence_lock_cancel_and_default_insert"
+        },
+        {
+          "name": "reference:postgres:18:real_postgres_append_late_conflict_and_verification_failure_roll_back",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 3.06,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_append_late_conflict_and_verification_failure_roll_back"
+        },
+        {
+          "name": "reference:postgres:18:real_postgres_external_fk_and_inheritance_are_preflight_blocked",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.222,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_external_fk_and_inheritance_are_preflight_blocked"
+        },
+        {
+          "name": "reference:postgres:18:real_postgres_inherited_rows_are_never_written_through_parent",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.162,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_inherited_rows_are_never_written_through_parent"
+        },
+        {
+          "name": "reference:postgres:18:real_postgres_write_rule_is_rejected_before_preview",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.161,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_write_rule_is_rejected_before_preview"
+        },
+        {
+          "name": "reference:postgres:18:real_postgres_rule_added_after_preview_causes_zero_write_stale_failure",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.272,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_rule_added_after_preview_causes_zero_write_stale_failure"
+        },
+        {
+          "name": "reference:postgres:18:real_postgres_schema_usage_and_all_write_permissions_are_required",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.168,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_schema_usage_and_all_write_permissions_are_required"
+        },
+        {
+          "name": "reference:postgres:18:real_postgres_same_type_all_modes",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 2.975,
+          "test_filter": "db::data_tasks::cross_type_tests::real_postgres_same_type_all_modes"
+        },
+        {
+          "name": "reference:postgres:18:real_postgres_lost_commit_ack_is_unknown_and_never_replayed",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.301,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_lost_commit_ack_is_unknown_and_never_replayed"
+        },
+        {
+          "name": "reference:postgres:18:real_postgres_stalled_commit_ack_is_bounded_and_never_replayed",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 10.328,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_stalled_commit_ack_is_bounded_and_never_replayed"
+        },
+        {
+          "name": "reference:postgres:18:real_postgres_one_table_has_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.166,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_one_table_has_fixed_query_budget"
+        },
+        {
+          "name": "reference:postgres:18:real_postgres_ten_tables_have_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.131,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_ten_tables_have_fixed_query_budget"
+        },
+        {
+          "name": "reference:postgres:18:real_postgres_hundred_tables_have_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.284,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_hundred_tables_have_fixed_query_budget"
+        },
+        {
+          "name": "reference:postgres:18:real_postgres_cancel_pending_snapshot_is_bounded",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.338,
+          "cancellation_latency_ms": {
+            "pending_snapshot": 12
+          },
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_cancel_pending_snapshot_is_bounded"
+        },
+        {
+          "name": "reference:postgres:18:real_postgres_cancel_pending_target_lock_is_rolled_back",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.375,
+          "cancellation_latency_ms": {
+            "pending_target_lock": 46
+          },
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_cancel_pending_target_lock_is_rolled_back"
+        }
+      ],
+      "elapsed_seconds": 21.765
+    },
+    {
+      "name": "postgres:10",
+      "status": "passed",
+      "detail": "17/17 项 PostgreSQL 单库合约通过",
+      "image": "postgres:10",
+      "docker_platform": "linux/arm64",
+      "server_version": "10.21",
+      "cases": [
+        {
+          "name": "postgres:10:real_postgres_native_snapshot_and_lock_contract",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.219,
+          "server_version": "10.21",
+          "test_filter": "db::data_tasks::adapters::postgres::tests::real_postgres_native_snapshot_and_lock_contract"
+        },
+        {
+          "name": "postgres:10:real_postgres_end_to_end_merge_stale_and_rollback",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.185,
+          "test_filter": "db::data_tasks::adapters::postgres::end_to_end_tests::real_postgres_end_to_end_merge_stale_and_rollback"
+        },
+        {
+          "name": "postgres:10:real_postgres_identity_sequence_lock_cancel_and_default_insert",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.328,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_identity_sequence_lock_cancel_and_default_insert"
+        },
+        {
+          "name": "postgres:10:real_postgres_append_late_conflict_and_verification_failure_roll_back",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 2.838,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_append_late_conflict_and_verification_failure_roll_back"
+        },
+        {
+          "name": "postgres:10:real_postgres_external_fk_and_inheritance_are_preflight_blocked",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.071,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_external_fk_and_inheritance_are_preflight_blocked"
+        },
+        {
+          "name": "postgres:10:real_postgres_inherited_rows_are_never_written_through_parent",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.048,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_inherited_rows_are_never_written_through_parent"
+        },
+        {
+          "name": "postgres:10:real_postgres_write_rule_is_rejected_before_preview",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.048,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_write_rule_is_rejected_before_preview"
+        },
+        {
+          "name": "postgres:10:real_postgres_rule_added_after_preview_causes_zero_write_stale_failure",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.082,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_rule_added_after_preview_causes_zero_write_stale_failure"
+        },
+        {
+          "name": "postgres:10:real_postgres_schema_usage_and_all_write_permissions_are_required",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.045,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_schema_usage_and_all_write_permissions_are_required"
+        },
+        {
+          "name": "postgres:10:real_postgres_same_type_all_modes",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.494,
+          "test_filter": "db::data_tasks::cross_type_tests::real_postgres_same_type_all_modes"
+        },
+        {
+          "name": "postgres:10:real_postgres_lost_commit_ack_is_unknown_and_never_replayed",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.093,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_lost_commit_ack_is_unknown_and_never_replayed"
+        },
+        {
+          "name": "postgres:10:real_postgres_stalled_commit_ack_is_bounded_and_never_replayed",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 10.113,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_stalled_commit_ack_is_bounded_and_never_replayed"
+        },
+        {
+          "name": "postgres:10:real_postgres_one_table_has_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.07,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_one_table_has_fixed_query_budget"
+        },
+        {
+          "name": "postgres:10:real_postgres_ten_tables_have_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.084,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_ten_tables_have_fixed_query_budget"
+        },
+        {
+          "name": "postgres:10:real_postgres_hundred_tables_have_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.429,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_hundred_tables_have_fixed_query_budget"
+        },
+        {
+          "name": "postgres:10:real_postgres_cancel_pending_snapshot_is_bounded",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.252,
+          "cancellation_latency_ms": {
+            "pending_snapshot": 11
+          },
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_cancel_pending_snapshot_is_bounded"
+        },
+        {
+          "name": "postgres:10:real_postgres_cancel_pending_target_lock_is_rolled_back",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.187,
+          "cancellation_latency_ms": {
+            "pending_target_lock": 44
+          },
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_cancel_pending_target_lock_is_rolled_back"
+        }
+      ],
+      "elapsed_seconds": 15.586
+    },
+    {
+      "name": "postgres:10->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 17.094,
+      "source_server_version": "10.21",
+      "target_server_version": "18.6",
+      "image": "postgres:10",
+      "docker_platform": "linux/arm64",
+      "target_image": "postgres:18"
+    },
+    {
+      "name": "reference->postgres:10",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 16.184,
+      "source_server_version": "18.6",
+      "target_server_version": "10.21",
+      "image": "postgres:18",
+      "docker_platform": "linux/arm64",
+      "target_image": "postgres:10"
+    },
+    {
+      "name": "postgres:11",
+      "status": "passed",
+      "detail": "17/17 项 PostgreSQL 单库合约通过",
+      "image": "postgres:11",
+      "docker_platform": "linux/arm64",
+      "server_version": "11.16",
+      "cases": [
+        {
+          "name": "postgres:11:real_postgres_native_snapshot_and_lock_contract",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.224,
+          "server_version": "11.16",
+          "test_filter": "db::data_tasks::adapters::postgres::tests::real_postgres_native_snapshot_and_lock_contract"
+        },
+        {
+          "name": "postgres:11:real_postgres_end_to_end_merge_stale_and_rollback",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.389,
+          "test_filter": "db::data_tasks::adapters::postgres::end_to_end_tests::real_postgres_end_to_end_merge_stale_and_rollback"
+        },
+        {
+          "name": "postgres:11:real_postgres_identity_sequence_lock_cancel_and_default_insert",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.4,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_identity_sequence_lock_cancel_and_default_insert"
+        },
+        {
+          "name": "postgres:11:real_postgres_append_late_conflict_and_verification_failure_roll_back",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 2.705,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_append_late_conflict_and_verification_failure_roll_back"
+        },
+        {
+          "name": "postgres:11:real_postgres_external_fk_and_inheritance_are_preflight_blocked",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.067,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_external_fk_and_inheritance_are_preflight_blocked"
+        },
+        {
+          "name": "postgres:11:real_postgres_inherited_rows_are_never_written_through_parent",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.047,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_inherited_rows_are_never_written_through_parent"
+        },
+        {
+          "name": "postgres:11:real_postgres_write_rule_is_rejected_before_preview",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.054,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_write_rule_is_rejected_before_preview"
+        },
+        {
+          "name": "postgres:11:real_postgres_rule_added_after_preview_causes_zero_write_stale_failure",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.087,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_rule_added_after_preview_causes_zero_write_stale_failure"
+        },
+        {
+          "name": "postgres:11:real_postgres_schema_usage_and_all_write_permissions_are_required",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.048,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_schema_usage_and_all_write_permissions_are_required"
+        },
+        {
+          "name": "postgres:11:real_postgres_same_type_all_modes",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.563,
+          "test_filter": "db::data_tasks::cross_type_tests::real_postgres_same_type_all_modes"
+        },
+        {
+          "name": "postgres:11:real_postgres_lost_commit_ack_is_unknown_and_never_replayed",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.093,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_lost_commit_ack_is_unknown_and_never_replayed"
+        },
+        {
+          "name": "postgres:11:real_postgres_stalled_commit_ack_is_bounded_and_never_replayed",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 10.113,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_stalled_commit_ack_is_bounded_and_never_replayed"
+        },
+        {
+          "name": "postgres:11:real_postgres_one_table_has_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.05,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_one_table_has_fixed_query_budget"
+        },
+        {
+          "name": "postgres:11:real_postgres_ten_tables_have_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.075,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_ten_tables_have_fixed_query_budget"
+        },
+        {
+          "name": "postgres:11:real_postgres_hundred_tables_have_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.47,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_hundred_tables_have_fixed_query_budget"
+        },
+        {
+          "name": "postgres:11:real_postgres_cancel_pending_snapshot_is_bounded",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.25,
+          "cancellation_latency_ms": {
+            "pending_snapshot": 11
+          },
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_cancel_pending_snapshot_is_bounded"
+        },
+        {
+          "name": "postgres:11:real_postgres_cancel_pending_target_lock_is_rolled_back",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.153,
+          "cancellation_latency_ms": {
+            "pending_target_lock": 53
+          },
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_cancel_pending_target_lock_is_rolled_back"
+        }
+      ],
+      "elapsed_seconds": 15.788
+    },
+    {
+      "name": "postgres:11->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 15.82,
+      "source_server_version": "11.16",
+      "target_server_version": "18.6",
+      "image": "postgres:11",
+      "docker_platform": "linux/arm64",
+      "target_image": "postgres:18"
+    },
+    {
+      "name": "reference->postgres:11",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 16.541,
+      "source_server_version": "18.6",
+      "target_server_version": "11.16",
+      "image": "postgres:18",
+      "docker_platform": "linux/arm64",
+      "target_image": "postgres:11"
+    },
+    {
+      "name": "postgres:12",
+      "status": "passed",
+      "detail": "17/17 项 PostgreSQL 单库合约通过",
+      "image": "postgres:12",
+      "docker_platform": "linux/arm64",
+      "server_version": "12.22",
+      "cases": [
+        {
+          "name": "postgres:12:real_postgres_native_snapshot_and_lock_contract",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.251,
+          "server_version": "12.22",
+          "test_filter": "db::data_tasks::adapters::postgres::tests::real_postgres_native_snapshot_and_lock_contract"
+        },
+        {
+          "name": "postgres:12:real_postgres_end_to_end_merge_stale_and_rollback",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.246,
+          "test_filter": "db::data_tasks::adapters::postgres::end_to_end_tests::real_postgres_end_to_end_merge_stale_and_rollback"
+        },
+        {
+          "name": "postgres:12:real_postgres_identity_sequence_lock_cancel_and_default_insert",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.359,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_identity_sequence_lock_cancel_and_default_insert"
+        },
+        {
+          "name": "postgres:12:real_postgres_append_late_conflict_and_verification_failure_roll_back",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 2.668,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_append_late_conflict_and_verification_failure_roll_back"
+        },
+        {
+          "name": "postgres:12:real_postgres_external_fk_and_inheritance_are_preflight_blocked",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.064,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_external_fk_and_inheritance_are_preflight_blocked"
+        },
+        {
+          "name": "postgres:12:real_postgres_inherited_rows_are_never_written_through_parent",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.05,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_inherited_rows_are_never_written_through_parent"
+        },
+        {
+          "name": "postgres:12:real_postgres_write_rule_is_rejected_before_preview",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.069,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_write_rule_is_rejected_before_preview"
+        },
+        {
+          "name": "postgres:12:real_postgres_rule_added_after_preview_causes_zero_write_stale_failure",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.086,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_rule_added_after_preview_causes_zero_write_stale_failure"
+        },
+        {
+          "name": "postgres:12:real_postgres_schema_usage_and_all_write_permissions_are_required",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.042,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_schema_usage_and_all_write_permissions_are_required"
+        },
+        {
+          "name": "postgres:12:real_postgres_same_type_all_modes",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.486,
+          "test_filter": "db::data_tasks::cross_type_tests::real_postgres_same_type_all_modes"
+        },
+        {
+          "name": "postgres:12:real_postgres_lost_commit_ack_is_unknown_and_never_replayed",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.102,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_lost_commit_ack_is_unknown_and_never_replayed"
+        },
+        {
+          "name": "postgres:12:real_postgres_stalled_commit_ack_is_bounded_and_never_replayed",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 10.125,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_stalled_commit_ack_is_bounded_and_never_replayed"
+        },
+        {
+          "name": "postgres:12:real_postgres_one_table_has_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.07,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_one_table_has_fixed_query_budget"
+        },
+        {
+          "name": "postgres:12:real_postgres_ten_tables_have_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.076,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_ten_tables_have_fixed_query_budget"
+        },
+        {
+          "name": "postgres:12:real_postgres_hundred_tables_have_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.673,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_hundred_tables_have_fixed_query_budget"
+        },
+        {
+          "name": "postgres:12:real_postgres_cancel_pending_snapshot_is_bounded",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.294,
+          "cancellation_latency_ms": {
+            "pending_snapshot": 13
+          },
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_cancel_pending_snapshot_is_bounded"
+        },
+        {
+          "name": "postgres:12:real_postgres_cancel_pending_target_lock_is_rolled_back",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.188,
+          "cancellation_latency_ms": {
+            "pending_target_lock": 54
+          },
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_cancel_pending_target_lock_is_rolled_back"
+        }
+      ],
+      "elapsed_seconds": 15.849
+    },
+    {
+      "name": "postgres:12->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 16.962,
+      "source_server_version": "12.22",
+      "target_server_version": "18.6",
+      "image": "postgres:12",
+      "docker_platform": "linux/arm64",
+      "target_image": "postgres:18"
+    },
+    {
+      "name": "reference->postgres:12",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 16.407,
+      "source_server_version": "18.6",
+      "target_server_version": "12.22",
+      "image": "postgres:18",
+      "docker_platform": "linux/arm64",
+      "target_image": "postgres:12"
+    },
+    {
+      "name": "postgres:13",
+      "status": "passed",
+      "detail": "17/17 项 PostgreSQL 单库合约通过",
+      "image": "postgres:13",
+      "docker_platform": "linux/arm64",
+      "server_version": "13.23",
+      "cases": [
+        {
+          "name": "postgres:13:real_postgres_native_snapshot_and_lock_contract",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.248,
+          "server_version": "13.23",
+          "test_filter": "db::data_tasks::adapters::postgres::tests::real_postgres_native_snapshot_and_lock_contract"
+        },
+        {
+          "name": "postgres:13:real_postgres_end_to_end_merge_stale_and_rollback",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.277,
+          "test_filter": "db::data_tasks::adapters::postgres::end_to_end_tests::real_postgres_end_to_end_merge_stale_and_rollback"
+        },
+        {
+          "name": "postgres:13:real_postgres_identity_sequence_lock_cancel_and_default_insert",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.398,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_identity_sequence_lock_cancel_and_default_insert"
+        },
+        {
+          "name": "postgres:13:real_postgres_append_late_conflict_and_verification_failure_roll_back",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 2.95,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_append_late_conflict_and_verification_failure_roll_back"
+        },
+        {
+          "name": "postgres:13:real_postgres_external_fk_and_inheritance_are_preflight_blocked",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.073,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_external_fk_and_inheritance_are_preflight_blocked"
+        },
+        {
+          "name": "postgres:13:real_postgres_inherited_rows_are_never_written_through_parent",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.055,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_inherited_rows_are_never_written_through_parent"
+        },
+        {
+          "name": "postgres:13:real_postgres_write_rule_is_rejected_before_preview",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.049,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_write_rule_is_rejected_before_preview"
+        },
+        {
+          "name": "postgres:13:real_postgres_rule_added_after_preview_causes_zero_write_stale_failure",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.082,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_rule_added_after_preview_causes_zero_write_stale_failure"
+        },
+        {
+          "name": "postgres:13:real_postgres_schema_usage_and_all_write_permissions_are_required",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.047,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_schema_usage_and_all_write_permissions_are_required"
+        },
+        {
+          "name": "postgres:13:real_postgres_same_type_all_modes",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.651,
+          "test_filter": "db::data_tasks::cross_type_tests::real_postgres_same_type_all_modes"
+        },
+        {
+          "name": "postgres:13:real_postgres_lost_commit_ack_is_unknown_and_never_replayed",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.13,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_lost_commit_ack_is_unknown_and_never_replayed"
+        },
+        {
+          "name": "postgres:13:real_postgres_stalled_commit_ack_is_bounded_and_never_replayed",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 10.148,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_stalled_commit_ack_is_bounded_and_never_replayed"
+        },
+        {
+          "name": "postgres:13:real_postgres_one_table_has_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.06,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_one_table_has_fixed_query_budget"
+        },
+        {
+          "name": "postgres:13:real_postgres_ten_tables_have_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.092,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_ten_tables_have_fixed_query_budget"
+        },
+        {
+          "name": "postgres:13:real_postgres_hundred_tables_have_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.851,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_hundred_tables_have_fixed_query_budget"
+        },
+        {
+          "name": "postgres:13:real_postgres_cancel_pending_snapshot_is_bounded",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.266,
+          "cancellation_latency_ms": {
+            "pending_snapshot": 8
+          },
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_cancel_pending_snapshot_is_bounded"
+        },
+        {
+          "name": "postgres:13:real_postgres_cancel_pending_target_lock_is_rolled_back",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.142,
+          "cancellation_latency_ms": {
+            "pending_target_lock": 54
+          },
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_cancel_pending_target_lock_is_rolled_back"
+        }
+      ],
+      "elapsed_seconds": 16.519
+    },
+    {
+      "name": "postgres:13->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 17.403,
+      "source_server_version": "13.23",
+      "target_server_version": "18.6",
+      "image": "postgres:13",
+      "docker_platform": "linux/arm64",
+      "target_image": "postgres:18"
+    },
+    {
+      "name": "reference->postgres:13",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 16.522,
+      "source_server_version": "18.6",
+      "target_server_version": "13.23",
+      "image": "postgres:18",
+      "docker_platform": "linux/arm64",
+      "target_image": "postgres:13"
+    },
+    {
+      "name": "postgres:14",
+      "status": "passed",
+      "detail": "17/17 项 PostgreSQL 单库合约通过",
+      "image": "postgres:14",
+      "docker_platform": "linux/arm64",
+      "server_version": "14.24",
+      "cases": [
+        {
+          "name": "postgres:14:real_postgres_native_snapshot_and_lock_contract",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.275,
+          "server_version": "14.24",
+          "test_filter": "db::data_tasks::adapters::postgres::tests::real_postgres_native_snapshot_and_lock_contract"
+        },
+        {
+          "name": "postgres:14:real_postgres_end_to_end_merge_stale_and_rollback",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.494,
+          "test_filter": "db::data_tasks::adapters::postgres::end_to_end_tests::real_postgres_end_to_end_merge_stale_and_rollback"
+        },
+        {
+          "name": "postgres:14:real_postgres_identity_sequence_lock_cancel_and_default_insert",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.752,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_identity_sequence_lock_cancel_and_default_insert"
+        },
+        {
+          "name": "postgres:14:real_postgres_append_late_conflict_and_verification_failure_roll_back",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 3.231,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_append_late_conflict_and_verification_failure_roll_back"
+        },
+        {
+          "name": "postgres:14:real_postgres_external_fk_and_inheritance_are_preflight_blocked",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.25,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_external_fk_and_inheritance_are_preflight_blocked"
+        },
+        {
+          "name": "postgres:14:real_postgres_inherited_rows_are_never_written_through_parent",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.257,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_inherited_rows_are_never_written_through_parent"
+        },
+        {
+          "name": "postgres:14:real_postgres_write_rule_is_rejected_before_preview",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.196,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_write_rule_is_rejected_before_preview"
+        },
+        {
+          "name": "postgres:14:real_postgres_rule_added_after_preview_causes_zero_write_stale_failure",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.276,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_rule_added_after_preview_causes_zero_write_stale_failure"
+        },
+        {
+          "name": "postgres:14:real_postgres_schema_usage_and_all_write_permissions_are_required",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.159,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_schema_usage_and_all_write_permissions_are_required"
+        },
+        {
+          "name": "postgres:14:real_postgres_same_type_all_modes",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 2.883,
+          "test_filter": "db::data_tasks::cross_type_tests::real_postgres_same_type_all_modes"
+        },
+        {
+          "name": "postgres:14:real_postgres_lost_commit_ack_is_unknown_and_never_replayed",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.299,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_lost_commit_ack_is_unknown_and_never_replayed"
+        },
+        {
+          "name": "postgres:14:real_postgres_stalled_commit_ack_is_bounded_and_never_replayed",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 10.404,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_stalled_commit_ack_is_bounded_and_never_replayed"
+        },
+        {
+          "name": "postgres:14:real_postgres_one_table_has_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.137,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_one_table_has_fixed_query_budget"
+        },
+        {
+          "name": "postgres:14:real_postgres_ten_tables_have_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.174,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_ten_tables_have_fixed_query_budget"
+        },
+        {
+          "name": "postgres:14:real_postgres_hundred_tables_have_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.897,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_hundred_tables_have_fixed_query_budget"
+        },
+        {
+          "name": "postgres:14:real_postgres_cancel_pending_snapshot_is_bounded",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.349,
+          "cancellation_latency_ms": {
+            "pending_snapshot": 19
+          },
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_cancel_pending_snapshot_is_bounded"
+        },
+        {
+          "name": "postgres:14:real_postgres_cancel_pending_target_lock_is_rolled_back",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.474,
+          "cancellation_latency_ms": {
+            "pending_target_lock": 48
+          },
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_cancel_pending_target_lock_is_rolled_back"
+        }
+      ],
+      "elapsed_seconds": 21.507
+    },
+    {
+      "name": "postgres:14->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 17.614,
+      "source_server_version": "14.24",
+      "target_server_version": "18.6",
+      "image": "postgres:14",
+      "docker_platform": "linux/arm64",
+      "target_image": "postgres:18"
+    },
+    {
+      "name": "reference->postgres:14",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 17.555,
+      "source_server_version": "18.6",
+      "target_server_version": "14.24",
+      "image": "postgres:18",
+      "docker_platform": "linux/arm64",
+      "target_image": "postgres:14"
+    },
+    {
+      "name": "postgres:15",
+      "status": "passed",
+      "detail": "17/17 项 PostgreSQL 单库合约通过",
+      "image": "postgres:15",
+      "docker_platform": "linux/arm64",
+      "server_version": "15.19",
+      "cases": [
+        {
+          "name": "postgres:15:real_postgres_native_snapshot_and_lock_contract",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.297,
+          "server_version": "15.19",
+          "test_filter": "db::data_tasks::adapters::postgres::tests::real_postgres_native_snapshot_and_lock_contract"
+        },
+        {
+          "name": "postgres:15:real_postgres_end_to_end_merge_stale_and_rollback",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.54,
+          "test_filter": "db::data_tasks::adapters::postgres::end_to_end_tests::real_postgres_end_to_end_merge_stale_and_rollback"
+        },
+        {
+          "name": "postgres:15:real_postgres_identity_sequence_lock_cancel_and_default_insert",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.751,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_identity_sequence_lock_cancel_and_default_insert"
+        },
+        {
+          "name": "postgres:15:real_postgres_append_late_conflict_and_verification_failure_roll_back",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 3.151,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_append_late_conflict_and_verification_failure_roll_back"
+        },
+        {
+          "name": "postgres:15:real_postgres_external_fk_and_inheritance_are_preflight_blocked",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.242,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_external_fk_and_inheritance_are_preflight_blocked"
+        },
+        {
+          "name": "postgres:15:real_postgres_inherited_rows_are_never_written_through_parent",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.167,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_inherited_rows_are_never_written_through_parent"
+        },
+        {
+          "name": "postgres:15:real_postgres_write_rule_is_rejected_before_preview",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.167,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_write_rule_is_rejected_before_preview"
+        },
+        {
+          "name": "postgres:15:real_postgres_rule_added_after_preview_causes_zero_write_stale_failure",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.322,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_rule_added_after_preview_causes_zero_write_stale_failure"
+        },
+        {
+          "name": "postgres:15:real_postgres_schema_usage_and_all_write_permissions_are_required",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.172,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_schema_usage_and_all_write_permissions_are_required"
+        },
+        {
+          "name": "postgres:15:real_postgres_same_type_all_modes",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 3.01,
+          "test_filter": "db::data_tasks::cross_type_tests::real_postgres_same_type_all_modes"
+        },
+        {
+          "name": "postgres:15:real_postgres_lost_commit_ack_is_unknown_and_never_replayed",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.291,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_lost_commit_ack_is_unknown_and_never_replayed"
+        },
+        {
+          "name": "postgres:15:real_postgres_stalled_commit_ack_is_bounded_and_never_replayed",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 10.314,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_stalled_commit_ack_is_bounded_and_never_replayed"
+        },
+        {
+          "name": "postgres:15:real_postgres_one_table_has_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.176,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_one_table_has_fixed_query_budget"
+        },
+        {
+          "name": "postgres:15:real_postgres_ten_tables_have_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.168,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_ten_tables_have_fixed_query_budget"
+        },
+        {
+          "name": "postgres:15:real_postgres_hundred_tables_have_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.506,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_hundred_tables_have_fixed_query_budget"
+        },
+        {
+          "name": "postgres:15:real_postgres_cancel_pending_snapshot_is_bounded",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.33,
+          "cancellation_latency_ms": {
+            "pending_snapshot": 9
+          },
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_cancel_pending_snapshot_is_bounded"
+        },
+        {
+          "name": "postgres:15:real_postgres_cancel_pending_target_lock_is_rolled_back",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.375,
+          "cancellation_latency_ms": {
+            "pending_target_lock": 47
+          },
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_cancel_pending_target_lock_is_rolled_back"
+        }
+      ],
+      "elapsed_seconds": 20.979
+    },
+    {
+      "name": "postgres:15->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 18.033,
+      "source_server_version": "15.19",
+      "target_server_version": "18.6",
+      "image": "postgres:15",
+      "docker_platform": "linux/arm64",
+      "target_image": "postgres:18"
+    },
+    {
+      "name": "reference->postgres:15",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 19.312,
+      "source_server_version": "18.6",
+      "target_server_version": "15.19",
+      "image": "postgres:18",
+      "docker_platform": "linux/arm64",
+      "target_image": "postgres:15"
+    },
+    {
+      "name": "postgres:16",
+      "status": "passed",
+      "detail": "17/17 项 PostgreSQL 单库合约通过",
+      "image": "postgres:16",
+      "docker_platform": "linux/arm64",
+      "server_version": "16.15",
+      "cases": [
+        {
+          "name": "postgres:16:real_postgres_native_snapshot_and_lock_contract",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.296,
+          "server_version": "16.15",
+          "test_filter": "db::data_tasks::adapters::postgres::tests::real_postgres_native_snapshot_and_lock_contract"
+        },
+        {
+          "name": "postgres:16:real_postgres_end_to_end_merge_stale_and_rollback",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.835,
+          "test_filter": "db::data_tasks::adapters::postgres::end_to_end_tests::real_postgres_end_to_end_merge_stale_and_rollback"
+        },
+        {
+          "name": "postgres:16:real_postgres_identity_sequence_lock_cancel_and_default_insert",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.831,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_identity_sequence_lock_cancel_and_default_insert"
+        },
+        {
+          "name": "postgres:16:real_postgres_append_late_conflict_and_verification_failure_roll_back",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 3.06,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_append_late_conflict_and_verification_failure_roll_back"
+        },
+        {
+          "name": "postgres:16:real_postgres_external_fk_and_inheritance_are_preflight_blocked",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.237,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_external_fk_and_inheritance_are_preflight_blocked"
+        },
+        {
+          "name": "postgres:16:real_postgres_inherited_rows_are_never_written_through_parent",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.169,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_inherited_rows_are_never_written_through_parent"
+        },
+        {
+          "name": "postgres:16:real_postgres_write_rule_is_rejected_before_preview",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.171,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_write_rule_is_rejected_before_preview"
+        },
+        {
+          "name": "postgres:16:real_postgres_rule_added_after_preview_causes_zero_write_stale_failure",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.388,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_rule_added_after_preview_causes_zero_write_stale_failure"
+        },
+        {
+          "name": "postgres:16:real_postgres_schema_usage_and_all_write_permissions_are_required",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.252,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_schema_usage_and_all_write_permissions_are_required"
+        },
+        {
+          "name": "postgres:16:real_postgres_same_type_all_modes",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 3.144,
+          "test_filter": "db::data_tasks::cross_type_tests::real_postgres_same_type_all_modes"
+        },
+        {
+          "name": "postgres:16:real_postgres_lost_commit_ack_is_unknown_and_never_replayed",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.311,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_lost_commit_ack_is_unknown_and_never_replayed"
+        },
+        {
+          "name": "postgres:16:real_postgres_stalled_commit_ack_is_bounded_and_never_replayed",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 10.334,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_stalled_commit_ack_is_bounded_and_never_replayed"
+        },
+        {
+          "name": "postgres:16:real_postgres_one_table_has_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.155,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_one_table_has_fixed_query_budget"
+        },
+        {
+          "name": "postgres:16:real_postgres_ten_tables_have_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.174,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_ten_tables_have_fixed_query_budget"
+        },
+        {
+          "name": "postgres:16:real_postgres_hundred_tables_have_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.496,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_hundred_tables_have_fixed_query_budget"
+        },
+        {
+          "name": "postgres:16:real_postgres_cancel_pending_snapshot_is_bounded",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.457,
+          "cancellation_latency_ms": {
+            "pending_snapshot": 23
+          },
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_cancel_pending_snapshot_is_bounded"
+        },
+        {
+          "name": "postgres:16:real_postgres_cancel_pending_target_lock_is_rolled_back",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.534,
+          "cancellation_latency_ms": {
+            "pending_target_lock": 51
+          },
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_cancel_pending_target_lock_is_rolled_back"
+        }
+      ],
+      "elapsed_seconds": 21.844
+    },
+    {
+      "name": "postgres:16->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 17.679,
+      "source_server_version": "16.15",
+      "target_server_version": "18.6",
+      "image": "postgres:16",
+      "docker_platform": "linux/arm64",
+      "target_image": "postgres:18"
+    },
+    {
+      "name": "reference->postgres:16",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 17.528,
+      "source_server_version": "18.6",
+      "target_server_version": "16.15",
+      "image": "postgres:18",
+      "docker_platform": "linux/arm64",
+      "target_image": "postgres:16"
+    },
+    {
+      "name": "postgres:17",
+      "status": "passed",
+      "detail": "17/17 项 PostgreSQL 单库合约通过",
+      "image": "postgres:17",
+      "docker_platform": "linux/arm64",
+      "server_version": "17.11",
+      "cases": [
+        {
+          "name": "postgres:17:real_postgres_native_snapshot_and_lock_contract",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.281,
+          "server_version": "17.11",
+          "test_filter": "db::data_tasks::adapters::postgres::tests::real_postgres_native_snapshot_and_lock_contract"
+        },
+        {
+          "name": "postgres:17:real_postgres_end_to_end_merge_stale_and_rollback",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.541,
+          "test_filter": "db::data_tasks::adapters::postgres::end_to_end_tests::real_postgres_end_to_end_merge_stale_and_rollback"
+        },
+        {
+          "name": "postgres:17:real_postgres_identity_sequence_lock_cancel_and_default_insert",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.78,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_identity_sequence_lock_cancel_and_default_insert"
+        },
+        {
+          "name": "postgres:17:real_postgres_append_late_conflict_and_verification_failure_roll_back",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 3.079,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_append_late_conflict_and_verification_failure_roll_back"
+        },
+        {
+          "name": "postgres:17:real_postgres_external_fk_and_inheritance_are_preflight_blocked",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.231,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_external_fk_and_inheritance_are_preflight_blocked"
+        },
+        {
+          "name": "postgres:17:real_postgres_inherited_rows_are_never_written_through_parent",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.161,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_inherited_rows_are_never_written_through_parent"
+        },
+        {
+          "name": "postgres:17:real_postgres_write_rule_is_rejected_before_preview",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.159,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_write_rule_is_rejected_before_preview"
+        },
+        {
+          "name": "postgres:17:real_postgres_rule_added_after_preview_causes_zero_write_stale_failure",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.27,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_rule_added_after_preview_causes_zero_write_stale_failure"
+        },
+        {
+          "name": "postgres:17:real_postgres_schema_usage_and_all_write_permissions_are_required",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.164,
+          "test_filter": "db::data_tasks::adapters::postgres::atomicity_tests::real_postgres_schema_usage_and_all_write_permissions_are_required"
+        },
+        {
+          "name": "postgres:17:real_postgres_same_type_all_modes",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 2.839,
+          "test_filter": "db::data_tasks::cross_type_tests::real_postgres_same_type_all_modes"
+        },
+        {
+          "name": "postgres:17:real_postgres_lost_commit_ack_is_unknown_and_never_replayed",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.288,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_lost_commit_ack_is_unknown_and_never_replayed"
+        },
+        {
+          "name": "postgres:17:real_postgres_stalled_commit_ack_is_bounded_and_never_replayed",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 10.329,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_stalled_commit_ack_is_bounded_and_never_replayed"
+        },
+        {
+          "name": "postgres:17:real_postgres_one_table_has_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.145,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_one_table_has_fixed_query_budget"
+        },
+        {
+          "name": "postgres:17:real_postgres_ten_tables_have_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.127,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_ten_tables_have_fixed_query_budget"
+        },
+        {
+          "name": "postgres:17:real_postgres_hundred_tables_have_fixed_query_budget",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.282,
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_hundred_tables_have_fixed_query_budget"
+        },
+        {
+          "name": "postgres:17:real_postgres_cancel_pending_snapshot_is_bounded",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.332,
+          "cancellation_latency_ms": {
+            "pending_snapshot": 9
+          },
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_cancel_pending_snapshot_is_bounded"
+        },
+        {
+          "name": "postgres:17:real_postgres_cancel_pending_target_lock_is_rolled_back",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.404,
+          "cancellation_latency_ms": {
+            "pending_target_lock": 47
+          },
+          "test_filter": "db::data_tasks::acceptance_network_tests::real_postgres_cancel_pending_target_lock_is_rolled_back"
+        }
+      ],
+      "elapsed_seconds": 20.412
+    },
+    {
+      "name": "postgres:17->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 17.489,
+      "source_server_version": "17.11",
+      "target_server_version": "18.6",
+      "image": "postgres:17",
+      "docker_platform": "linux/arm64",
+      "target_image": "postgres:18"
+    },
+    {
+      "name": "reference->postgres:17",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 16.857,
+      "source_server_version": "18.6",
+      "target_server_version": "17.11",
+      "image": "postgres:18",
+      "docker_platform": "linux/arm64",
+      "target_image": "postgres:17"
+    }
+  ],
+  "cleanup": [
+    {
+      "image": "postgres:10",
+      "container_name": "db-connect-postgres-versions-candidate-7d61f57fe0784067",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "postgres:11",
+      "container_name": "db-connect-postgres-versions-candidate-ed569208ba784afc",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "postgres:12",
+      "container_name": "db-connect-postgres-versions-candidate-ce3da345c2c74c44",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "postgres:13",
+      "container_name": "db-connect-postgres-versions-candidate-a5956262fb69452e",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "postgres:14",
+      "container_name": "db-connect-postgres-versions-candidate-37a75a59309349fe",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "postgres:15",
+      "container_name": "db-connect-postgres-versions-candidate-10ebebd3034547ae",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "postgres:16",
+      "container_name": "db-connect-postgres-versions-candidate-c70e5b2467864369",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "postgres:17",
+      "container_name": "db-connect-postgres-versions-candidate-21f16cee82b14591",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "postgres:18",
+      "container_name": "db-connect-postgres-versions-reference-52b38ce8085c4c2d",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    }
+  ]
+}

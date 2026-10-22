@@ -69,6 +69,56 @@ async fn interruptible<T>(
 fn id(name: &str) -> String {
     Dialect::Postgres.identifier(name)
 }
+fn server_version_verified(version: u32, release: &str) -> bool {
+    if !(100000..190000).contains(&version) {
+        return false;
+    }
+    // server_version_num 在 beta/RC 阶段也可能等于正式版本号，必须同时核对文本。
+    let stable = format!("{}.{}", version / 10000, version % 10000);
+    let Some(suffix) = release.strip_prefix(&stable) else {
+        return false;
+    };
+    if suffix.is_empty() || suffix == " (Homebrew)" {
+        return true;
+    }
+    // 官方 Debian/Ubuntu 包会追加发行版构建信息；未知分支和任意后缀保持关闭。
+    let Some(package) = suffix
+        .strip_prefix(" (Debian ")
+        .or_else(|| suffix.strip_prefix(" (Ubuntu "))
+        .and_then(|suffix| suffix.strip_suffix(')'))
+        .and_then(|package| package.strip_prefix(&stable))
+        .and_then(|package| package.strip_prefix('-'))
+    else {
+        return false;
+    };
+    !package.is_empty()
+        && package
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'+' | b'~' | b'-'))
+}
+fn column_metadata_sql(version: u32) -> String {
+    // 10/11 没有 attgenerated；18 的 stored/virtual 均是不可直接写入的生成列。
+    let generated = if version >= 120000 {
+        "a.attgenerated<>''"
+    } else {
+        "false"
+    };
+    let generated_kind = if version >= 120000 {
+        "a.attgenerated::text"
+    } else {
+        "''::text"
+    };
+    format!("SELECT c.relname,c.relkind::text,c.relrowsecurity OR c.relforcerowsecurity,a.attname,pg_catalog.format_type(a.atttypid,a.atttypmod),a.attnotnull,pg_get_expr(d.adbin,d.adrelid),{generated},a.attidentity<>'',COALESCE((SELECT k.ordinality::int FROM pg_index i CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY k(attnum,ordinality) WHERE i.indrelid=c.oid AND i.indisprimary AND k.attnum=a.attnum),0),COALESCE(coll.collname,''),has_table_privilege(c.oid,'SELECT'),has_table_privilege(c.oid,'INSERT') AND has_table_privilege(c.oid,'UPDATE') AND has_table_privilege(c.oid,'DELETE'),a.atttypid::regtype::text,EXISTS(SELECT 1 FROM pg_inherits inh WHERE inh.inhrelid=c.oid OR inh.inhparent=c.oid),{generated_kind} FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum LEFT JOIN pg_collation coll ON coll.oid=a.attcollation WHERE n.nspname=$1 AND c.relkind IN ('r','p','v','m','f') ORDER BY c.relname,a.attnum")
+}
+fn constraint_metadata_sql(version: u32) -> String {
+    // 18 新增约束执行状态与 PERIOD/WITHOUT OVERLAPS，纳入同一批目录快照。
+    let properties = if version >= 180000 {
+        "con.conenforced,con.conperiod"
+    } else {
+        "true,false"
+    };
+    format!("SELECT c.relname,con.contype::text,con.conname,pg_get_constraintdef(con.oid,true),con.convalidated,COALESCE(pn.nspname,''),COALESCE(pc.relname,''),COALESCE((SELECT array_agg(a.attname::text ORDER BY k.ord) FROM unnest(con.conkey) WITH ORDINALITY k(num,ord) JOIN pg_attribute a ON a.attrelid=con.conrelid AND a.attnum=k.num),ARRAY[]::text[]),COALESCE((SELECT array_agg(a.attname::text ORDER BY k.ord) FROM unnest(con.confkey) WITH ORDINALITY k(num,ord) JOIN pg_attribute a ON a.attrelid=con.confrelid AND a.attnum=k.num),ARRAY[]::text[]),con.confupdtype::text,con.confdeltype::text,n.nspname,{properties} FROM pg_constraint con JOIN pg_class c ON c.oid=con.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_class pc ON pc.oid=con.confrelid LEFT JOIN pg_namespace pn ON pn.oid=pc.relnamespace WHERE n.nspname=$1 OR (con.contype='f' AND pn.nspname=$1) UNION ALL SELECT c.relname,'index',i.relname,pg_get_indexdef(ix.indexrelid),ix.indisvalid,'','',ARRAY[]::text[],ARRAY[]::text[],'','',n.nspname,true,false FROM pg_index ix JOIN pg_class c ON c.oid=ix.indrelid JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_class i ON i.oid=ix.indexrelid WHERE n.nspname=$1 ORDER BY 1,2,3")
+}
 fn string(row: &Row, index: usize) -> Result<String, String> {
     row.try_get(index).map_err(db_error)
 }
@@ -102,7 +152,8 @@ fn wire_type(declared: &str) -> Result<&'static str, String> {
     Ok(match base {
         "SMALLINT" | "INTEGER" | "BIGINT" => "int",
         "NUMERIC" | "DECIMAL" => "decimal",
-        "REAL" | "DOUBLE PRECISION" => "float",
+        "REAL" => "float4",
+        "DOUBLE PRECISION" => "float",
         "BOOLEAN" => "bool",
         "TEXT" | "CHARACTER VARYING" | "CHARACTER" => "text",
         "BYTEA" => "binary",
@@ -142,10 +193,20 @@ fn decode_payload(projection: &Projection, payload: &str) -> Result<CanonicalRow
             "null" => DataValue::Null,
             "int" => DataValue::Int(text()?.parse().map_err(|_| "PostgreSQL 整数溢出")?),
             "decimal" => DataValue::Decimal(normalize_decimal(text()?)?),
-            "float" => {
-                let value = text()?
-                    .parse::<f64>()
-                    .map_err(|_| "PostgreSQL 浮点编码无效")?;
+            "float" | "float4" => {
+                // PG12 起改用最短可回读浮点文本；REAL 须先恢复其原生 f32，
+                // 再无损扩大为统一 f64，避免不同版本对同一存储值生成伪差异。
+                let value = if kind == "float4" {
+                    f64::from(
+                        text()?
+                            .parse::<f32>()
+                            .map_err(|_| "PostgreSQL 浮点编码无效")?,
+                    )
+                } else {
+                    text()?
+                        .parse::<f64>()
+                        .map_err(|_| "PostgreSQL 浮点编码无效")?
+                };
                 if !value.is_finite() {
                     return Err("unsupported_capability: 非有限浮点数尚未验收".into());
                 }
@@ -403,12 +464,12 @@ impl PgSession {
     async fn metadata_inner(&mut self) -> Result<DataMetadataSnapshot, String> {
         checked(&self.cancel)?;
         // 5 类固定 SQL：实例/权限、表列/继承、全部入出向约束及索引、触发器/写规则、列专属序列。
-        let facts=self.client()?.query_one("SELECT system_identifier::text,current_database(),pg_is_in_recovery(),current_setting('default_transaction_read_only')='on',current_setting('server_version_num'),has_schema_privilege($1,'USAGE') FROM pg_control_system()",&[&self.schema]).await.map_err(|_|"unsupported_capability: 需要读取 PostgreSQL 实例身份以防止网络别名指向同一物理目标")?;
+        let facts=self.client()?.query_one("SELECT system_identifier::text,current_database(),pg_is_in_recovery(),current_setting('default_transaction_read_only')='on',current_setting('server_version_num'),has_schema_privilege($1,'USAGE'),current_setting('server_version') FROM pg_control_system()",&[&self.schema]).await.map_err(|_|"unsupported_capability: 需要读取 PostgreSQL 实例身份以防止网络别名指向同一物理目标")?;
         let version = string(&facts, 4)?
             .parse::<u32>()
             .map_err(|_| "PostgreSQL 版本无效")?;
-        if !(170000..180000).contains(&version) {
-            return Err("unsupported_capability: PostgreSQL 数据任务当前仅验证17版本系列".into());
+        if !server_version_verified(version, &string(&facts, 6)?) {
+            return Err("unsupported_capability: PostgreSQL 数据任务支持10–18正式版本系列，预发布及未知分支暂未开放".into());
         }
         let read_only = facts.try_get::<_, bool>(2).map_err(db_error)?
             || facts.try_get::<_, bool>(3).map_err(db_error)?
@@ -419,7 +480,11 @@ impl PgSession {
             database: format!("{}.{}", string(&facts, 1)?, self.schema),
             sqlite_path: None,
         });
-        let rows=self.client()?.query("SELECT c.relname,c.relkind::text,c.relrowsecurity OR c.relforcerowsecurity,a.attname,pg_catalog.format_type(a.atttypid,a.atttypmod),a.attnotnull,pg_get_expr(d.adbin,d.adrelid),a.attgenerated<>'',a.attidentity<>'',COALESCE((SELECT k.ordinality::int FROM pg_index i CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY k(attnum,ordinality) WHERE i.indrelid=c.oid AND i.indisprimary AND k.attnum=a.attnum),0),COALESCE(coll.collname,''),has_table_privilege(c.oid,'SELECT'),has_table_privilege(c.oid,'INSERT') AND has_table_privilege(c.oid,'UPDATE') AND has_table_privilege(c.oid,'DELETE'),a.atttypid::regtype::text,EXISTS(SELECT 1 FROM pg_inherits inh WHERE inh.inhrelid=c.oid OR inh.inhparent=c.oid) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum LEFT JOIN pg_collation coll ON coll.oid=a.attcollation WHERE n.nspname=$1 AND c.relkind IN ('r','p','v','m','f') ORDER BY c.relname,a.attnum",&[&self.schema]).await.map_err(db_error)?;
+        let rows = self
+            .client()?
+            .query(&column_metadata_sql(version), &[&self.schema])
+            .await
+            .map_err(db_error)?;
         let mut tables: BTreeMap<String, DataTable> = BTreeMap::new();
         let schema_usage = facts.try_get::<_, bool>(5).map_err(db_error)?;
         let mut permissions = schema_usage;
@@ -461,11 +526,16 @@ impl PgSession {
                 generator_safe: false,
             });
             table.create_sql.push_str(&format!(
-                "\ncollation:{collation};{}",
+                "\ncollation:{collation};generated_kind:{};{}",
+                string(&row, 15)?,
                 serde_json::to_string(table.columns.last().unwrap()).map_err(|_| DB_ERROR)?
             ));
         }
-        let rows=self.client()?.query("SELECT c.relname,con.contype::text,con.conname,pg_get_constraintdef(con.oid,true),con.convalidated,COALESCE(pn.nspname,''),COALESCE(pc.relname,''),COALESCE((SELECT array_agg(a.attname::text ORDER BY k.ord) FROM unnest(con.conkey) WITH ORDINALITY k(num,ord) JOIN pg_attribute a ON a.attrelid=con.conrelid AND a.attnum=k.num),ARRAY[]::text[]),COALESCE((SELECT array_agg(a.attname::text ORDER BY k.ord) FROM unnest(con.confkey) WITH ORDINALITY k(num,ord) JOIN pg_attribute a ON a.attrelid=con.confrelid AND a.attnum=k.num),ARRAY[]::text[]),con.confupdtype::text,con.confdeltype::text,n.nspname FROM pg_constraint con JOIN pg_class c ON c.oid=con.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_class pc ON pc.oid=con.confrelid LEFT JOIN pg_namespace pn ON pn.oid=pc.relnamespace WHERE n.nspname=$1 OR (con.contype='f' AND pn.nspname=$1) UNION ALL SELECT c.relname,'index',i.relname,pg_get_indexdef(ix.indexrelid),ix.indisvalid,'','',ARRAY[]::text[],ARRAY[]::text[],'','',n.nspname FROM pg_index ix JOIN pg_class c ON c.oid=ix.indrelid JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_class i ON i.oid=ix.indexrelid WHERE n.nspname=$1 ORDER BY 1,2,3",&[&self.schema]).await.map_err(db_error)?;
+        let rows = self
+            .client()?
+            .query(&constraint_metadata_sql(version), &[&self.schema])
+            .await
+            .map_err(db_error)?;
         // catalog 查询不会按当前用户的业务表权限过滤；读取失败直接拒绝，不静默省略约束。
         // 外部依赖只作为图节点保存。NUL 前缀不能出现在真实 PostgreSQL 标识符中，避免名称冲突。
         for row in rows {
@@ -487,11 +557,13 @@ impl PgSession {
             };
             if let Some(table) = tables.get_mut(&name) {
                 table.create_sql.push_str(&format!(
-                    "\n{}:{}:{}:{}",
+                    "\n{}:{}:{}:{};enforced:{};period:{}",
                     string(&row, 1)?,
                     string(&row, 2)?,
                     string(&row, 3)?,
-                    row.try_get::<_, bool>(4).map_err(db_error)?
+                    row.try_get::<_, bool>(4).map_err(db_error)?,
+                    row.try_get::<_, bool>(12).map_err(db_error)?,
+                    row.try_get::<_, bool>(13).map_err(db_error)?
                 ));
                 if string(&row, 1)? == "f" {
                     let parent_schema = string(&row, 5)?;
@@ -804,8 +876,119 @@ impl DataSession for PgSession {
     }
 }
 #[cfg(test)]
+#[path = "postgres_version_tests.rs"]
+mod version_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn postgres_stable_versions_10_through_18_are_accepted() {
+        for (number, release) in [
+            (100000, "10.0"),
+            (100023, "10.23 (Debian 10.23-1.pgdg110+1)"),
+            (110000, "11.0"),
+            (120000, "12.0"),
+            (130000, "13.0"),
+            (140000, "14.0"),
+            (150000, "15.0"),
+            (160000, "16.0"),
+            (170000, "17.0 (Ubuntu 17.0-1.pgdg24.04+1)"),
+            (170011, "17.11"),
+            (170011, "17.11 (Homebrew)"),
+            (180006, "18.6 (Homebrew)"),
+            (180000, "18.0 (Debian 18.0-1.pgdg13+3)"),
+            (180004, "18.4"),
+        ] {
+            assert!(server_version_verified(number, release), "{release}");
+        }
+    }
+    #[test]
+    fn postgres_prereleases_unknown_series_and_inconsistent_versions_are_rejected() {
+        for (number, release) in [
+            (90624, "9.6.24"),
+            (190000, "19.0"),
+            (170000, "17beta1"),
+            (170000, "17rc1"),
+            (170000, "17devel"),
+            (180000, "18.0beta1"),
+            (170001, "17.0"),
+            (170000, "17.1"),
+            (170000, "17"),
+            (170000, "017.0"),
+            (170000, "17.00"),
+            (170000, " 17.0"),
+            (170000, "17.0 "),
+            (170000, "17.0.0"),
+            (170000, "17.0-custom"),
+            (170000, "17.0 (Unverified fork)"),
+            (170000, "17.0 (Debian 16.0-1.pgdg13+1)"),
+            (170000, "17.0 (Debian 17.0-1.pgdg13+1) extra"),
+            (170000, "17.0 (Debian 17.0-)"),
+        ] {
+            assert!(!server_version_verified(number, release), "{release}");
+        }
+    }
+    #[test]
+    fn postgres_10_and_11_metadata_does_not_reference_generated_columns() {
+        for version in [100000, 100023, 110000, 110022] {
+            let sql = column_metadata_sql(version);
+            assert!(!sql.contains("attgenerated"), "{version}");
+            assert!(sql.contains("pg_get_expr(d.adbin,d.adrelid),false,a.attidentity<>''"));
+            assert!(sql.contains("WHERE n.nspname=$1"));
+            assert!(sql.contains("pg_inherits"));
+        }
+    }
+    #[test]
+    fn postgres_12_and_later_recognize_all_generated_column_kinds() {
+        for version in [120000, 170011, 180000] {
+            let sql = column_metadata_sql(version);
+            assert!(sql.contains("a.attgenerated<>''"));
+        }
+    }
+    #[test]
+    fn postgres_18_constraint_snapshot_includes_enforcement_and_period() {
+        let sql = constraint_metadata_sql(180000);
+        assert!(sql.contains("n.nspname,con.conenforced,con.conperiod FROM pg_constraint"));
+        assert!(sql.contains("n.nspname,true,false FROM pg_index"));
+        assert!(sql.contains("con.contype='f' AND pn.nspname=$1"));
+    }
+    #[test]
+    fn postgres_legacy_constraint_snapshot_uses_compatible_defaults() {
+        for version in [100000, 110022, 120000, 170011] {
+            let sql = constraint_metadata_sql(version);
+            assert!(!sql.contains("conenforced"));
+            assert!(!sql.contains("conperiod"));
+            assert!(sql.contains("n.nspname,true,false FROM pg_constraint"));
+        }
+    }
+    #[test]
+    fn postgres_real_snapshots_are_identical_across_pre_12_float_output() {
+        let projection = Projection {
+            table: "t".into(),
+            output_table: "t".into(),
+            columns: vec!["v".into()],
+            key_indices: vec![],
+        };
+        for (legacy, modern, expected) in [
+            ("0.100000001", "0.1", 0.1_f32),
+            ("1.40129846e-45", "1e-45", f32::from_bits(1)),
+            ("3.40282347e+38", "3.4028235e+38", f32::MAX),
+        ] {
+            let payload = |value: &str| {
+                serde_json::json!([{"t": wire_type("REAL").unwrap(), "v": value}]).to_string()
+            };
+            let old = decode_payload(&projection, &payload(legacy)).unwrap();
+            let new = decode_payload(&projection, &payload(modern)).unwrap();
+            assert_eq!(old.values, new.values, "REAL {legacy} / {modern}");
+            assert_eq!(
+                old.values,
+                vec![DataValue::Float(f64::from(expected).to_bits())]
+            );
+        }
+        let double = decode_payload(&projection, r#"[{"t":"float","v":"0.1"}]"#).unwrap();
+        assert_eq!(double.values, vec![DataValue::Float(0.1_f64.to_bits())]);
+    }
     #[test]
     fn postgres_lossless_payload_does_not_parse_decimal_or_int_through_float() {
         let p = Projection {
@@ -833,6 +1016,20 @@ mod tests {
         let driver = tokio::spawn(async move {
             connection.await.unwrap();
         });
+        let facts = client
+            .query_one(
+                "SELECT current_setting('server_version_num'),current_setting('server_version')",
+                &[],
+            )
+            .await
+            .unwrap();
+        let version: u32 = facts.get::<_, String>(0).parse().unwrap();
+        assert!(server_version_verified(version, &facts.get::<_, String>(1)));
+        println!(
+            "DATA_TASK_POSTGRES_VERSION {}.{}",
+            version / 10000,
+            version % 10000
+        );
         let schema = format!("dbconnect_task_{}", uuid::Uuid::new_v4().simple());
         client.batch_execute(&format!("CREATE SCHEMA {schema}; CREATE TABLE {schema}.t(id BIGINT PRIMARY KEY,v NUMERIC(40,10),b BYTEA); CREATE TABLE {schema}.other(label TEXT); INSERT INTO {schema}.t VALUES(9223372036854775807,12345678901234567890.1234567890,decode('00ff','hex')); INSERT INTO {schema}.other VALUES('中文');")).await.unwrap();
         let host = match &pg.get_hosts()[0] {

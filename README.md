@@ -74,6 +74,8 @@
 
 事务数据库范围为 SQLite、PostgreSQL、MySQL/MariaDB、SQL Server：同类型提供合并、镜像、追加和替换，四类之间的 12 个有向组合已通过追加/替换真实验收；跨类型不提供行同步，字段类型仍须通过无损映射预检。MySQL/MariaDB 仅接受可事务化目标表。触发器、PostgreSQL 写规则或继承关系、外部依赖、权限不足及不能验证的比较语义等会阻塞计划；预览给出具体原因。生成器显式键保留不保证回滚消耗的序列/自增值，允许留下间隙。
 
+PostgreSQL 数据任务支持 **10–18 正式版本系列**，兼容原生版本号与 Debian、Ubuntu、Homebrew 构建标记，拒绝预发布版本、未知系列和无法识别的分支。10/11 使用兼容目录查询；18 的约束执行状态及时间约束标志参与结构漂移检查。`REAL` 按原生精度还原，避免旧版与新版浮点文本格式不同造成伪差异。支持范围不代表每个补丁均已实测，实际版本及双向跨版本结果见[验收矩阵](docs/superpowers/manual-tests/2026-10-19-data-sync-and-transfer-matrix.md)。仍要求读取实例身份的权限，沿用生成列、序列、继承、RLS 与写规则预检；JSONB、数组、枚举等类型不会因版本扩展自动开放。
+
 MySQL 原生会话支持 **5.5（至少 5.5.8）、5.6（至少 5.6.10）、5.7（至少 5.7.8）、8.0（至少 8.0.11）、8.4 和 9.7**。5.5、5.6、5.7、8.0、9.7 也接受原生 `-log` 后缀，兼容官方修订版 5.5.25a；其他系列及第三方分支仍会被拒绝。5.5/5.6 下限为各自首个 GA，5.7 保留已有的 5.7.8 下限。版本范围不代表每个补丁版本均已实测，具体实例与双向跨版本证据见[验收矩阵](docs/superpowers/manual-tests/2026-10-19-data-sync-and-transfer-matrix.md)。旧版通过不依赖 JSON 函数的集合快照读取；5.5 的时间字段只支持秒精度，向其传输微秒精度列会在预览阶段阻塞，避免截断。MySQL 部分撤销权限（`partial_revokes`）可能隐藏范围外依赖，出现 `REVOKE` 的会话会被权限预检阻塞。
 
 MariaDB 原生会话支持 **10.0–10.11（各系列首个 GA 起）、11.0–11.8、12.0–12.3（各系列至少 x.y.2 稳定版）**，兼容旧版及常见 Ubuntu/Debian 发行包、`-log` 后缀和 `5.5.5-` 兼容前缀。10.0/10.1 的 `PERSISTENT`、`VIRTUAL` 生成列参与既有生成列预检；12.x 的 `OFF/ON/NO_LOCK/NO_LOCK_NO_ADMIN` 只读状态均参与目标预检。开启全局 `wsrep_on` 的 Galera 目标不提供受保护写入，系统版本表与序列不能作为普通物理表。其他系列与预发布版本继续拒绝；各系列最低补丁与真实实例证据见[验收矩阵](docs/superpowers/manual-tests/2026-10-19-data-sync-and-transfer-matrix.md)，支持范围不代表每个补丁均已实测。
@@ -94,6 +96,8 @@ python3 scripts/data-tasks/validate.py --phase a --report /tmp/db-connect-data-t
 # 跨类型 / ClickHouse 增量分别使用 --phase b / --phase c
 # PostgreSQL TLS：独立临时 CA 与专属容器，结束后清理
 python3 scripts/data-tasks/validate_tls.py
+# PostgreSQL 10–18：逐版本单库与对 PostgreSQL 18 的双向跨版本验收
+python3 scripts/data-tasks/validate_postgres_versions.py
 ```
 
 工具逐项输出 `passed`、`failed`、`not_run`、`blocked`；退出码分别为全部通过 `0`、测试失败 `1`、环境缺失、项目未运行或能力受阻塞 `2`。`--no-docker` 禁止启动容器，`--no-pull` 禁止下载缺少的数据库镜像。`--skip-performance` 会明确将百万行验收标为未运行。
