@@ -28,7 +28,6 @@ tokio-postgres = "0.7.18"
 postgres-native-tls = "0.5.3"
 deadpool-sqlite = { version = "0.13", features = ["rt_tokio_1"] }
 rusqlite = { version = "0.38", features = ["bundled", "hooks"] }
-tiberius = { version = "0.12.3", default-features = false, features = ["tds73", "native-tls"] }
 bb8 = "0.9"
 bb8-tiberius = { version = "0.16.0", default-features = false, features = ["with-tokio", "tds73"] }
 clickhouse_rs = { package = "clickhouse", version = "0.15", default-features = false, features = ["rustls-tls", "lz4"] }
@@ -44,12 +43,21 @@ keyring = "4.1"
 rand_core = { version = "0.6", features = ["getrandom"] }
 pbkdf2 = "0.12"
 sha2 = "0.10"
+same-file = "1.0.6"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [dev-dependencies]
 tauri = { version = "=2.11.3", features = ["test"] }
+rusqlite = { version = "0.38", features = ["trace"] }
+
+# Apple Security Framework 无法协商 SQL Server 的 TLS；上游建议 Apple 使用 rustls。
+[target.'cfg(target_vendor = "apple")'.dependencies]
+tiberius = { version = "0.12.3", default-features = false, features = ["tds73", "rustls"] }
+
+[target.'cfg(not(target_vendor = "apple"))'.dependencies]
+tiberius = { version = "0.12.3", default-features = false, features = ["tds73", "native-tls"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 russh = { version = "0.60.3", default-features = false, features = ["flate2", "ring"] }

@@ -1,0 +1,33 @@
+{
+  "date": "2026-10-21",
+  "build": "cargo test --lib --release",
+  "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "dataset": "自有临时SQLite；同宽INTEGER PRIMARY KEY AUTOINCREMENT与4字节BLOB；源值完整写入、回读集合和生成器后续插入验证",
+  "results": [
+    {
+      "name": "sqlite_100k",
+      "status": "passed",
+      "rows": 100000,
+      "elapsed_ms": 19571,
+      "retained_spool_bytes": 0,
+      "peak_spool_bytes": 70600000,
+      "peak_buffer_bytes": 33554590,
+      "max_rss_bytes": 36503552
+    },
+    {
+      "name": "sqlite_1m",
+      "status": "passed",
+      "rows": 1000000,
+      "elapsed_ms": 323947,
+      "retained_spool_bytes": 0,
+      "peak_spool_bytes": 706000000,
+      "peak_buffer_bytes": 33554590,
+      "max_rss_bytes": 85262336
+    }
+  ],
+  "rss_growth": {
+    "status": "passed",
+    "delta_bytes": 48758784,
+    "limit_bytes": 67108864
+  }
+}

@@ -81,6 +81,10 @@ const loadRoutineList = () =>
 const loadEventList = () =>
   import("./EventList").then((module) => ({ default: module.EventList }));
 
+const loadDataTaskPanel = () =>
+  import("../dataTasks/DataTaskPanel").then((module) => ({
+    default: module.DataTaskPanel,
+  }));
 const { Title, Text } = Typography;
 
 function favoriteTableKey(
@@ -127,6 +131,14 @@ export function DatabaseOverview() {
   const connectionId = activeConnection
     ? favoriteConnectionKey(activeConnection.config)
     : "";
+  const [dataTaskOpen, setDataTaskOpen] = useState(false);
+  const [dataTaskKind, setDataTaskKind] = useState<"row_sync" | "transfer">(
+    "row_sync"
+  );
+  const [dataTaskTables, setDataTaskTables] = useState<string[]>([]);
+  useEffect(() => {
+    setDataTaskTables([]);
+  }, [selectedDatabase, activeConnection?.connId]);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [editDbModalOpen, setEditDbModalOpen] = useState(false);
   const [sessionDrawerOpen, setSessionDrawerOpen] = useState(false);
@@ -872,6 +884,26 @@ export function DatabaseOverview() {
                           disabled={!connId}
                         />
                       </Tooltip>
+                      <Button
+                        size="small"
+                        disabled={!activeConnection?.config.id}
+                        onClick={() => {
+                          setDataTaskKind("row_sync");
+                          setDataTaskOpen(true);
+                        }}
+                      >
+                        数据同步
+                      </Button>
+                      <Button
+                        size="small"
+                        disabled={!activeConnection?.config.id}
+                        onClick={() => {
+                          setDataTaskKind("transfer");
+                          setDataTaskOpen(true);
+                        }}
+                      >
+                        数据传输
+                      </Button>
                       {capabilities.sqlFileImportExport && (
                         <DatabaseSqlFileActions
                           connId={connId}
@@ -1049,6 +1081,12 @@ export function DatabaseOverview() {
                         className="database-table-list"
                         columns={columns}
                         dataSource={filteredList}
+                        rowSelection={{
+                          selectedRowKeys: dataTaskTables,
+                          onChange: (keys) =>
+                            setDataTaskTables(keys.map(String)),
+                          preserveSelectedRowKeys: false,
+                        }}
                         rowKey="name"
                         size="small"
                         pagination={false}
@@ -1215,6 +1253,27 @@ export function DatabaseOverview() {
       </Drawer>
 
       {/* 新建表对话框 */}
+      <DeferredFeature
+        active={dataTaskOpen}
+        loader={loadDataTaskPanel}
+        onClose={() => setDataTaskOpen(false)}
+        modal
+      >
+        {(Feature) => (
+          <Feature
+            open={dataTaskOpen}
+            kind={dataTaskKind}
+            seed={{
+              source: {
+                saved_connection_id: activeConnection?.config.id ?? "",
+                database: selectedDatabase,
+              },
+              tables: dataTaskTables,
+            }}
+            onClose={() => setDataTaskOpen(false)}
+          />
+        )}
+      </DeferredFeature>
       {capabilities.schemaManagement && (
         <CreateTableModal
           open={createModalOpen}

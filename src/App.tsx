@@ -45,6 +45,11 @@ const loadDatabaseCompare = () =>
     (module) => ({ default: module.DatabaseCompareModal })
   );
 
+const loadDataTaskPanel = () =>
+  import("./components/dataTasks/DataTaskPanel").then((module) => ({
+    default: module.DataTaskPanel,
+  }));
+
 const { Content, Footer } = Layout;
 
 function ConnectedEmptyState({
@@ -134,6 +139,10 @@ function AppInner() {
   const [messageApi, contextHolder] = message.useMessage();
   const [introVisible, setIntroVisible] = useState(false);
   const [compareVisible, setCompareVisible] = useState(false);
+  const [dataTaskKind, setDataTaskKind] = useState<"row_sync" | "transfer">(
+    "row_sync"
+  );
+  const [dataTaskVisible, setDataTaskVisible] = useState(false);
 
   useWindowLaunchState();
 
@@ -279,6 +288,21 @@ function AppInner() {
           <Feature
             open={compareVisible}
             onClose={() => setCompareVisible(false)}
+          />
+        )}
+      </DeferredFeature>
+
+      <DeferredFeature
+        active={dataTaskVisible}
+        loader={loadDataTaskPanel}
+        onClose={() => setDataTaskVisible(false)}
+        modal
+      >
+        {(Feature) => (
+          <Feature
+            open={dataTaskVisible}
+            kind={dataTaskKind}
+            onClose={() => setDataTaskVisible(false)}
           />
         )}
       </DeferredFeature>
@@ -518,6 +542,28 @@ function AppInner() {
               onClick={() => setCompareVisible(true)}
             >
               数据库对比
+            </Button>
+            <Button
+              type="text"
+              size="small"
+              aria-label="数据同步"
+              onClick={() => {
+                setDataTaskKind("row_sync");
+                setDataTaskVisible(true);
+              }}
+            >
+              数据同步
+            </Button>
+            <Button
+              type="text"
+              size="small"
+              aria-label="数据传输"
+              onClick={() => {
+                setDataTaskKind("transfer");
+                setDataTaskVisible(true);
+              }}
+            >
+              数据传输
             </Button>
             <WindowLaunchSetting />
             <IdleTimeoutSetting />

@@ -23,6 +23,7 @@ pub mod ssh_tunnel;
 pub mod table_pagination;
 pub mod table_query;
 
+pub mod data_tasks;
 #[cfg(test)]
 mod metadata_bench_tests;
 #[cfg(test)]

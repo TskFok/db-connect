@@ -5,7 +5,12 @@ import * as api from "../services/tauriCommands";
 import { useConnectionStore } from "../stores/connectionStore";
 import { useDatabaseStore } from "../stores/databaseStore";
 
-const loads = vi.hoisted(() => ({ intro: 0, shortcuts: 0, compare: 0 }));
+const loads = vi.hoisted(() => ({
+  intro: 0,
+  shortcuts: 0,
+  compare: 0,
+  tasks: 0,
+}));
 vi.mock("../services/tauriCommands");
 // 隔离 App 根订阅：子面板有各自独立的 store 订阅，不能将它们的提交计入 App。
 // 保留真实 App、事件 hook、stores、AntD 布局及全局加载条。
@@ -75,6 +80,26 @@ vi.mock("../components/databaseCompare/DatabaseCompareModal", () => {
   };
 });
 
+vi.mock("../components/dataTasks/DataTaskPanel", () => {
+  loads.tasks++;
+  return {
+    DataTaskPanel: ({
+      open,
+      onClose,
+      kind,
+    }: {
+      open: boolean;
+      onClose: () => void;
+      kind: string;
+    }) =>
+      open ? (
+        <button onClick={onClose}>
+          关闭{kind === "row_sync" ? "数据同步" : "数据传输"}
+        </button>
+      ) : null,
+  };
+});
+
 it("启动不导入可选弹窗，实际入口首次打开才加载且再次打开复用", async () => {
   vi.mocked(api.listSavedConnections).mockResolvedValue([]);
   useConnectionStore.setState({
@@ -88,17 +113,23 @@ it("启动不导入可选弹窗，实际入口首次打开才加载且再次打�
   useDatabaseStore.getState().reset();
   render(<App />);
   await act(async () => {});
-  expect(loads).toEqual({ intro: 0, shortcuts: 0, compare: 0 });
+  expect(loads).toEqual({ intro: 0, shortcuts: 0, compare: 0, tasks: 0 });
   fireEvent.click(screen.getByRole("button", { name: "功能介绍" }));
   fireEvent.click(await screen.findByText("关闭功能介绍"));
-  expect(loads).toEqual({ intro: 1, shortcuts: 0, compare: 0 });
+  expect(loads).toEqual({ intro: 1, shortcuts: 0, compare: 0, tasks: 0 });
   fireEvent.click(screen.getByRole("button", { name: "功能介绍" }));
   fireEvent.click(await screen.findByText("关闭功能介绍"));
   expect(loads.intro).toBe(1);
   fireEvent.keyDown(window, { key: "/", ctrlKey: true });
   fireEvent.click(await screen.findByText("关闭快捷键帮助"));
-  expect(loads).toEqual({ intro: 1, shortcuts: 1, compare: 0 });
+  expect(loads).toEqual({ intro: 1, shortcuts: 1, compare: 0, tasks: 0 });
   fireEvent.click(screen.getByRole("button", { name: "数据库对比" }));
   fireEvent.click(await screen.findByText("关闭结构对比"));
-  expect(loads).toEqual({ intro: 1, shortcuts: 1, compare: 1 });
+  expect(loads).toEqual({ intro: 1, shortcuts: 1, compare: 1, tasks: 0 });
+  fireEvent.click(screen.getByRole("button", { name: "数据同步" }));
+  fireEvent.click(await screen.findByText("关闭数据同步"));
+  expect(loads.tasks).toBe(1);
+  fireEvent.click(screen.getByRole("button", { name: "数据传输" }));
+  fireEvent.click(await screen.findByText("关闭数据传输"));
+  expect(loads.tasks).toBe(1);
 });

@@ -1,0 +1,70 @@
+{
+  "phase": "b",
+  "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "results": [
+    {
+      "name": "rust_build",
+      "status": "passed",
+      "detail": "已构建当前工作区测试程序"
+    },
+    {
+      "name": "core_contracts",
+      "status": "passed",
+      "detail": "85 通过，48 个显式忽略的测试另行验收",
+      "elapsed_seconds": 30.709
+    },
+    {
+      "name": "sqlite_performance",
+      "status": "not_run",
+      "detail": "显式跳过百万行与 RSS 比较"
+    },
+    {
+      "name": "postgres",
+      "status": "passed",
+      "detail": "9 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 6.213
+    },
+    {
+      "name": "postgres_modes",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 2.996
+    },
+    {
+      "name": "postgres_network_fault_and_query_budget",
+      "status": "passed",
+      "detail": "4 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.056
+    },
+    {
+      "name": "mysql",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 12.67
+    },
+    {
+      "name": "mariadb",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 12.364
+    },
+    {
+      "name": "sqlserver",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 0.993
+    },
+    {
+      "name": "sqlserver_modes_and_cancel",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 2.083
+    },
+    {
+      "name": "cross_type_matrix",
+      "status": "passed",
+      "detail": "14 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 13.048
+    }
+  ]
+}

@@ -15,6 +15,8 @@ use db::postgres::PostgresCancelHandle;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use tauri::Manager;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tokio::sync::Mutex;
 
 #[derive(Clone)]
@@ -25,6 +27,7 @@ pub enum RunningQuery {
 }
 
 pub struct AppState {
+    pub data_tasks: Arc<commands::data_tasks::DataTaskRuntime>,
     pub connection_manager: Arc<Mutex<ConnectionManager>>,
     /// 正在执行的查询：执行令牌（execution_id）-> 数据库特定取消句柄。
     pub running_queries: Arc<Mutex<HashMap<String, RunningQuery>>>,
@@ -41,6 +44,7 @@ pub struct AppState {
 impl AppState {
     pub fn new() -> Self {
         Self {
+            data_tasks: Arc::new(commands::data_tasks::DataTaskRuntime::default()),
             connection_manager: Arc::new(Mutex::new(ConnectionManager::new())),
             running_queries: Arc::new(Mutex::new(HashMap::new())),
             table_queries: db::table_query::TableQueryRegistry::default(),
@@ -73,7 +77,36 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::new())
+        .setup(|app| {
+            let runtime=app.state::<AppState>().data_tasks.clone();
+            if runtime.initialize(app.handle()).is_err() {
+                eprintln!("数据任务历史初始化失败，数据任务入口将提示目录错误");
+            }
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                    runtime.maintenance();
+                }
+            });
+            Ok(())
+        })
+        .on_window_event(|window,event| {
+            if let tauri::WindowEvent::CloseRequested{api,..}=event {
+                if window.state::<AppState>().data_tasks.registry.has_active() {
+                    api.prevent_close();
+                    let _=window.hide();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
+            commands::data_tasks::get_data_task_capabilities,
+            commands::data_tasks::start_data_task_preview,
+            commands::data_tasks::get_data_task,
+            commands::data_tasks::get_data_task_diff,
+            commands::data_tasks::execute_data_task,
+            commands::data_tasks::cancel_data_task,
+            commands::data_tasks::list_data_tasks,
+            commands::data_tasks::discard_data_task_preview,
             connection::test_connection,
             connection::connect,
             connection::disconnect,
@@ -169,6 +202,32 @@ pub fn run() {
             routine_event::drop_event,
             routine_event::set_event_enabled,
         ])
-        .run(context)
-        .expect("error while running tauri application");
+        .build(context)
+        .expect("error while building tauri application")
+        .run(|app,event| match event {
+            tauri::RunEvent::ExitRequested{api,..}=>{
+                let runtime=app.state::<AppState>().data_tasks.clone();
+                if runtime.registry.has_active() {
+                    api.prevent_exit();
+                    if !runtime.exit_prompt_open.swap(true,std::sync::atomic::Ordering::AcqRel) {
+                        let handle=app.clone();
+                        app.dialog().message("仍有数据任务运行。继续等待可留在应用；取消任务后退出会等待回滚或提交结果得到确认。")
+                            .title("数据任务尚未结束")
+                            .buttons(MessageDialogButtons::OkCancelCustom("取消任务后退出".into(),"继续等待".into()))
+                            .show(move |cancel| {
+                                if cancel {
+                                    runtime.cancel_all(&handle);
+                                    tauri::async_runtime::spawn(async move {
+                                        while runtime.registry.has_active() {tokio::time::sleep(std::time::Duration::from_millis(200)).await;}
+                                        handle.exit(0);
+                                    });
+                                }else{runtime.exit_prompt_open.store(false,std::sync::atomic::Ordering::Release);}
+                            });
+                    }
+                }
+            },
+            #[cfg(target_os="macos")]
+            tauri::RunEvent::Reopen{..}=>{if let Some(window)=app.get_webview_window("main") {let _=window.show();let _=window.set_focus();}},
+            _=>{}
+        });
 }

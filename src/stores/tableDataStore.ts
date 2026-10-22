@@ -78,6 +78,8 @@ interface TableDataState {
   activeTableKey: string | null;
   /** 按表缓存的快照（切换时不重新加载） */
   tableDataCache: Record<string, TableDataSnapshot>;
+  /** 数据任务使结果过期的表，刷新成功后移除。 */
+  staleTableKeys: Record<string, true>;
   /** 按表缓存的待提交修改，key=connId|database|table */
   pendingChangesCache: Record<string, Record<string, PendingChange>>;
   /** 按表缓存的行勾选 key，避免组件重挂载后丢失 */
@@ -211,6 +213,8 @@ interface TableDataState {
     database: string,
     table: string
   ) => void;
+  /** 外部数据任务完成：仅使查询结果过期，保留所有编辑草稿。 */
+  markTableDataStale: (connId: string, database: string, table: string) => void;
   /** 关闭表时从缓存移除 */
   removeTableFromCache: (
     connId: string,
@@ -552,6 +556,7 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
   visibleTableKey: null,
   setVisibleTable: (visibleTableKey) => set({ visibleTableKey }),
   tableDataCache: {},
+  staleTableKeys: {},
   pendingChangesCache: {},
   rowSelectionCache: {},
   scrollPositionCache: {},
@@ -682,6 +687,9 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
           executedSql: result.executed_sql ?? null,
           _loadedPageContext: loadedPageContext,
           tableDataCache: { ...s.tableDataCache, [key]: snapshot },
+          staleTableKeys: Object.fromEntries(
+            Object.entries(s.staleTableKeys).filter(([table]) => table !== key)
+          ),
         }));
       })
       .catch((e) => {
@@ -1117,6 +1125,7 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
       activeTableKey: null,
       visibleTableKey: null,
       tableDataCache: {},
+      staleTableKeys: {},
       pendingChangesCache: {},
       rowSelectionCache: {},
       scrollPositionCache: {},
@@ -1208,12 +1217,16 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
         _loadedPageContext: cached.loadedPageContext ?? null,
         _pendingNavigation: null,
         countCache:
-          cached.total > 0
+          cached.total > 0 && !s.staleTableKeys[key]
             ? { ...s.countCache, [ccKey]: cached.total }
             : s.countCache,
       }));
       if (cached.cacheKey) resultCacheController.touch(cached.cacheKey);
-      return cached.retention !== "evicted";
+      return (
+        cached.retention !== "evicted" &&
+        (!get().staleTableKeys[key] ||
+          Object.keys(get().pendingChangesCache[key] ?? {}).length > 0)
+      );
     }
 
     set({
@@ -1256,6 +1269,51 @@ export const useTableDataStore = create<TableDataState>((set, get) => ({
       set(clearPageContext());
       void get().loadData(connId, database, table, lastSelectColumns);
     }
+  },
+
+  markTableDataStale: (connId, database, table) => {
+    const key = tableKey(connId, database, table);
+    for (const request of pendingTableRequests)
+      if (request.key === key) request.cancelled = true;
+    if (get().activeTableKey === key) ++_loadCounter;
+    set((state) => {
+      const hasPending =
+        Object.keys(state.pendingChangesCache[key] ?? {}).length > 0;
+      const warning = hasPending
+        ? "目标数据已被数据任务修改，未提交编辑已保留，请核对后再提交"
+        : "目标数据已变化，请刷新数据";
+      const cached = state.tableDataCache[key];
+      return {
+        staleTableKeys: { ...state.staleTableKeys, [key]: true },
+        countCache: Object.fromEntries(
+          Object.entries(state.countCache).filter(
+            ([k]) => !k.startsWith(`${key}|`)
+          )
+        ),
+        tableDataCache: cached
+          ? {
+              ...state.tableDataCache,
+              [key]: {
+                ...cached,
+                totalCountStale: true,
+                dataError: warning,
+                pagination: null,
+                loadedPageContext: null,
+              },
+            }
+          : state.tableDataCache,
+        ...(state.activeTableKey === key
+          ? {
+              totalCountStale: true,
+              dataError: warning,
+              dataLoading: false,
+              totalCountLoading: false,
+              canCancelLoad: false,
+              ...clearPageContext(),
+            }
+          : {}),
+      };
+    });
   },
 
   removeTableFromCache: (connId: string, database: string, table: string) => {

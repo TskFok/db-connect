@@ -1,5 +1,6 @@
 pub mod connection;
 pub mod data;
+pub mod data_tasks;
 pub mod database;
 pub mod database_compare;
 pub mod database_sync;
