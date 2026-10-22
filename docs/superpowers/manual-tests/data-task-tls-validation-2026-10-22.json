@@ -1,0 +1,24 @@
+{
+  "scope": "disposable_postgres17_private_ca_loopback",
+  "results": [
+    {
+      "name": "postgres_verify_identity_custom_ca_tls",
+      "status": "passed",
+      "passed": 4,
+      "failed": 0,
+      "expected_tests": 4,
+      "metrics": [
+        "case=disconnect status=OutcomeUnknown commit=Unknown target_rows=0 connections_after=0",
+        "case=custom_ca_exact rows=2 ssl=true connections_after=0",
+        "case=wrong_ca rejected=true target_rows=0 connections_after=0",
+        "case=wrong_hostname rejected=true target_rows=0 connections_after=0"
+      ]
+    }
+  ],
+  "cleanup": {
+    "container": "removed",
+    "temporary_certificates": "removed",
+    "anonymous_data_volume": "removed"
+  },
+  "elapsed_seconds": 4.648
+}

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """数据任务隔离验收。只创建专属容器，不读取应用保存连接。
 
-退出码：0 全部通过；1 测试失败；2 环境/未实现项目未运行。
+退出码：0 全部通过；1 测试失败；2 存在未运行或受阻塞项目。
 JSON 报告不包含连接 URL、密码或数据内容。
 """
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -33,6 +34,12 @@ SERVICES = {
 ENV_NAMES = {"postgres": "DB_CONNECT_DATA_TASK_PG_URL", "mysql": "DB_CONNECT_DATA_TASK_MYSQL_URL",
              "mariadb": "DB_CONNECT_DATA_TASK_MARIADB_URL", "sqlserver": "DB_CONNECT_DATA_TASK_SQLSERVER_URL",
              "clickhouse": "DB_CONNECT_DATA_TASK_CLICKHOUSE_URL"}
+
+
+def verdict(results: list[dict]) -> int:
+    if any(r["status"] == "failed" for r in results):
+        return 1
+    return 2 if any(r["status"] in ("not_run", "blocked") for r in results) else 0
 
 
 class Validation:
@@ -88,6 +95,10 @@ class Validation:
         if data:
             for key, value in re.findall(r"(\w+)=(\d+)", data.group(1)):
                 metrics[key] = int(value)
+        cancellation = dict((phase, int(ms)) for phase, ms in re.findall(
+            r"DATA_TASK_CANCEL_METRICS phase=([a-z_]+) elapsed_ms=(\d+)", output))
+        if cancellation:
+            metrics["cancellation_latency_ms"] = cancellation
         mac_rss = re.search(r"(\d+)\s+maximum resident set size", output)
         linux_rss = re.search(r"Maximum resident set size \(kbytes\):\s*(\d+)", output)
         if mac_rss:
@@ -99,7 +110,8 @@ class Validation:
             return None
         passed, failed, skipped = map(int, summary.groups())
         if result.returncode or failed:
-            # 不打印真实驱动错误正文，避免测试依赖把连接信息带入输出。
+            metrics["failed_tests"] = sorted(set(re.findall(r"(?m)^    (db::[A-Za-z0-9_:]+)$", output)))
+            # 仅保留测试标识，不打印真实驱动错误正文，避免测试依赖把连接信息带入输出。
             self.record(name, "failed", f"{passed} 通过，{failed} 失败；请单独运行对应 Rust 测试检查脱敏诊断", **metrics)
             return None
         self.record(name, "passed", f"{passed} 通过，{skipped} 个显式忽略的测试另行验收", **metrics)
@@ -180,7 +192,7 @@ class Validation:
 
     def cleanup(self):
         for name in self.containers[:]:
-            result = subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+            result = subprocess.run(["docker", "rm", "-f", "-v", name], capture_output=True)
             if result.returncode:
                 self.record("container_cleanup", "failed", f"无法移除本次创建的专属容器 {name}")
             self.containers.remove(name)
@@ -213,16 +225,20 @@ class Validation:
                         self.record("clickhouse", "not_run", "ClickHouse 有向矩阵缺少专属实例：" + ", ".join(missing))
                     else:
                         self.real_driver("clickhouse")
-                    self.record("clickhouse_target", "not_run", "目标批次间无法锁定物理表身份，后端禁止 ClickHouse 目标；仅验收源端受限追加")
+                    self.record("clickhouse_target", "blocked", "无法原子绑定预览物理表与写入依赖；真实并发DDL回归证明单流加UUID守卫仍不足，公共目标写入保持禁用")
         finally:
             self.cleanup()
-        report = {"phase": self.args.phase, "platform": platform.platform(), "results": self.results}
+        revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True)
+        dirty = subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True)
+        report = {"phase": self.args.phase, "platform": platform.platform(),
+                  "generated_at": datetime.now(timezone.utc).isoformat(),
+                  "source_revision": revision.stdout.strip() if revision.returncode == 0 else None,
+                  "working_tree_dirty": bool(dirty.stdout) if dirty.returncode == 0 else None,
+                  "results": self.results}
         if self.args.report:
             self.args.report.parent.mkdir(parents=True, exist_ok=True)
             self.args.report.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        if any(r["status"] == "failed" for r in self.results):
-            return 1
-        return 2 if any(r["status"] == "not_run" for r in self.results) else 0
+        return verdict(self.results)
 
 
 def main() -> int:

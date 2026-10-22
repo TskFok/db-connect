@@ -462,3 +462,440 @@ async fn real_sqlserver_same_type_executor_and_cancel() {
     source.cleanup().await;
     target.cleanup().await;
 }
+
+#[derive(Clone, Copy)]
+enum ExactShape {
+    DecimalTimestamp,
+    Boolean,
+    BooleanTinyInt,
+    DateTime,
+}
+impl Fixture {
+    async fn exact_shape(&self, shape: ExactShape, source: bool) {
+        use DatabaseType::*;
+        let (value_type, other_type) = match shape {
+            ExactShape::DecimalTimestamp => (
+                if source {
+                    "DECIMAL(30,10)"
+                } else {
+                    "DECIMAL(38,12)"
+                },
+                match self.config.database_type {
+                    Postgres => "TIMESTAMP(6) WITHOUT TIME ZONE",
+                    SqlServer if source => "DATETIME2(6)",
+                    SqlServer => "DATETIME2",
+                    MySql => "DATETIME(6)",
+                    _ => unreachable!(),
+                },
+            ),
+            ExactShape::Boolean | ExactShape::BooleanTinyInt => {
+                let boolean = match self.config.database_type {
+                    SqlServer if matches!(shape, ExactShape::BooleanTinyInt) => "TINYINT",
+                    SqlServer => "BIT",
+                    MySql => "TINYINT",
+                    _ => "BOOLEAN",
+                };
+                (boolean, boolean)
+            }
+            ExactShape::DateTime => ("DATE", "TIME(6)"),
+        };
+        let integer = if self.config.database_type == Sqlite {
+            "INTEGER"
+        } else {
+            "BIGINT"
+        };
+        let values = match (shape, source) {
+            (ExactShape::DecimalTimestamp, true) => "(1,12345678901234567890.1234567890,'2026-10-21 12:34:56.123400'),(2,NULL,NULL),(4,-0.0000000001,'2024-02-29 00:00:00')",
+            (ExactShape::DecimalTimestamp, false) => "(3,7,'2020-01-01 01:02:03')",
+            (ExactShape::Boolean | ExactShape::BooleanTinyInt, true) if self.config.database_type == Postgres => "(1,TRUE,FALSE),(2,NULL,NULL),(4,FALSE,TRUE)",
+            (ExactShape::Boolean | ExactShape::BooleanTinyInt, false) if self.config.database_type == Postgres => "(3,FALSE,FALSE)",
+            (ExactShape::Boolean | ExactShape::BooleanTinyInt, true) => "(1,1,0),(2,NULL,NULL),(4,0,1)",
+            (ExactShape::Boolean | ExactShape::BooleanTinyInt, false) => "(3,0,0)",
+            (ExactShape::DateTime, true) => "(1,'2024-02-29','12:34:56.123400'),(2,NULL,NULL),(4,'1000-01-01','00:00:00')",
+            (ExactShape::DateTime, false) => "(3,'2020-01-01','01:02:03')",
+        };
+        // SQL Server 同批编译 INSERT 会沿用被 DROP 表的旧字段类型。
+        self.sql(&format!("DROP TABLE {};CREATE TABLE {}(id {integer} PRIMARY KEY,v {value_type} NULL,b {other_type} NULL);",self.table,self.table)).await;
+        self.sql(&format!(
+            "INSERT INTO {}(id,v,b)VALUES{values};",
+            self.table
+        ))
+        .await;
+    }
+}
+fn exact_expected(
+    database: DatabaseType,
+    shape: ExactShape,
+    mode: DataTaskMode,
+) -> Vec<Vec<DataValue>> {
+    use DataValue::*;
+    let temporal = |kind: &str, value: &str| Temporal {
+        kind: kind.into(),
+        value: value.into(),
+    };
+    let (v1, b1, v3, b3, v4, b4) = match shape {
+        ExactShape::DecimalTimestamp => {
+            let (kind, one, three, four) = match database {
+                DatabaseType::Postgres => (
+                    "timestamp",
+                    "2026-10-21 12:34:56.1234",
+                    "2020-01-01 01:02:03",
+                    "2024-02-29 00:00:00",
+                ),
+                DatabaseType::MySql => (
+                    "datetime",
+                    "2026-10-21 12:34:56.123400",
+                    "2020-01-01 01:02:03.000000",
+                    "2024-02-29 00:00:00.000000",
+                ),
+                _ => (
+                    "datetime2",
+                    "2026-10-21T12:34:56.1234000",
+                    "2020-01-01T01:02:03",
+                    "2024-02-29T00:00:00",
+                ),
+            };
+            (
+                Decimal("12345678901234567890.123456789".into()),
+                temporal(kind, one),
+                Decimal("7".into()),
+                temporal(kind, three),
+                Decimal("-0.0000000001".into()),
+                temporal(kind, four),
+            )
+        }
+        ExactShape::Boolean | ExactShape::BooleanTinyInt => {
+            let (yes, no) = if matches!(database, DatabaseType::Sqlite | DatabaseType::MySql)
+                || matches!(shape, ExactShape::BooleanTinyInt)
+            {
+                (Int(1), Int(0))
+            } else {
+                (Bool(true), Bool(false))
+            };
+            (yes.clone(), no.clone(), no.clone(), no.clone(), no, yes)
+        }
+        ExactShape::DateTime => {
+            let (one, three, four) = match database {
+                DatabaseType::Postgres => ("12:34:56.1234", "01:02:03", "00:00:00"),
+                DatabaseType::MySql => ("12:34:56.123400", "01:02:03.000000", "00:00:00.000000"),
+                _ => ("12:34:56.123400", "01:02:03", "00:00:00"),
+            };
+            (
+                temporal("date", "2024-02-29"),
+                temporal("time", one),
+                temporal("date", "2020-01-01"),
+                temporal("time", three),
+                temporal("date", "1000-01-01"),
+                temporal("time", four),
+            )
+        }
+    };
+    let mut rows = vec![
+        vec![Int(1), v1, b1],
+        vec![Int(2), Null, Null],
+        vec![Int(4), v4, b4],
+    ];
+    if mode == DataTaskMode::Append {
+        rows.insert(2, vec![Int(3), v3, b3]);
+    }
+    rows
+}
+async fn exact_transfer(
+    source_db: DatabaseType,
+    target_db: DatabaseType,
+    mode: DataTaskMode,
+    shape: ExactShape,
+) {
+    let source = Fixture::new(source_db, true).await;
+    let target = Fixture::new(target_db, false).await;
+    source.exact_shape(shape, true).await;
+    target.exact_shape(shape, false).await;
+    let cancel = cancellation();
+    let plan = prepare_task(
+        "exact-cross-type".into(),
+        request(&source, &target, mode),
+        source.config.clone(),
+        target.config.clone(),
+        source.directory.join("spool"),
+        cancel.clone(),
+        Arc::new(|_| {}),
+    )
+    .await
+    .unwrap();
+    source
+        .sql(&format!("UPDATE {} SET v=NULL,b=NULL", source.table))
+        .await;
+    let result = execute_plan(
+        Arc::new(plan),
+        source.config.clone(),
+        target.config.clone(),
+        cancel,
+        Arc::new(|_| {}),
+    )
+    .await;
+    assert_eq!(
+        result.commit_state,
+        DataCommitState::Committed,
+        "{:?}",
+        result.error
+    );
+    assert_eq!(target.rows().await, exact_expected(target_db, shape, mode));
+    source.cleanup().await;
+    target.cleanup().await;
+}
+macro_rules! exact_direction {
+    ($name:ident,$source:ident,$target:ident,$shape:ident) => {
+        #[tokio::test]
+        #[ignore = "需隔离数据库，验收精确类型跨库追加/替换及冻结源值"]
+        async fn $name() {
+            exact_transfer(
+                DatabaseType::$source,
+                DatabaseType::$target,
+                DataTaskMode::Append,
+                ExactShape::$shape,
+            )
+            .await;
+            exact_transfer(
+                DatabaseType::$source,
+                DatabaseType::$target,
+                DataTaskMode::Replace,
+                ExactShape::$shape,
+            )
+            .await;
+        }
+    };
+}
+exact_direction!(
+    real_exact_decimal_timestamp_postgres_to_mysql,
+    Postgres,
+    MySql,
+    DecimalTimestamp
+);
+exact_direction!(
+    real_exact_decimal_timestamp_mysql_to_postgres,
+    MySql,
+    Postgres,
+    DecimalTimestamp
+);
+exact_direction!(
+    real_exact_decimal_timestamp_postgres_to_sqlserver,
+    Postgres,
+    SqlServer,
+    DecimalTimestamp
+);
+exact_direction!(
+    real_exact_decimal_timestamp_sqlserver_to_postgres,
+    SqlServer,
+    Postgres,
+    DecimalTimestamp
+);
+exact_direction!(
+    real_exact_decimal_timestamp_mysql_to_sqlserver,
+    MySql,
+    SqlServer,
+    DecimalTimestamp
+);
+exact_direction!(
+    real_exact_decimal_timestamp_sqlserver_to_mysql,
+    SqlServer,
+    MySql,
+    DecimalTimestamp
+);
+exact_direction!(
+    real_exact_boolean_postgres_to_sqlserver,
+    Postgres,
+    SqlServer,
+    Boolean
+);
+exact_direction!(
+    real_exact_boolean_sqlserver_to_postgres,
+    SqlServer,
+    Postgres,
+    Boolean
+);
+exact_direction!(
+    real_exact_boolean_postgres_to_sqlite,
+    Postgres,
+    Sqlite,
+    Boolean
+);
+exact_direction!(
+    real_exact_boolean_sqlite_to_postgres,
+    Sqlite,
+    Postgres,
+    Boolean
+);
+exact_direction!(
+    real_exact_boolean_sqlserver_to_sqlite,
+    SqlServer,
+    Sqlite,
+    Boolean
+);
+exact_direction!(
+    real_exact_boolean_sqlite_to_sqlserver,
+    Sqlite,
+    SqlServer,
+    Boolean
+);
+exact_direction!(
+    real_exact_boolean_postgres_to_mysql,
+    Postgres,
+    MySql,
+    Boolean
+);
+exact_direction!(
+    real_exact_boolean_sqlserver_to_mysql,
+    SqlServer,
+    MySql,
+    Boolean
+);
+exact_direction!(real_exact_boolean_sqlite_to_mysql, Sqlite, MySql, Boolean);
+exact_direction!(
+    real_exact_date_time_postgres_to_mysql,
+    Postgres,
+    MySql,
+    DateTime
+);
+exact_direction!(
+    real_exact_date_time_mysql_to_postgres,
+    MySql,
+    Postgres,
+    DateTime
+);
+exact_direction!(
+    real_exact_date_time_postgres_to_sqlserver,
+    Postgres,
+    SqlServer,
+    DateTime
+);
+exact_direction!(
+    real_exact_date_time_sqlserver_to_postgres,
+    SqlServer,
+    Postgres,
+    DateTime
+);
+exact_direction!(
+    real_exact_date_time_mysql_to_sqlserver,
+    MySql,
+    SqlServer,
+    DateTime
+);
+exact_direction!(
+    real_exact_date_time_sqlserver_to_mysql,
+    SqlServer,
+    MySql,
+    DateTime
+);
+
+async fn exact_rejection(
+    shape: ExactShape,
+    source_db: DatabaseType,
+    target_db: DatabaseType,
+    source_update: &str,
+    target_alter: &str,
+) {
+    let source = Fixture::new(source_db, true).await;
+    let target = Fixture::new(target_db, false).await;
+    source.exact_shape(shape, true).await;
+    target.exact_shape(shape, false).await;
+    if !source_update.is_empty() {
+        source
+            .sql(&format!("UPDATE {} SET {source_update}", source.table))
+            .await;
+    }
+    if !target_alter.is_empty() {
+        target
+            .sql(&format!("ALTER TABLE {} {target_alter}", target.table))
+            .await;
+    }
+    let before = target.rows().await;
+    let error = prepare_task(
+        "blocked-exact-cross-type".into(),
+        request(&source, &target, DataTaskMode::Replace),
+        source.config.clone(),
+        target.config.clone(),
+        source.directory.join("spool"),
+        cancellation(),
+        Arc::new(|_| {}),
+    )
+    .await
+    .expect_err("不兼容精确值必须在预览冻结前阻止");
+    assert_eq!(error.code, "unsupported_capability", "{error}");
+    assert_eq!(target.rows().await, before, "阻止转换时不能触碰目标数据");
+    source.cleanup().await;
+    target.cleanup().await;
+}
+#[tokio::test]
+#[ignore = "需隔离 PostgreSQL/MySQL，缩窄必须在替换前阻止"]
+async fn real_exact_decimal_narrowing_blocks_before_replace() {
+    exact_rejection(
+        ExactShape::DecimalTimestamp,
+        DatabaseType::Postgres,
+        DatabaseType::MySql,
+        "",
+        "MODIFY v DECIMAL(20,5) NULL",
+    )
+    .await;
+}
+#[tokio::test]
+#[ignore = "需隔离 PostgreSQL/MySQL，时间精度缩窄必须在替换前阻止"]
+async fn real_exact_temporal_narrowing_blocks_before_replace() {
+    exact_rejection(
+        ExactShape::DecimalTimestamp,
+        DatabaseType::Postgres,
+        DatabaseType::MySql,
+        "",
+        "MODIFY b DATETIME(3) NULL",
+    )
+    .await;
+}
+#[tokio::test]
+#[ignore = "需隔离 PostgreSQL/MySQL，日期越界必须在替换前阻止"]
+async fn real_exact_date_range_blocks_before_replace() {
+    exact_rejection(
+        ExactShape::DateTime,
+        DatabaseType::Postgres,
+        DatabaseType::MySql,
+        "v='0001-01-01'",
+        "",
+    )
+    .await;
+}
+#[tokio::test]
+#[ignore = "需隔离 PostgreSQL，SQLite非0/1布尔值必须在替换前阻止"]
+async fn real_exact_boolean_invalid_sqlite_blocks_before_replace() {
+    exact_rejection(
+        ExactShape::Boolean,
+        DatabaseType::Sqlite,
+        DatabaseType::Postgres,
+        "v=2",
+        "",
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "需隔离 MySQL，SQLite非0/1布尔值不能因整数目标被放行"]
+async fn real_exact_boolean_invalid_sqlite_to_mysql_blocks_before_replace() {
+    exact_rejection(
+        ExactShape::Boolean,
+        DatabaseType::Sqlite,
+        DatabaseType::MySql,
+        "v=2",
+        "",
+    )
+    .await;
+}
+
+exact_direction!(
+    real_exact_pg_boolean_to_sqlserver_tinyint,
+    Postgres,
+    SqlServer,
+    BooleanTinyInt
+);
+exact_direction!(
+    real_exact_sqlite_boolean_to_sqlserver_tinyint,
+    Sqlite,
+    SqlServer,
+    BooleanTinyInt
+);

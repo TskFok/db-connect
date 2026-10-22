@@ -19,11 +19,15 @@ export function DataTaskResult({ result }: { result: TaskResult }) {
         }
         message={describeDataTaskProgress(result.status)}
         description={
-          result.commit_state === "rolled_back"
-            ? "目标业务表数据已回滚；序列或自增计数可能存在间隙。"
-            : result.commit_state === "unknown"
-              ? "请核对目标数据和数据库提交状态，不要直接重复执行。"
-              : result.error?.message
+          <>
+            {result.error?.message && <div>{result.error.message}</div>}
+            {result.commit_state === "rolled_back" && (
+              <div>目标业务表数据已回滚；序列或自增计数可能存在间隙。</div>
+            )}
+            {result.commit_state === "unknown" && (
+              <div>请核对目标数据和数据库提交状态，不要直接重复执行。</div>
+            )}
+          </>
         }
       />
       {result.tables.map((table) => (

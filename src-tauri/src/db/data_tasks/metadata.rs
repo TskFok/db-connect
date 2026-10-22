@@ -57,7 +57,7 @@ pub struct ValidatedMapping {
     pub delete_order: Vec<String>,
 }
 
-pub const CLICKHOUSE_TARGET_BLOCKER:&str="ClickHouse 目标追加暂未开放：无法保护批次之间的物理表身份和 DDL 变化，可能写入重建表或触发新物化视图";
+pub const CLICKHOUSE_TARGET_BLOCKER:&str="ClickHouse 目标追加暂未开放：无法原子绑定已预览的物理表和写入依赖，可能写入重建表或触发新物化视图";
 fn transaction_database(database: DatabaseType) -> bool {
     matches!(
         database,
@@ -680,6 +680,29 @@ mod boundary_tests {
                     })
             );
             assert!(validate_mapping(&request(DataTaskMode::Append), &s, &target).is_err());
+        }
+    }
+    #[test]
+    fn clickhouse_target_stays_closed_even_when_snapshot_flags_claim_safety() {
+        let source = metadata();
+        let mut target = metadata();
+        target.database_type = DatabaseType::ClickHouse;
+        target.consistent_snapshot = true;
+        target.protected_write = true;
+        target.permissions_verified = true;
+        let capabilities = get_capabilities(&source, &target);
+        assert!(!capabilities.transfer && !capabilities.row_sync);
+        assert!(capabilities.supported_modes.is_empty());
+        assert_eq!(capabilities.blockers[0].message, CLICKHOUSE_TARGET_BLOCKER);
+        for mode in [
+            DataTaskMode::Append,
+            DataTaskMode::Replace,
+            DataTaskMode::Merge,
+            DataTaskMode::Mirror,
+        ] {
+            assert!(validate_mapping(&request(mode), &source, &target)
+                .unwrap_err()
+                .contains(CLICKHOUSE_TARGET_BLOCKER));
         }
     }
     #[test]

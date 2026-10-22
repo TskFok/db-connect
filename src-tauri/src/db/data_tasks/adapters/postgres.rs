@@ -16,6 +16,7 @@ use crate::{
             value::{normalize_decimal, CanonicalRow, DataValue},
             Cancellation,
         },
+        postgres::PostgresCancelHandle,
     },
     models::{
         data_tasks::{DataDiffOperation, DataEndpoint},
@@ -25,7 +26,7 @@ use crate::{
 use bytes::BytesMut;
 use futures_util::{pin_mut, TryStreamExt};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, sync::atomic::Ordering, time::Duration};
+use std::{collections::BTreeMap, future::Future, sync::atomic::Ordering, time::Duration};
 use tokio_postgres::{
     types::{Format, IsNull, ToSql, Type},
     Row,
@@ -39,6 +40,30 @@ fn checked(cancel: &Cancellation) -> Result<(), String> {
         Err("cancelled: 数据任务已取消".into())
     } else {
         Ok(())
+    }
+}
+// 取消必须覆盖取得首行前的查询、锁等待和批量写入；仅在流循环中检查会漏掉这些等待。
+async fn interruptible<T>(
+    cancel: Cancellation,
+    handle: Result<PostgresCancelHandle, String>,
+    operation: impl Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    checked(&cancel)?;
+    let handle = handle?;
+    tokio::pin!(operation);
+    tokio::select! {
+        result = &mut operation => result,
+        _ = async {
+            while !cancel.load(Ordering::Acquire) {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        } => {
+            // CancelRequest 的发送成功不代表服务端已处理；先等待原操作响应，
+            // 避免迟到的取消信号打断紧接着发出的 ROLLBACK。
+            let _ = tokio::time::timeout(Duration::from_secs(2), handle.cancel()).await;
+            let _ = tokio::time::timeout(Duration::from_secs(2), &mut operation).await;
+            Err("cancelled: PostgreSQL 数据任务已取消".into())
+        },
     }
 }
 fn id(name: &str) -> String {
@@ -366,6 +391,15 @@ impl PgSession {
             .as_ref()
             .ok_or_else(|| "PostgreSQL 专属会话已关闭".into())
     }
+    fn cancel_handle(&self) -> Result<PostgresCancelHandle, String> {
+        match self.active.as_ref().map(|active| &active.database) {
+            Some(ActiveDatabaseConnection::Postgres(pg)) => Ok(PostgresCancelHandle::new(
+                self.client()?.cancel_token(),
+                pg.cancel_tls.clone(),
+            )),
+            _ => Err(DB_ERROR.into()),
+        }
+    }
     async fn metadata_inner(&mut self) -> Result<DataMetadataSnapshot, String> {
         checked(&self.cancel)?;
         // 5 类固定 SQL：实例/权限、表列/继承、全部入出向约束及索引、触发器/写规则、列专属序列。
@@ -585,16 +619,20 @@ impl DataSession for PgSession {
         Dialect::Postgres
     }
     fn begin_read(&mut self) -> SessionFuture<'_, ()> {
-        Box::pin(async move {
+        let cancel = self.cancel.clone();
+        let handle = self.cancel_handle();
+        Box::pin(interruptible(cancel, handle, async move {
             checked(&self.cancel)?;
             self.client()?
                 .batch_execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
                 .await
                 .map_err(db_error)
-        })
+        }))
     }
     fn begin_protected_write(&mut self, mut tables: Vec<String>) -> SessionFuture<'_, ()> {
-        Box::pin(async move {
+        let cancel = self.cancel.clone();
+        let handle = self.cancel_handle();
+        Box::pin(interruptible(cancel, handle, async move {
             checked(&self.cancel)?;
             if self.config.read_only.unwrap_or(false) {
                 return Err("read_only_target: 目标保存连接为只读".into());
@@ -612,10 +650,12 @@ impl DataSession for PgSession {
             self.client()?.batch_execute(&format!("BEGIN ISOLATION LEVEL READ COMMITTED; SET LOCAL lock_timeout='10s'; LOCK TABLE {list} IN ACCESS EXCLUSIVE MODE")).await.map_err(db_error)?;
             self.locked_tables = tables;
             Ok(())
-        })
+        }))
     }
     fn load_metadata(&mut self) -> SessionFuture<'_, DataMetadataSnapshot> {
-        Box::pin(self.metadata_inner())
+        let cancel = self.cancel.clone();
+        let handle = self.cancel_handle();
+        Box::pin(interruptible(cancel, handle, self.metadata_inner()))
     }
     fn stream_rows(
         &mut self,
@@ -623,7 +663,9 @@ impl DataSession for PgSession {
         cancel: Cancellation,
         sender: RowSender,
     ) -> SessionFuture<'_, u64> {
-        Box::pin(async move {
+        let signal = cancel.clone();
+        let handle = self.cancel_handle();
+        Box::pin(interruptible(signal, handle, async move {
             checked(&cancel)?;
             let sql = snapshot_sql(
                 &self.schema,
@@ -640,7 +682,7 @@ impl DataSession for PgSession {
             pin_mut!(stream);
             let mut count = 0;
             loop {
-                let row = tokio::select! {row=stream.try_next()=>row.map_err(db_error)?,_=async{while !cancel.load(Ordering::Acquire){tokio::time::sleep(Duration::from_millis(50)).await;}}=>return Err("cancelled: PostgreSQL 集合读取已取消，专属会话将关闭".into())};
+                let row = stream.try_next().await.map_err(db_error)?;
                 let Some(row) = row else {
                     break;
                 };
@@ -662,10 +704,12 @@ impl DataSession for PgSession {
                 count += 1;
             }
             Ok(count)
-        })
+        }))
     }
     fn write_batch(&mut self, mut batch: WriteBatch) -> SessionFuture<'_, u64> {
-        Box::pin(async move {
+        let cancel = self.cancel.clone();
+        let handle = self.cancel_handle();
+        Box::pin(interruptible(cancel, handle, async move {
             checked(&self.cancel)?;
             if batch.kind == DataDiffOperation::Insert
                 && self
@@ -691,10 +735,12 @@ impl DataSession for PgSession {
                 .execute(&batch.sql, &params)
                 .await
                 .map_err(db_error)
-        })
+        }))
     }
     fn delete_all(&mut self, table: String) -> SessionFuture<'_, u64> {
-        Box::pin(async move {
+        let cancel = self.cancel.clone();
+        let handle = self.cancel_handle();
+        Box::pin(interruptible(cancel, handle, async move {
             checked(&self.cancel)?;
             self.client()?
                 .execute(
@@ -703,13 +749,15 @@ impl DataSession for PgSession {
                 )
                 .await
                 .map_err(db_error)
-        })
+        }))
     }
     fn maintain_generators(
         &mut self,
         mapping: Vec<ValidatedTableMapping>,
     ) -> SessionFuture<'_, ()> {
-        Box::pin(async move {
+        let cancel = self.cancel.clone();
+        let handle = self.cancel_handle();
+        Box::pin(interruptible(cancel, handle, async move {
             checked(&self.cancel)?;
             let mut parts = Vec::new();
             for sequence in &self.sequences {
@@ -732,7 +780,7 @@ impl DataSession for PgSession {
                     .map_err(db_error)?;
             }
             Ok(())
-        })
+        }))
     }
     fn commit(&mut self) -> SessionFuture<'_, ()> {
         Box::pin(async move {

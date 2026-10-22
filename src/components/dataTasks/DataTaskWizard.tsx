@@ -25,6 +25,7 @@ import type {
   DataEndpoint,
   DataTaskCapabilities,
   DataTaskKind,
+  DataTaskRequest,
   DataTaskMode,
   DataTaskSeed,
   TableMapping,
@@ -33,6 +34,7 @@ import type {
 export interface DataTaskWizardProps {
   kind: DataTaskKind;
   seed?: DataTaskSeed;
+  initialRequest?: DataTaskRequest;
   onStarted: (taskId: string) => void;
   onInvalidate?: () => void;
   disabled?: boolean;
@@ -40,6 +42,7 @@ export interface DataTaskWizardProps {
 export function DataTaskWizard({
   kind,
   seed,
+  initialRequest,
   onStarted,
   onInvalidate,
   disabled = false,
@@ -47,31 +50,40 @@ export function DataTaskWizard({
   const saved = useConnectionStore((state) => state.savedConnections);
   const busy = useDataTaskStore((state) => state.busy);
   const [source, setSource] = useState<DataEndpoint>(
-    seed?.source ?? { saved_connection_id: "", database: "" }
+    initialRequest?.source ??
+      seed?.source ?? { saved_connection_id: "", database: "" }
   );
-  const [target, setTarget] = useState<DataEndpoint>({
-    saved_connection_id: "",
-    database: "",
-  });
+  const [target, setTarget] = useState<DataEndpoint>(
+    initialRequest?.target ?? {
+      saved_connection_id: "",
+      database: "",
+    }
+  );
   const [databases, setDatabases] = useState<{
     source: string[];
     target: string[];
   }>({ source: [], target: [] });
   const [mappings, setMappings] = useState<TableMapping[]>(
-    (seed?.tables?.length ? seed.tables : [""]).map((table) => ({
-      source_table: table,
-      target_table: table,
-      columns: [{ source_column: "", target_column: "" }],
-    }))
+    initialRequest?.mappings ??
+      (seed?.tables?.length ? seed.tables : [""]).map((table) => ({
+        source_table: table,
+        target_table: table,
+        columns: [{ source_column: "", target_column: "" }],
+      }))
   );
   const [mode, setMode] = useState<DataTaskMode>(
-    kind === "row_sync" ? "merge" : "append"
+    initialRequest?.mode ?? (kind === "row_sync" ? "merge" : "append")
   );
   const [capabilities, setCapabilities] = useState<DataTaskCapabilities | null>(
     null
   );
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState(0);
+  const mappingEndpoints = useRef<string | null>(
+    initialRequest
+      ? JSON.stringify([initialRequest.source, initialRequest.target])
+      : null
+  );
   const previousConfigs = useRef("");
   const previousEndpointIds = useRef("");
   const endpointIds = JSON.stringify([
@@ -139,11 +151,15 @@ export function DataTaskWizard({
         .then((value) => {
           if (current) {
             setCapabilities(value);
-            const defaults = defaultDataTaskMappings(
-              value,
-              JSON.parse(selectedSeedTables) as string[]
-            );
-            setMappings(defaults.length <= 100 ? defaults : []);
+            const endpoints = JSON.stringify([source, target]);
+            if (mappingEndpoints.current !== endpoints) {
+              const defaults = defaultDataTaskMappings(
+                value,
+                JSON.parse(selectedSeedTables) as string[]
+              );
+              setMappings(defaults.length <= 100 ? defaults : []);
+              mappingEndpoints.current = endpoints;
+            }
           }
         })
         .catch((e) => {

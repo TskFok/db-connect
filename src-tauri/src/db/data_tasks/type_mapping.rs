@@ -191,6 +191,67 @@ fn database_type_name(
             _ => None,
         };
     }
+    // 原生名字相同不代表语义相同：MySQL TIMESTAMP 带会话时区，
+    // SQL Server TIMESTAMP 是 rowversion；旧 DATETIME 也不是十进制定点时间。
+    if cross {
+        if (database != DatabaseType::SqlServer && upper == "BIT")
+            || (database == DatabaseType::MySql && matches!(upper.as_str(), "BOOL" | "BOOLEAN"))
+            || (database == DatabaseType::MySql && upper.starts_with("TIMESTAMP"))
+            || (database == DatabaseType::SqlServer
+                && matches!(
+                    upper.as_str(),
+                    "DATETIME" | "SMALLDATETIME" | "TIMESTAMP" | "ROWVERSION"
+                ))
+            || upper.contains("WITH TIME ZONE")
+            || upper.starts_with("DATETIMEOFFSET")
+        {
+            return None;
+        }
+        if matches!(
+            database,
+            DatabaseType::Postgres | DatabaseType::MySql | DatabaseType::SqlServer
+        ) {
+            let naive = upper.strip_suffix(" WITHOUT TIME ZONE").unwrap_or(&upper);
+            let base = naive.split('(').next().unwrap_or("");
+            if base == "DATE" {
+                return Some("DATE(0)".into());
+            }
+            let kind = match (database, base) {
+                (DatabaseType::Postgres, "TIMESTAMP")
+                | (DatabaseType::MySql, "DATETIME")
+                | (DatabaseType::SqlServer, "DATETIME2") => Some("TIMESTAMP"),
+                (_, "TIME") => Some("TIME"),
+                _ => None,
+            };
+            if let Some(kind) = kind {
+                let default_precision = match database {
+                    DatabaseType::MySql => 0,
+                    DatabaseType::SqlServer => 7,
+                    _ => 6,
+                };
+                let precision = if naive == base {
+                    default_precision
+                } else {
+                    naive
+                        .strip_prefix(base)?
+                        .strip_prefix('(')?
+                        .strip_suffix(')')?
+                        .parse::<u8>()
+                        .ok()?
+                };
+                if precision
+                    > if database == DatabaseType::SqlServer {
+                        7
+                    } else {
+                        6
+                    }
+                {
+                    return None;
+                }
+                return Some(format!("{kind}({precision})"));
+            }
+        }
+    }
     if database == DatabaseType::Sqlite {
         if upper.contains("INT") {
             return Some("BIGINT".into());
@@ -247,11 +308,116 @@ pub fn resolve_database_transfer_type(
                 Some(DataType::Integer { .. })
             ) | (Some(DataType::Text(_)), Some(DataType::Text(_)))
                 | (Some(DataType::Binary(_)), Some(DataType::Binary(_)))
+                | (
+                    Some(DataType::Decimal { .. }),
+                    Some(DataType::Decimal { .. })
+                )
+                | (Some(DataType::Boolean), Some(DataType::Boolean))
+                | (Some(DataType::Boolean), Some(DataType::Integer { .. }))
+                | (
+                    Some(DataType::Temporal { .. }),
+                    Some(DataType::Temporal { .. })
+                )
         )
     {
         return TypeCompatibility::Unsupported;
     }
+    if cross
+        && matches!(
+            (parse(&source), parse(&target)),
+            (Some(DataType::Boolean), Some(DataType::Integer { .. }))
+        )
+    {
+        return TypeCompatibility::Compatible;
+    }
     resolve_transfer_type(&source, &target)
+}
+
+/// 跨库仅接收共同的公历日期/无时区时刻；不解释时区、不舍入、不把时长当时刻。
+fn normalize_temporal(
+    input: &str,
+    kind: &str,
+    precision: u8,
+    target_db: crate::models::types::DatabaseType,
+) -> Result<super::value::DataValue, String> {
+    use crate::models::types::DatabaseType;
+    let error = || "unsupported_capability: 日期时间超出目标范围、精度或无时区语义".to_string();
+    if !input.is_ascii() {
+        return Err(error());
+    }
+    let (date, clock) = match kind {
+        "DATE" => (Some(input), None),
+        "TIMESTAMP" if input.len() > 11 && matches!(input.as_bytes()[10], b' ' | b'T') => {
+            (Some(&input[..10]), Some(&input[11..]))
+        }
+        "TIME" => (None, Some(input)),
+        _ => return Err(error()),
+    };
+    if let Some(date) = date {
+        if date.len() != 10 || date.as_bytes()[4] != b'-' || date.as_bytes()[7] != b'-' {
+            return Err(error());
+        }
+        let year: i32 = date[..4].parse().map_err(|_| error())?;
+        let month: u8 = date[5..7].parse().map_err(|_| error())?;
+        let day: u8 = date[8..].parse().map_err(|_| error())?;
+        if !(1..=9999).contains(&year) || (target_db == DatabaseType::MySql && year < 1000) {
+            return Err(error());
+        }
+        time::Date::from_calendar_date(
+            year,
+            time::Month::try_from(month).map_err(|_| error())?,
+            day,
+        )
+        .map_err(|_| error())?;
+    }
+    let mut value = date.unwrap_or("").to_string();
+    if let Some(clock) = clock {
+        let (whole, fraction) = clock.split_once('.').unwrap_or((clock, ""));
+        if whole.len() != 8 || whole.as_bytes()[2] != b':' || whole.as_bytes()[5] != b':' {
+            return Err(error());
+        }
+        let hour: u8 = whole[..2].parse().map_err(|_| error())?;
+        let minute: u8 = whole[3..5].parse().map_err(|_| error())?;
+        let second: u8 = whole[6..].parse().map_err(|_| error())?;
+        if hour > 23 || minute > 59 || second > 59 || !fraction.bytes().all(|b| b.is_ascii_digit())
+        {
+            return Err(error());
+        }
+        let fraction = fraction.trim_end_matches('0');
+        if fraction.len() > usize::from(precision) {
+            return Err(error());
+        }
+        if date.is_some() {
+            value.push(if target_db == DatabaseType::SqlServer {
+                'T'
+            } else {
+                ' '
+            });
+        }
+        value.push_str(whole);
+        let fraction = if target_db == DatabaseType::Postgres
+            || (target_db == DatabaseType::SqlServer && fraction.is_empty())
+        {
+            fraction.to_string()
+        } else {
+            format!("{fraction:0<width$}", width = usize::from(precision))
+        };
+        if !fraction.is_empty() {
+            value.push('.');
+            value.push_str(&fraction);
+        }
+    }
+    let kind = match kind {
+        "DATE" => "date",
+        "TIME" => "time",
+        _ if target_db == DatabaseType::Postgres => "timestamp",
+        _ if target_db == DatabaseType::SqlServer => "datetime2",
+        _ => "datetime",
+    };
+    Ok(super::value::DataValue::Temporal {
+        kind: kind.into(),
+        value,
+    })
 }
 
 /// 将冻结源值变为目标原生读取所使用的无损规范值；此操作仅在跨类型传输的源快照写入前调用。
@@ -279,7 +445,12 @@ pub fn normalize_transfer_row(
     if row.values.len() != mapped.target_columns.len() {
         return Err("invalid_mapping: 跨类型行形状与映射不一致".into());
     }
-    for (value, name) in row.values.iter_mut().zip(&mapped.target_columns) {
+    for (index, (value, name)) in row
+        .values
+        .iter_mut()
+        .zip(&mapped.target_columns)
+        .enumerate()
+    {
         let column = table
             .columns
             .iter()
@@ -294,6 +465,23 @@ pub fn normalize_transfer_row(
         let declared = database_type_name(target.database_type, &column.declared_type, true, true)
             .ok_or("unsupported_capability: 目标类型尚未通过无损转换验收")?;
         let kind = parse(&declared).ok_or("unsupported_capability: 跨类型目标值类型不受支持")?;
+        if source.database_type == DatabaseType::Sqlite {
+            let source_column = source
+                .tables
+                .iter()
+                .find(|t| t.name == mapped.source_table)
+                .and_then(|t| {
+                    t.columns
+                        .iter()
+                        .find(|c| c.name == mapped.source_columns[index])
+                });
+            if source_column
+                .is_some_and(|c| matches!(parse(&c.declared_type), Some(DataType::Boolean)))
+                && !matches!(value, DataValue::Int(0 | 1) | DataValue::Bool(_))
+            {
+                return Err("unsupported_capability: SQLite BOOLEAN 只能无损传输整数 0/1".into());
+            }
+        }
         let converted = match (std::mem::replace(value, DataValue::Null), kind) {
             (DataValue::Bool(v), DataType::Boolean)
                 if target.database_type == DatabaseType::Sqlite =>
@@ -307,7 +495,11 @@ pub fn normalize_transfer_row(
             }
             (v @ DataValue::Bool(_), DataType::Boolean) => v,
             (DataValue::Bool(v), DataType::Integer { unsigned: true, .. }) => {
-                DataValue::UInt(u64::from(v))
+                if target.database_type == DatabaseType::SqlServer {
+                    DataValue::Int(i64::from(v))
+                } else {
+                    DataValue::UInt(u64::from(v))
+                }
             }
             (
                 DataValue::Bool(v),
@@ -378,13 +570,23 @@ pub fn normalize_transfer_row(
             {
                 DataValue::Binary(v)
             }
-            (DataValue::Decimal(v), DataType::Decimal { .. }) => {
-                DataValue::Decimal(super::value::normalize_decimal(&v)?)
+            (DataValue::Decimal(v), DataType::Decimal { precision, scale }) => {
+                let v = super::value::normalize_decimal(&v)?;
+                let unsigned = v.strip_prefix('-').unwrap_or(&v);
+                let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+                if whole.trim_start_matches('0').len() > usize::from(precision - scale)
+                    || fraction.len() > usize::from(scale)
+                {
+                    return Err("unsupported_capability: 精确小数超出目标精度或小数位".into());
+                }
+                DataValue::Decimal(v)
             }
             (DataValue::Float(bits), DataType::Float(_)) if f64::from_bits(bits).is_finite() => {
                 DataValue::Float(bits)
             }
-            (v @ DataValue::Temporal { .. }, DataType::Temporal { .. }) => v,
+            (DataValue::Temporal { value, .. }, DataType::Temporal { kind, precision }) => {
+                normalize_temporal(&value, &kind, precision, target.database_type)?
+            }
             (v @ DataValue::Uuid(_), DataType::Uuid) => v,
             _ => return Err("unsupported_capability: 源快照值无法无损表示为目标类型".into()),
         };
@@ -398,6 +600,231 @@ pub fn normalize_transfer_row(
 mod tests {
     use super::*;
     use crate::models::types::DatabaseType;
+    #[test]
+    fn exact_decimal_boolean_and_naive_temporal_cross_types_are_supported() {
+        use DatabaseType::*;
+        for (source_db, source, target_db, target) in [
+            (Postgres, "NUMERIC(30,10)", MySql, "DECIMAL(38,12)"),
+            (MySql, "DECIMAL(30,10)", SqlServer, "NUMERIC(38,12)"),
+            (SqlServer, "NUMERIC(30,10)", Postgres, "NUMERIC(38,12)"),
+            (Postgres, "BOOLEAN", SqlServer, "BIT"),
+            (SqlServer, "BIT", Sqlite, "BOOLEAN"),
+            (Sqlite, "BOOLEAN", Postgres, "BOOLEAN"),
+            (Postgres, "BOOLEAN", MySql, "TINYINT"),
+            (MySql, "DATE", Postgres, "DATE"),
+            (SqlServer, "DATE", MySql, "DATE"),
+            (
+                Postgres,
+                "TIMESTAMP(3) WITHOUT TIME ZONE",
+                SqlServer,
+                "DATETIME2(6)",
+            ),
+            (
+                MySql,
+                "DATETIME(6)",
+                Postgres,
+                "TIMESTAMP WITHOUT TIME ZONE",
+            ),
+            (SqlServer, "TIME(6)", Postgres, "TIME WITHOUT TIME ZONE"),
+            (Postgres, "TIME(3) WITHOUT TIME ZONE", MySql, "TIME(6)"),
+        ] {
+            assert_eq!(
+                resolve_database_transfer_type(source_db, source, target_db, target),
+                TypeCompatibility::Compatible,
+                "{source_db:?} {source} -> {target_db:?} {target}"
+            );
+        }
+    }
+    #[test]
+    fn ambiguous_boolean_temporal_and_narrowing_cross_types_stay_blocked() {
+        use DatabaseType::*;
+        for (source_db, source, target_db, target) in [
+            (MySql, "TINYINT", Postgres, "BOOLEAN"),
+            (MySql, "BIT", Postgres, "BOOLEAN"),
+            (Postgres, "NUMERIC(30,10)", SqlServer, "DECIMAL(30,5)"),
+            (Postgres, "NUMERIC", MySql, "DECIMAL(65,30)"),
+            (Sqlite, "DECIMAL(30,10)", Postgres, "NUMERIC(30,10)"),
+            (Postgres, "NUMERIC(30,10)", Sqlite, "NUMERIC(30,10)"),
+            (SqlServer, "TIME(7)", Postgres, "TIME WITHOUT TIME ZONE"),
+            (Postgres, "TIMESTAMP WITHOUT TIME ZONE", MySql, "DATETIME"),
+            (
+                MySql,
+                "TIMESTAMP(6)",
+                Postgres,
+                "TIMESTAMP(6) WITHOUT TIME ZONE",
+            ),
+            (
+                Postgres,
+                "TIMESTAMP WITH TIME ZONE",
+                SqlServer,
+                "DATETIMEOFFSET(7)",
+            ),
+            (
+                SqlServer,
+                "DATETIME",
+                Postgres,
+                "TIMESTAMP WITHOUT TIME ZONE",
+            ),
+            (
+                SqlServer,
+                "TIMESTAMP",
+                Postgres,
+                "TIMESTAMP WITHOUT TIME ZONE",
+            ),
+            (Sqlite, "DATE", MySql, "DATE"),
+        ] {
+            assert_eq!(
+                resolve_database_transfer_type(source_db, source, target_db, target),
+                TypeCompatibility::Unsupported,
+                "{source_db:?} {source} -> {target_db:?} {target}"
+            );
+        }
+    }
+    fn normalize_test_value(
+        value: super::super::value::DataValue,
+        source_db: DatabaseType,
+        target_db: DatabaseType,
+        target_type: &str,
+    ) -> Result<super::super::value::DataValue, String> {
+        use super::super::{
+            metadata::{tests::metadata, ValidatedMapping, ValidatedTableMapping},
+            value::{CanonicalRow, DataValue},
+        };
+        let mut source = metadata();
+        source.database_type = source_db;
+        if source_db == DatabaseType::Sqlite {
+            source.tables[0].columns[1].declared_type = "BOOLEAN".into();
+        }
+        let mut target = metadata();
+        target.database_type = target_db;
+        target.tables[0].columns[1].declared_type = target_type.into();
+        let mapping = ValidatedMapping {
+            tables: vec![ValidatedTableMapping {
+                source_table: "t".into(),
+                target_table: "t".into(),
+                source_columns: vec!["id".into(), "v".into()],
+                target_columns: vec!["id".into(), "v".into()],
+                key_indices: vec![],
+            }],
+            insert_order: vec!["t".into()],
+            delete_order: vec!["t".into()],
+        };
+        let row = CanonicalRow::new("t".into(), vec![], vec![DataValue::Int(1), value])?;
+        Ok(normalize_transfer_row(row, &source, &target, &mapping)?
+            .values
+            .remove(1))
+    }
+    #[test]
+    fn frozen_exact_values_reject_overflow_invalid_boolean_and_temporal_loss() {
+        use super::super::value::DataValue;
+        use DatabaseType::*;
+        for decimal in ["123456.78", "1.234", "-100000.00"] {
+            assert!(normalize_test_value(
+                DataValue::Decimal(decimal.into()),
+                Postgres,
+                MySql,
+                "DECIMAL(7,2)"
+            )
+            .is_err());
+        }
+        assert!(normalize_test_value(DataValue::Int(2), Sqlite, Postgres, "BOOLEAN").is_err());
+        assert!(normalize_test_value(DataValue::Int(2), Sqlite, MySql, "TINYINT").is_err());
+        for (kind, value, target) in [
+            ("date", "0000-00-00", "DATE"),
+            ("date", "infinity", "DATE"),
+            ("date", "0999-12-31", "DATE"),
+            ("timestamp", "2026-01-01 00:00:00.123456", "DATETIME(3)"),
+            ("time", "24:00:00", "TIME(6)"),
+            ("time", "-01:00:00", "TIME(6)"),
+            ("time", "12:00:60", "TIME(6)"),
+        ] {
+            assert!(
+                normalize_test_value(
+                    DataValue::Temporal {
+                        kind: kind.into(),
+                        value: value.into()
+                    },
+                    Postgres,
+                    MySql,
+                    target
+                )
+                .is_err(),
+                "{value}"
+            );
+        }
+    }
+    #[test]
+    fn sqlserver_tinyint_boolean_values_use_native_integer_snapshot() {
+        use super::super::value::DataValue;
+        use DatabaseType::*;
+        assert_eq!(
+            normalize_test_value(DataValue::Bool(true), Postgres, SqlServer, "TINYINT").unwrap(),
+            DataValue::Int(1)
+        );
+        assert_eq!(
+            normalize_test_value(DataValue::Bool(false), Postgres, SqlServer, "TINYINT").unwrap(),
+            DataValue::Int(0)
+        );
+        assert_eq!(
+            normalize_test_value(DataValue::Bool(true), Postgres, MySql, "TINYINT UNSIGNED")
+                .unwrap(),
+            DataValue::UInt(1)
+        );
+        assert_eq!(
+            normalize_test_value(DataValue::Int(1), Sqlite, SqlServer, "TINYINT").unwrap(),
+            DataValue::Int(1)
+        );
+    }
+    #[test]
+    fn frozen_temporal_values_match_the_target_native_snapshot_format() {
+        use super::super::value::DataValue;
+        use DatabaseType::*;
+        for (source, target_db, target_type, target_kind, target_value) in [
+            (
+                "2026-10-21 12:34:56.123400",
+                Postgres,
+                "TIMESTAMP(6) WITHOUT TIME ZONE",
+                "timestamp",
+                "2026-10-21 12:34:56.1234",
+            ),
+            (
+                "2026-10-21T12:34:56.12",
+                MySql,
+                "DATETIME(6)",
+                "datetime",
+                "2026-10-21 12:34:56.120000",
+            ),
+            (
+                "2026-10-21 12:34:56.1234",
+                SqlServer,
+                "DATETIME2(6)",
+                "datetime2",
+                "2026-10-21T12:34:56.123400",
+            ),
+        ] {
+            let source_db = if target_db == SqlServer {
+                Postgres
+            } else {
+                SqlServer
+            };
+            assert_eq!(
+                normalize_test_value(
+                    DataValue::Temporal {
+                        kind: "datetime2".into(),
+                        value: source.into()
+                    },
+                    source_db,
+                    target_db,
+                    target_type
+                )
+                .unwrap(),
+                DataValue::Temporal {
+                    kind: target_kind.into(),
+                    value: target_value.into()
+                }
+            );
+        }
+    }
     #[test]
     fn database_ranges_account_for_sqlite_64bit_and_sqlserver_unsigned_tinyint() {
         assert_eq!(

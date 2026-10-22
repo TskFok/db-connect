@@ -874,8 +874,10 @@ async fn network_snapshot(
     });
     let read_result = session.stream_rows(full, cancel.clone(), sender).await;
     let output = worker.await.map_err(|_| "数据快照写入线程中断")?;
-    let count = read_result?;
+    // 转换/落盘失败会关闭接收端，随后读取端只看到通道关闭。
+    // 优先保留消费端的根因；读取端独立失败时，仍拒绝不完整快照。
     let output = output?;
+    let count = read_result?;
     progress.read += count;
     progress.bytes = progress.bytes.saturating_add(output.full.byte_count());
     checked(&cancel)?;
@@ -1300,6 +1302,39 @@ async fn execute_network_transaction(
     }
     checked(&cancel)
 }
+const TRANSACTION_COMPLETION_TIMEOUT: Duration = Duration::from_secs(10);
+
+async fn rollback_network_failure(
+    target: &mut dyn super::adapters::DataSession,
+    result: &mut DataTaskResult,
+    cancel: &Cancellation,
+    message: String,
+) {
+    result.error = Some(if cancel.load(Ordering::Acquire) {
+        DataTaskError::new("cancelled", "数据任务已取消")
+    } else {
+        error(message)
+    });
+    match tokio::time::timeout(TRANSACTION_COMPLETION_TIMEOUT, target.rollback()).await {
+        Ok(Ok(())) => {
+            result.commit_state = DataCommitState::RolledBack;
+            result.status = if cancel.load(Ordering::Acquire) {
+                DataTaskStatus::Cancelled
+            } else {
+                DataTaskStatus::Failed
+            };
+        }
+        _ => {
+            result.commit_state = DataCommitState::Unknown;
+            result.status = DataTaskStatus::OutcomeUnknown;
+            result.requires_target_refresh = true;
+            result
+                .cleanup_errors
+                .push("目标回滚尚未确认，需要核对目标".into());
+        }
+    }
+}
+
 async fn execute_network(
     plan: Arc<StoredDataPlan>,
     source_config: ConnectionConfig,
@@ -1374,8 +1409,8 @@ async fn execute_network(
         .begin_protected_write(plan.mapping.insert_order.clone())
         .await
     {
-        result.error = Some(error(message));
-        let _ = target.rollback().await;
+        rollback_network_failure(target.as_mut(), &mut result, &cancel, message).await;
+        result.cleanup_errors.extend(target.take_cleanup_errors());
         return result;
     }
     let source_identity = match source.endpoint_identity() {
@@ -1404,38 +1439,17 @@ async fn execute_network(
         work
     };
     if let Err(message) = work {
-        result.error = Some(if cancel.load(Ordering::Acquire) {
-            DataTaskError::new("cancelled", "数据任务已取消")
-        } else {
-            error(message)
-        });
-        match tokio::time::timeout(Duration::from_secs(10), target.rollback()).await {
-            Ok(Ok(())) => {
-                result.commit_state = DataCommitState::RolledBack;
-                result.status = if cancel.load(Ordering::Acquire) {
-                    DataTaskStatus::Cancelled
-                } else {
-                    DataTaskStatus::Failed
-                };
-            }
-            _ => {
-                result.commit_state = DataCommitState::Unknown;
-                result.status = DataTaskStatus::OutcomeUnknown;
-                result.requires_target_refresh = true;
-                result
-                    .cleanup_errors
-                    .push("目标回滚尚未确认，需要核对目标".into());
-            }
-        }
+        rollback_network_failure(target.as_mut(), &mut result, &cancel, message).await;
     } else {
-        match target.commit().await {
-            Ok(()) => {
+        // TCP仍开放也可能永远收不到COMMIT响应。超时只能判为未知，绝不重放或声称回滚。
+        match tokio::time::timeout(TRANSACTION_COMPLETION_TIMEOUT, target.commit()).await {
+            Ok(Ok(())) => {
                 result.status = DataTaskStatus::Succeeded;
                 result.commit_state = DataCommitState::Committed;
                 result.requires_target_refresh = true;
                 progress.emit(DataTaskStatus::Succeeded, true);
             }
-            Err(_) => {
+            _ => {
                 result.status = DataTaskStatus::OutcomeUnknown;
                 result.commit_state = DataCommitState::Unknown;
                 result.error = Some(DataTaskError::new(

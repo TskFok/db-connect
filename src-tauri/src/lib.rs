@@ -1,6 +1,7 @@
 mod commands;
 mod crypto;
 mod db;
+mod lifecycle;
 mod models;
 #[cfg(feature = "performance-desktop")]
 mod performance_desktop;
@@ -61,6 +62,65 @@ impl Default for AppState {
     }
 }
 
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+fn confirm_data_task_exit(app: &tauri::AppHandle, prevent_exit: impl FnOnce()) {
+    let runtime = app.state::<AppState>().data_tasks.clone();
+    let decision =
+        lifecycle::request_exit(runtime.registry.has_active(), &runtime.exit_prompt_open);
+    if decision == lifecycle::ExitDecision::Allow {
+        return;
+    }
+    prevent_exit();
+    // 各桌面平台都保留可访问的窗口，无需依赖托盘或 macOS Reopen。
+    show_main_window(app);
+    if decision != lifecycle::ExitDecision::Confirm {
+        return;
+    }
+    let handle = app.clone();
+    let dialog = app
+        .dialog()
+        .message(
+            "仍有数据任务运行。继续等待可留在应用；取消任务后退出会等待回滚或提交结果得到确认。",
+        )
+        .title("数据任务尚未结束")
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "取消任务后退出".into(),
+            "继续等待".into(),
+        ));
+    #[cfg(desktop)]
+    let dialog = if let Some(window) = app.get_webview_window("main") {
+        dialog.parent(&window)
+    } else {
+        dialog
+    };
+    dialog.show(move |cancel| {
+        if cancel {
+            runtime.cancel_all(&handle);
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    if !runtime.registry.has_active() {
+                        // 终态登记先于工作协程最后一次持久化，退出前主动补齐维护。
+                        runtime.maintenance();
+                        handle.exit(0);
+                    }
+                    // 若退出事件因期间新建的任务被拦截，继续等待，不遗留失效的确认状态。
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                }
+            });
+        } else {
+            lifecycle::continue_waiting(&runtime.exit_prompt_open);
+            show_main_window(&handle);
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let context = tauri::generate_context!();
@@ -78,7 +138,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::new())
         .setup(|app| {
-            let runtime=app.state::<AppState>().data_tasks.clone();
+            let runtime = app.state::<AppState>().data_tasks.clone();
             if runtime.initialize(app.handle()).is_err() {
                 eprintln!("数据任务历史初始化失败，数据任务入口将提示目录错误");
             }
@@ -90,12 +150,9 @@ pub fn run() {
             });
             Ok(())
         })
-        .on_window_event(|window,event| {
-            if let tauri::WindowEvent::CloseRequested{api,..}=event {
-                if window.state::<AppState>().data_tasks.registry.has_active() {
-                    api.prevent_close();
-                    let _=window.hide();
-                }
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                confirm_data_task_exit(window.app_handle(), || api.prevent_close());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -204,30 +261,12 @@ pub fn run() {
         ])
         .build(context)
         .expect("error while building tauri application")
-        .run(|app,event| match event {
-            tauri::RunEvent::ExitRequested{api,..}=>{
-                let runtime=app.state::<AppState>().data_tasks.clone();
-                if runtime.registry.has_active() {
-                    api.prevent_exit();
-                    if !runtime.exit_prompt_open.swap(true,std::sync::atomic::Ordering::AcqRel) {
-                        let handle=app.clone();
-                        app.dialog().message("仍有数据任务运行。继续等待可留在应用；取消任务后退出会等待回滚或提交结果得到确认。")
-                            .title("数据任务尚未结束")
-                            .buttons(MessageDialogButtons::OkCancelCustom("取消任务后退出".into(),"继续等待".into()))
-                            .show(move |cancel| {
-                                if cancel {
-                                    runtime.cancel_all(&handle);
-                                    tauri::async_runtime::spawn(async move {
-                                        while runtime.registry.has_active() {tokio::time::sleep(std::time::Duration::from_millis(200)).await;}
-                                        handle.exit(0);
-                                    });
-                                }else{runtime.exit_prompt_open.store(false,std::sync::atomic::Ordering::Release);}
-                            });
-                    }
-                }
-            },
-            #[cfg(target_os="macos")]
-            tauri::RunEvent::Reopen{..}=>{if let Some(window)=app.get_webview_window("main") {let _=window.show();let _=window.set_focus();}},
-            _=>{}
+        .run(|app, event| match event {
+            tauri::RunEvent::ExitRequested { api, .. } => {
+                confirm_data_task_exit(app, || api.prevent_exit());
+            }
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => show_main_window(app),
+            _ => {}
         });
 }

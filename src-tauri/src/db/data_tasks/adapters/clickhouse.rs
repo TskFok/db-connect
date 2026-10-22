@@ -3,6 +3,8 @@ use super::{
     sqlite::Projection,
     DataSession, RowSender, SessionFuture,
 };
+#[cfg(test)]
+use crate::models::data_tasks::DataDiffOperation;
 use crate::{
     db::{
         connection::{ActiveConnection, ActiveDatabaseConnection, ConnectionManager},
@@ -16,7 +18,7 @@ use crate::{
         },
     },
     models::{
-        data_tasks::{DataDiffOperation, DataEndpoint},
+        data_tasks::DataEndpoint,
         types::{ConnectionConfig, DatabaseType},
     },
 };
@@ -71,6 +73,7 @@ fn wire_type(t: &str) -> Result<&'static str, String> {
         _ => return Err("unsupported_capability: ClickHouse 字段类型未经无损验收".into()),
     })
 }
+#[cfg(test)]
 fn hex(bytes: &[u8]) -> String {
     const H: &[u8] = b"0123456789ABCDEF";
     let mut out = String::with_capacity(bytes.len() * 2);
@@ -185,6 +188,7 @@ struct ClickHouseSession {
     cancel: Cancellation,
     metadata: Option<DataMetadataSnapshot>,
     identity: Option<String>,
+    #[cfg(test)]
     write_tables: Vec<String>,
 }
 impl Drop for ClickHouseSession {
@@ -231,6 +235,7 @@ async fn open_native(
         cancel,
         metadata: None,
         identity: None,
+        #[cfg(test)]
         write_tables: vec![],
     })
 }
@@ -355,33 +360,12 @@ impl DataSession for ClickHouseSession {
     fn begin_read(&mut self) -> SessionFuture<'_, ()> {
         Box::pin(async move { checked(&self.cancel) })
     }
-    fn begin_protected_write(&mut self, tables: Vec<String>) -> SessionFuture<'_, ()> {
-        Box::pin(async move {
-            let m = self.metadata_inner().await?;
-            if m.read_only {
-                return Err("read_only_target: ClickHouse 目标只读".into());
-            }
-            let can_write: u8 = self
-                .client
-                .query(&format!("CHECK GRANT INSERT ON {}.*", id(&self.database)))
-                .fetch_one()
-                .await
-                .map_err(db_error)?;
-            if !m.permissions_verified
-                || can_write != 1
-                || tables.is_empty()
-                || tables.iter().any(|name| {
-                    !m.tables
-                        .iter()
-                        .any(|t| &t.name == name && t.physical && !t.enabled_user_triggers)
-                })
-            {
-                return Err(
-                    "unsupported_capability: ClickHouse 目标引擎、依赖或权限未通过验证".into(),
-                );
-            }
-            self.write_tables = tables;
-            Ok(())
+    fn begin_protected_write(&mut self, _: Vec<String>) -> SessionFuture<'_, ()> {
+        Box::pin(async {
+            Err(format!(
+                "unsupported_capability: {}",
+                crate::db::data_tasks::metadata::CLICKHOUSE_TARGET_BLOCKER
+            ))
         })
     }
     fn load_metadata(&mut self) -> SessionFuture<'_, DataMetadataSnapshot> {
@@ -444,7 +428,61 @@ impl DataSession for ClickHouseSession {
             Ok(count)
         })
     }
-    fn write_batch(&mut self, batch: WriteBatch) -> SessionFuture<'_, u64> {
+    fn write_batch(&mut self, _: WriteBatch) -> SessionFuture<'_, u64> {
+        Box::pin(async {
+            Err(format!(
+                "unsupported_capability: {}",
+                crate::db::data_tasks::metadata::CLICKHOUSE_TARGET_BLOCKER
+            ))
+        })
+    }
+    fn delete_all(&mut self, _: String) -> SessionFuture<'_, u64> {
+        Box::pin(async { Err("unsupported_capability: ClickHouse 禁止替换或删除".into()) })
+    }
+    fn maintain_generators(&mut self, _: Vec<ValidatedTableMapping>) -> SessionFuture<'_, ()> {
+        Box::pin(async { Ok(()) })
+    }
+    fn commit(&mut self) -> SessionFuture<'_, ()> {
+        Box::pin(async { Ok(()) })
+    }
+    fn rollback(&mut self) -> SessionFuture<'_, ()> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+// 这些无 DDL 保护的写入只编译到测试，用于隔离数据库实验，正式适配器绝不调用。
+#[cfg(test)]
+impl ClickHouseSession {
+    fn begin_experimental_write(&mut self, tables: Vec<String>) -> SessionFuture<'_, ()> {
+        Box::pin(async move {
+            let m = self.metadata_inner().await?;
+            if m.read_only {
+                return Err("read_only_target: ClickHouse 目标只读".into());
+            }
+            let can_write: u8 = self
+                .client
+                .query(&format!("CHECK GRANT INSERT ON {}.*", id(&self.database)))
+                .fetch_one()
+                .await
+                .map_err(db_error)?;
+            if !m.permissions_verified
+                || can_write != 1
+                || tables.is_empty()
+                || tables.iter().any(|name| {
+                    !m.tables
+                        .iter()
+                        .any(|t| &t.name == name && t.physical && !t.enabled_user_triggers)
+                })
+            {
+                return Err(
+                    "unsupported_capability: ClickHouse 目标引擎、依赖或权限未通过验证".into(),
+                );
+            }
+            self.write_tables = tables;
+            Ok(())
+        })
+    }
+    fn write_experimental_batch(&mut self, batch: WriteBatch) -> SessionFuture<'_, u64> {
         Box::pin(async move {
             checked(&self.cancel)?;
             if batch.kind != DataDiffOperation::Insert || !self.write_tables.contains(&batch.table)
@@ -543,18 +581,6 @@ impl DataSession for ClickHouseSession {
             match result{Ok(Ok(()))=>Ok((batch.params.len()/batch.columns.len())as u64),Ok(Err(clickhouse_rs::error::Error::BadResponse(message))) if message.starts_with("Code: 497.")||message.starts_with("Code: 60.")=>Err("database_error: ClickHouse 在写入前拒绝此批次，已停止；此前确认批次保留".into()),_=>Err("outcome_unknown: ClickHouse 批次接收结果未确认，已停止；请核对目标，不会自动重放".into())}
         })
     }
-    fn delete_all(&mut self, _: String) -> SessionFuture<'_, u64> {
-        Box::pin(async { Err("unsupported_capability: ClickHouse 禁止替换或删除".into()) })
-    }
-    fn maintain_generators(&mut self, _: Vec<ValidatedTableMapping>) -> SessionFuture<'_, ()> {
-        Box::pin(async { Ok(()) })
-    }
-    fn commit(&mut self) -> SessionFuture<'_, ()> {
-        Box::pin(async { Ok(()) })
-    }
-    fn rollback(&mut self) -> SessionFuture<'_, ()> {
-        Box::pin(async { Ok(()) })
-    }
 }
 
 // ClickHouse 25.8：产品只开放源端读取；原生写入仅供隔离实验，不能替代目标 DDL 保护。
@@ -567,6 +593,46 @@ mod tests {
             types::{ConnectionConfig, DatabaseType},
         },
     };
+    #[tokio::test]
+    async fn clickhouse_write_entrypoints_refuse_without_opening_a_connection() {
+        use super::*;
+        let config = serde_json::from_value(serde_json::json!({
+            "database_type": "clickhouse", "name": "guard-only", "host": "127.0.0.1", "port": 0, "username": "default"
+        })).unwrap();
+        let mut session = ClickHouseSession {
+            client: Client::default().with_url("http://127.0.0.1:0"),
+            active: None,
+            config,
+            database: "default".into(),
+            cancel: cancellation(),
+            metadata: None,
+            identity: None,
+            write_tables: vec![],
+        };
+        let error = session
+            .begin_protected_write(vec!["t".into()])
+            .await
+            .unwrap_err();
+        assert!(
+            error.contains(crate::db::data_tasks::metadata::CLICKHOUSE_TARGET_BLOCKER),
+            "{error}"
+        );
+        let batch = super::super::batch::build_batch(
+            Dialect::ClickHouse,
+            "default",
+            "t",
+            &["id".into()],
+            &[],
+            DataDiffOperation::Insert,
+            &[vec![DataValue::Int(1)]],
+        )
+        .unwrap();
+        let error = session.write_batch(batch).await.unwrap_err();
+        assert!(
+            error.contains(crate::db::data_tasks::metadata::CLICKHOUSE_TARGET_BLOCKER),
+            "{error}"
+        );
+    }
     fn config() -> ConnectionConfig {
         let url = std::env::var("DB_CONNECT_DATA_TASK_CLICKHOUSE_URL").unwrap_or_else(|_| {
             format!(
@@ -676,7 +742,7 @@ mod tests {
             .iter()
             .all(|t| t.columns.iter().all(|c| c.primary_key_ordinal == 0)));
         assert!(session
-            .begin_protected_write(vec!["unsafe".into()])
+            .begin_experimental_write(vec!["unsafe".into()])
             .await
             .is_err());
         let columns = vec!["u".into(), "d".into(), "b".into(), "ts".into()];
@@ -700,7 +766,7 @@ mod tests {
             ]));
         // 此处只测原生驱动的实验写入；产品能力、预览和执行入口始终拒绝 ClickHouse 目标。
         session
-            .begin_protected_write(vec!["dst".into()])
+            .begin_experimental_write(vec!["dst".into()])
             .await
             .unwrap();
         let data = rows.iter().map(|r| r.values.clone()).collect::<Vec<_>>();
@@ -714,7 +780,7 @@ mod tests {
             &data,
         )
         .unwrap();
-        assert_eq!(session.write_batch(batch).await.unwrap(), 2);
+        assert_eq!(session.write_experimental_batch(batch).await.unwrap(), 2);
         let copied = collect(&mut session, vec![projection("dst")]).await;
         assert_eq!(copied.len(), 2);
         for row in rows {
@@ -1069,7 +1135,7 @@ mod tests {
             .await
             .unwrap();
         session
-            .begin_protected_write(vec!["dst".into()])
+            .begin_experimental_write(vec!["dst".into()])
             .await
             .unwrap();
         let batch = || {
@@ -1084,8 +1150,8 @@ mod tests {
             )
             .unwrap()
         };
-        assert_eq!(session.write_batch(batch()).await.unwrap(), 1);
-        let error = session.write_batch(batch()).await.unwrap_err();
+        assert_eq!(session.write_experimental_batch(batch()).await.unwrap(), 1);
+        let error = session.write_experimental_batch(batch()).await.unwrap_err();
         assert!(
             !error.starts_with("outcome_unknown:"),
             "明确的写前权限拒绝应保留此前确认批次：{error}"
@@ -1215,6 +1281,292 @@ mod tests {
         assert_ne!(before, after, "名称结构一致但物理表重建必须使计划失效");
         client
             .query(&format!("DROP DATABASE {dbid}"))
+            .execute()
+            .await
+            .unwrap();
+    }
+    /// 单流能固定已经解析的 StoragePtr，但并不证明预览与解析之间的身份一致。
+    #[tokio::test]
+    #[ignore = "需要专属 ClickHouse 25.8 容器"]
+    async fn real_clickhouse_single_stream_keeps_resolved_table_after_rename() {
+        use super::*;
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let client = client().with_compression(clickhouse_rs::Compression::None);
+        let db = format!("dt_stream_{}", uuid::Uuid::new_v4().simple());
+        client
+            .query(&format!("CREATE DATABASE {db}"))
+            .execute()
+            .await
+            .unwrap();
+        client
+            .query(&format!(
+                "CREATE TABLE {db}.t(id UInt64) ENGINE=MergeTree ORDER BY id"
+            ))
+            .execute()
+            .await
+            .unwrap();
+        client
+            .query(&format!("CREATE TABLE {db}.audit(id UInt64) ENGINE=Log"))
+            .execute()
+            .await
+            .unwrap();
+        let query_id = format!("dt_stream_{}", uuid::Uuid::new_v4().simple());
+        // send() 只把数据交给 HTTP 发送队列。由透明代理观察服务端已经读取行的
+        // Progress 响应头，才能确认 INSERT 已解析，不能用固定等待代替此屏障。
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_port = listener.local_addr().unwrap().port();
+        let upstream_port = config().port;
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let proxy = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let upstream = tokio::net::TcpStream::connect(("127.0.0.1", upstream_port))
+                .await
+                .unwrap();
+            let (mut request, mut response) = socket.into_split();
+            let (upstream_read, mut upstream_write) = upstream.into_split();
+            let send_request = tokio::io::copy(&mut request, &mut upstream_write);
+            let receive_response = async move {
+                let mut reader = BufReader::new(upstream_read);
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    assert!(reader.read_line(&mut line).await.unwrap() > 0);
+                    response.write_all(line.as_bytes()).await.unwrap();
+                    if let Some(json) = line.strip_prefix("X-ClickHouse-Progress: ") {
+                        let progress: serde_json::Value =
+                            serde_json::from_str(json.trim()).unwrap();
+                        if progress["read_rows"]
+                            .as_str()
+                            .and_then(|rows| rows.parse::<u64>().ok())
+                            .unwrap_or_default()
+                            > 0
+                        {
+                            started_tx.send(()).unwrap();
+                            break;
+                        }
+                    }
+                }
+                tokio::io::copy(&mut reader, &mut response).await.unwrap();
+            };
+            tokio::join!(send_request, receive_response).0.unwrap();
+        });
+        // HTTP 输入首轮可能预读 1 MiB；首块超过该阈值，同时关闭并行 CSV
+        // 预读并缩小插入块，确保流未结束时就产生服务端 Progress 事件。
+        let initial_rows = 1_048_576;
+        let mut stream = client
+            .clone()
+            .with_url(format!("http://127.0.0.1:{proxy_port}"))
+            .with_setting("query_id", &query_id)
+            .with_setting("send_progress_in_http_headers", "1")
+            .with_setting("http_headers_progress_interval_ms", "0")
+            .with_setting("input_format_parallel_parsing", "0")
+            .with_setting("max_insert_block_size", "65536")
+            .with_setting("min_insert_block_size_rows", "0")
+            .with_setting("min_insert_block_size_bytes", "0")
+            .insert_formatted_with(format!("INSERT INTO {db}.t FORMAT CSV"))
+            .with_timeouts(Some(Duration::from_secs(10)), Some(Duration::from_secs(10)));
+        stream
+            .send(bytes::Bytes::from("1\n".repeat(initial_rows)))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(10), started_rx)
+            .await
+            .expect("服务端必须在流结束前报告已读取行")
+            .unwrap();
+        let active: u64 = client
+            .query("SELECT count() FROM system.processes WHERE query_id = ?")
+            .bind(&query_id)
+            .fetch_one()
+            .await
+            .unwrap();
+        assert_eq!(
+            active, 1,
+            "DDL 前必须已建立服务端 INSERT，不能仅依赖发送成功"
+        );
+        client
+            .query(&format!("RENAME TABLE {db}.t TO {db}.original"))
+            .execute()
+            .await
+            .unwrap();
+        client
+            .query(&format!(
+                "CREATE TABLE {db}.t(id UInt64) ENGINE=MergeTree ORDER BY id"
+            ))
+            .execute()
+            .await
+            .unwrap();
+        client
+            .query(&format!(
+                "CREATE MATERIALIZED VIEW {db}.mv TO {db}.audit AS SELECT id FROM {db}.t"
+            ))
+            .execute()
+            .await
+            .unwrap();
+        stream
+            .send(bytes::Bytes::from_static(b"2\n"))
+            .await
+            .unwrap();
+        stream.end().await.unwrap();
+        let counts: (u64, u64, u64) = client.query(&format!("SELECT assumeNotNull((SELECT count() FROM {db}.original)), assumeNotNull((SELECT count() FROM {db}.t)), assumeNotNull((SELECT count() FROM {db}.audit))"))
+            .fetch_one().await.unwrap();
+        assert_eq!(counts, (initial_rows as u64 + 1, 0, 0));
+        proxy.abort();
+        client
+            .query(&format!("DROP DATABASE {db}"))
+            .execute()
+            .await
+            .unwrap();
+    }
+
+    /// 守卫在 SELECT 分析时求值，依赖在其后建链；同一 SQL 仍不是原子 DDL 守卫。
+    /// https://github.com/ClickHouse/ClickHouse/blob/25.8/src/Interpreters/InterpreterInsertQuery.cpp
+    #[tokio::test]
+    #[ignore = "需要专属 ClickHouse 25.8 容器"]
+    async fn real_clickhouse_single_query_identity_guard_can_include_a_new_view() {
+        let client = client();
+        let db = format!("dt_guard_{}", uuid::Uuid::new_v4().simple());
+        client
+            .query(&format!("CREATE DATABASE {db}"))
+            .execute()
+            .await
+            .unwrap();
+        client
+            .query(&format!(
+                "CREATE TABLE {db}.t(id UInt64) ENGINE=MergeTree ORDER BY id"
+            ))
+            .execute()
+            .await
+            .unwrap();
+        client
+            .query(&format!("CREATE TABLE {db}.audit(id UInt64) ENGINE=Log"))
+            .execute()
+            .await
+            .unwrap();
+        let identity: String = client
+            .query("SELECT toString(uuid) FROM system.tables WHERE database=? AND name='t'")
+            .bind(&db)
+            .fetch_one()
+            .await
+            .unwrap();
+        let query_id = format!("dt_guard_{}", uuid::Uuid::new_v4().simple());
+        let write_client = client.clone().with_setting("query_id", &query_id);
+        // sleep 标量子查询仅放大守卫求值到依赖绑定之间真实存在的窗口。
+        let sql = format!("INSERT INTO {db}.t SELECT id + toUInt64((SELECT throwIf(toString(uuid) != ? OR length(dependencies_table) > 0, 'identity guard') FROM system.tables WHERE database=? AND name='t')) + toUInt64((SELECT sleep(3))) FROM input('id UInt64') FORMAT CSV\n7\n");
+        let task_db = db.clone();
+        let insert = tokio::spawn(async move {
+            write_client
+                .query(&sql)
+                .bind(identity)
+                .bind(task_db)
+                .execute()
+                .await
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+        let active: u64 = client
+            .query("SELECT count() FROM system.processes WHERE query_id=?")
+            .bind(&query_id)
+            .fetch_one()
+            .await
+            .unwrap();
+        assert_eq!(active, 1);
+        client
+            .query(&format!(
+                "CREATE MATERIALIZED VIEW {db}.mv TO {db}.audit AS SELECT id FROM {db}.t"
+            ))
+            .execute()
+            .await
+            .unwrap();
+        insert.await.unwrap().unwrap();
+        let counts: (u64, u64) = client
+            .query(&format!(
+                "SELECT assumeNotNull((SELECT count() FROM {db}.t)), assumeNotNull((SELECT count() FROM {db}.audit))"
+            ))
+            .fetch_one()
+            .await
+            .unwrap();
+        assert_eq!(
+            counts,
+            (1, 1),
+            "同查询守卫未原子绑定目标依赖，不能据此开放产品写入"
+        );
+        let uuid_insert = client
+            .query(&format!(
+                "INSERT INTO {db}.t UUID '00000000-0000-0000-0000-000000000001' VALUES (8)"
+            ))
+            .execute()
+            .await
+            .unwrap_err();
+        assert!(
+            uuid_insert.to_string().contains("SYNTAX_ERROR"),
+            "25.8 INSERT 无可用的 UUID 限定语法：{uuid_insert}"
+        );
+        client
+            .query(&format!("DROP DATABASE {db}"))
+            .execute()
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "需要专属 ClickHouse 容器"]
+    async fn real_clickhouse_lost_ack_stops_without_replay_and_cancel_stops_next_batch() {
+        use super::*;
+        let client = client();
+        let db = format!("dt_ack_{}", uuid::Uuid::new_v4().simple());
+        client
+            .query(&format!("CREATE DATABASE {db}"))
+            .execute()
+            .await
+            .unwrap();
+        client
+            .query(&format!("CREATE TABLE {db}.dst(id Int64) ENGINE=Log"))
+            .execute()
+            .await
+            .unwrap();
+        let (port, inserts, proxy) = failure_proxy(true).await;
+        let mut target = config();
+        target.port = port;
+        let cancel = cancellation();
+        let mut session = open_native(target, endpoint(&db), cancel.clone())
+            .await
+            .unwrap();
+        session
+            .begin_experimental_write(vec!["dst".into()])
+            .await
+            .unwrap();
+        let batch = || {
+            super::super::batch::build_batch(
+                Dialect::ClickHouse,
+                &db,
+                "dst",
+                &["id".into()],
+                &[],
+                DataDiffOperation::Insert,
+                &[vec![DataValue::Int(1)]],
+            )
+            .unwrap()
+        };
+        assert_eq!(session.write_experimental_batch(batch()).await.unwrap(), 1);
+        let error = session.write_experimental_batch(batch()).await.unwrap_err();
+        assert!(error.starts_with("outcome_unknown:"), "{error}");
+        assert_eq!(inserts.load(Ordering::SeqCst), 2, "丢失 ACK 不得自动重放");
+        cancel.store(true, Ordering::Release);
+        assert!(session
+            .write_experimental_batch(batch())
+            .await
+            .unwrap_err()
+            .starts_with("cancelled:"));
+        assert_eq!(inserts.load(Ordering::SeqCst), 2, "取消后不得发送后续批次");
+        let count: u64 = client
+            .query(&format!("SELECT count() FROM {db}.dst"))
+            .fetch_one()
+            .await
+            .unwrap();
+        assert_eq!(count, 2, "未知结果可能已落库，不能报告回滚或未提交");
+        proxy.abort();
+        client
+            .query(&format!("DROP DATABASE {db}"))
             .execute()
             .await
             .unwrap();

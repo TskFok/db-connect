@@ -24,6 +24,7 @@ struct WireStats {
     selects: AtomicUsize,
     inserts: AtomicUsize,
     commits: AtomicUsize,
+    locks: AtomicUsize,
     dropped_commit_acks: AtomicUsize,
     // 仅记录参数化语句类型计数；不保存认证消息、参数值或连接信息。
     errors: Mutex<Vec<String>>,
@@ -36,6 +37,9 @@ impl WireStats {
         if kind == StatementKind::Insert {
             self.inserts.fetch_add(1, Ordering::SeqCst);
         }
+        if kind == StatementKind::Lock {
+            self.locks.fetch_add(1, Ordering::SeqCst);
+        }
         if kind == StatementKind::Commit {
             self.commits.fetch_add(1, Ordering::SeqCst);
         }
@@ -46,11 +50,14 @@ enum StatementKind {
     Select,
     Insert,
     Commit,
+    Lock,
     Other,
 }
 fn statement_kind(sql: &[u8]) -> StatementKind {
     let sql = String::from_utf8_lossy(sql).trim().to_ascii_uppercase();
-    if sql.starts_with("SELECT ") {
+    if sql.contains("LOCK TABLE ") {
+        StatementKind::Lock
+    } else if sql.starts_with("SELECT ") {
         StatementKind::Select
     } else if sql.starts_with("INSERT INTO ") {
         StatementKind::Insert
@@ -125,6 +132,14 @@ impl Drop for PgProxy {
 }
 impl PgProxy {
     async fn start(host: String, port: u16, drop_commit_ack: bool) -> Self {
+        Self::start_with_fault(host, port, drop_commit_ack, false).await
+    }
+    async fn start_with_fault(
+        host: String,
+        port: u16,
+        drop_commit_ack: bool,
+        stall_commit_ack: bool,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let local_port = listener.local_addr().unwrap().port();
         let stats = Arc::new(WireStats::default());
@@ -134,8 +149,15 @@ impl PgProxy {
                 let host = host.clone();
                 let stats = accept_stats.clone();
                 tokio::spawn(async move {
-                    if let Err(error) =
-                        proxy_connection(client, &host, port, drop_commit_ack, stats.clone()).await
+                    if let Err(error) = proxy_connection(
+                        client,
+                        &host,
+                        port,
+                        drop_commit_ack,
+                        stall_commit_ack,
+                        stats.clone(),
+                    )
+                    .await
                     {
                         if !matches!(
                             error.kind(),
@@ -174,6 +196,7 @@ async fn proxy_connection(
     host: &str,
     port: u16,
     drop_commit_ack: bool,
+    stall_commit_ack: bool,
     stats: Arc<WireStats>,
 ) -> io::Result<()> {
     let mut server = TcpStream::connect((host, port)).await?;
@@ -206,9 +229,12 @@ async fn proxy_connection(
         loop {
             let tag = sr.read_u8().await?;
             let payload = body(&mut sr).await?;
-            if drop_commit_ack && tag == b'C' && payload == b"COMMIT\0" {
+            if (drop_commit_ack || stall_commit_ack) && tag == b'C' && payload == b"COMMIT\0" {
                 // 服务器已真实提交；在发送 CommandComplete/ReadyForQuery 之前关闭两端。
                 stats.dropped_commit_acks.fetch_add(1, Ordering::SeqCst);
+                if stall_commit_ack {
+                    std::future::pending::<()>().await;
+                }
                 return Ok::<(), io::Error>(());
             }
             cw.write_u8(tag).await?;
@@ -275,10 +301,26 @@ fn cancel() -> Cancellation {
 #[tokio::test]
 #[ignore = "需要专属 PostgreSQL；真实 TCP 代理丢弃数据库 COMMIT 确认"]
 async fn real_postgres_lost_commit_ack_is_unknown_and_never_replayed() {
+    postgres_unconfirmed_commit(false).await;
+}
+
+#[tokio::test]
+#[ignore = "需要专属 PostgreSQL；真实提交完成后保持TCP打开但扣留响应"]
+async fn real_postgres_stalled_commit_ack_is_bounded_and_never_replayed() {
+    postgres_unconfirmed_commit(true).await;
+}
+
+async fn postgres_unconfirmed_commit(stall: bool) {
     let fixture = Fixture::new().await;
     let schema = &fixture.schema;
     fixture.client.batch_execute(&format!("CREATE TABLE {schema}.src(id BIGINT PRIMARY KEY,v TEXT); CREATE TABLE {schema}.dst(LIKE {schema}.src INCLUDING ALL); INSERT INTO {schema}.src VALUES(1,'已提交'),(2,'exact');")).await.unwrap();
-    let proxy = PgProxy::start(fixture.config.host.clone(), fixture.config.port, true).await;
+    let proxy = PgProxy::start_with_fault(
+        fixture.config.host.clone(),
+        fixture.config.port,
+        !stall,
+        stall,
+    )
+    .await;
     let mut target = fixture.config.clone();
     target.host = "127.0.0.1".into();
     target.port = proxy.port;
@@ -443,4 +485,180 @@ async fn real_postgres_ten_tables_have_fixed_query_budget() {
 #[ignore = "需要专属 PostgreSQL；代理统计真实协议中的 SELECT"]
 async fn real_postgres_hundred_tables_have_fixed_query_budget() {
     postgres_query_budget(100).await;
+}
+
+#[tokio::test]
+#[ignore = "需要专属 PostgreSQL；取消等待真实表锁的集合快照"]
+async fn real_postgres_cancel_pending_snapshot_is_bounded() {
+    let fixture = Fixture::new().await;
+    let schema = &fixture.schema;
+    fixture
+        .client
+        .batch_execute(&format!(
+            "CREATE TABLE {schema}.src(id BIGINT PRIMARY KEY); INSERT INTO {schema}.src VALUES(1)"
+        ))
+        .await
+        .unwrap();
+    let token = cancel();
+    let mut session = executor::open_session(
+        fixture.config.clone(),
+        DataEndpoint {
+            saved_connection_id: "cancel-source".into(),
+            database: schema.clone(),
+        },
+        token.clone(),
+    )
+    .await
+    .unwrap();
+    session.begin_read().await.unwrap();
+    session.load_metadata().await.unwrap();
+    fixture
+        .client
+        .batch_execute(&format!(
+            "BEGIN; LOCK TABLE {schema}.src IN ACCESS EXCLUSIVE MODE"
+        ))
+        .await
+        .unwrap();
+    let (sender, _receiver) = RowSender::channel(Default::default());
+    let signal = token.clone();
+    let canceller = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        signal.store(true, Ordering::Release);
+        std::time::Instant::now()
+    });
+    let read = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        session.stream_rows(
+            vec![Projection {
+                table: "src".into(),
+                output_table: "src".into(),
+                columns: vec!["id".into()],
+                key_indices: vec![0],
+            }],
+            token,
+            sender,
+        ),
+    )
+    .await;
+    let elapsed = canceller.await.unwrap().elapsed();
+    // 先释放测试锁，失败断言也不能遗留被阻塞的后端。
+    fixture.client.batch_execute("ROLLBACK").await.unwrap();
+    let rollback =
+        tokio::time::timeout(std::time::Duration::from_secs(3), session.rollback()).await;
+    drop(session);
+    fixture.cleanup().await;
+    assert!(read.is_ok(), "取消等待快照查询不应等到表锁超时");
+    assert!(read.unwrap().unwrap_err().starts_with("cancelled:"));
+    assert!(
+        rollback.is_ok_and(|r| r.is_ok()),
+        "取消后必须可确认回滚并释放连接"
+    );
+    assert!(elapsed < std::time::Duration::from_secs(2));
+    println!(
+        "DATA_TASK_CANCEL_METRICS phase=pending_snapshot elapsed_ms={}",
+        elapsed.as_millis()
+    );
+}
+
+fn transfer_request(schema: &str) -> DataTaskRequest {
+    DataTaskRequest {
+        protocol_version: 1,
+        kind: DataTaskKind::Transfer,
+        mode: DataTaskMode::Append,
+        source: DataEndpoint {
+            saved_connection_id: "source".into(),
+            database: schema.into(),
+        },
+        target: DataEndpoint {
+            saved_connection_id: "target".into(),
+            database: schema.into(),
+        },
+        mappings: vec![TableMapping {
+            source_table: "src".into(),
+            target_table: "dst".into(),
+            columns: vec![ColumnMapping {
+                source_column: "id".into(),
+                target_column: "id".into(),
+            }],
+        }],
+    }
+}
+
+#[tokio::test]
+#[ignore = "需要专属 PostgreSQL；执行等待目标保护锁时取消并确认回滚"]
+async fn real_postgres_cancel_pending_target_lock_is_rolled_back() {
+    let fixture = Fixture::new().await;
+    let target_fixture = Fixture::new().await;
+    let schema = &fixture.schema;
+    let target_schema = &target_fixture.schema;
+    fixture.client.batch_execute(&format!("CREATE TABLE {schema}.src(id BIGINT PRIMARY KEY); INSERT INTO {schema}.src VALUES(1); CREATE TABLE {target_schema}.dst(id BIGINT PRIMARY KEY)")).await.unwrap();
+    let proxy = PgProxy::start(fixture.config.host.clone(), fixture.config.port, false).await;
+    let mut target_config = fixture.config.clone();
+    target_config.host = "127.0.0.1".into();
+    target_config.port = proxy.port;
+    let token = cancel();
+    let mut request = transfer_request(schema);
+    request.target.database = target_schema.clone();
+    let plan = executor::prepare_task(
+        "cancel-lock".into(),
+        request,
+        fixture.config.clone(),
+        target_config.clone(),
+        fixture.directory.join("spool"),
+        token.clone(),
+        Arc::new(|_| {}),
+    )
+    .await
+    .unwrap();
+    fixture
+        .client
+        .batch_execute(&format!(
+            "BEGIN; LOCK TABLE {target_schema}.dst IN ACCESS EXCLUSIVE MODE"
+        ))
+        .await
+        .unwrap();
+    let signal = token.clone();
+    let stats = proxy.stats.clone();
+    let canceller = tokio::spawn(async move {
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            while stats.locks.load(Ordering::Acquire) == 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("必须观测到目标会话已发送保护锁请求");
+        signal.store(true, Ordering::Release);
+        std::time::Instant::now()
+    });
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(4),
+        executor::execute_plan(
+            Arc::new(plan),
+            fixture.config.clone(),
+            target_config,
+            token,
+            Arc::new(|_| {}),
+        ),
+    )
+    .await;
+    let elapsed = canceller.await.unwrap().elapsed();
+    fixture.client.batch_execute("ROLLBACK").await.unwrap();
+    let count: i64 = fixture
+        .client
+        .query_one(&format!("SELECT count(*) FROM {target_schema}.dst"), &[])
+        .await
+        .unwrap()
+        .get(0);
+    fixture.cleanup().await;
+    target_fixture.cleanup().await;
+    let result = result.expect("取消不能等待目标锁的10秒超时");
+    assert_eq!(result.status, DataTaskStatus::Cancelled);
+    assert_eq!(result.commit_state, DataCommitState::RolledBack);
+    assert_eq!(result.error.unwrap().code, "cancelled");
+    assert_eq!(count, 0);
+    assert!(elapsed < std::time::Duration::from_secs(2));
+    println!(
+        "DATA_TASK_CANCEL_METRICS phase=pending_target_lock elapsed_ms={}",
+        elapsed.as_millis()
+    );
 }

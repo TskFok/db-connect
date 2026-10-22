@@ -76,11 +76,11 @@
 
 SQL Server 数据任务要求数据库级 `VIEW DEFINITION`，并拒绝当前用户、成员角色或 public 的目录 `DENY`；只授予所选 schema 的可见权限不足以验证范围外外键与行级安全策略。
 
-**ClickHouse 目标写入当前阻塞**：按表名分批 INSERT 无法跨批防止并发 DDL 替换物理表，后续批次可能写入预览之外的新对象；因此不开放任何以 ClickHouse 为目标的数据任务，包括 ClickHouse→ClickHouse。原生写入仅用于精度、ACK 与明确拒绝的隔离实验，不代表开放能力。ClickHouse 作为源的追加传输按独立矩阵验收，源端不保证跨表一致快照，事务目标仍保留整体提交/回滚保证；四方向最终验收状态见矩阵。
+**ClickHouse 目标写入当前阻塞**：分批按名 INSERT 存在目标对象替换窗口；单条流式 INSERT 加同查询 UUID/依赖检查，仍不能原子绑定预览时的物理表和物化视图依赖。真实并发 DDL 回归已复现这些边界，因此所有 ClickHouse 目标组合（包括 ClickHouse→ClickHouse）继续禁用，正式适配器写入口也直接拒绝。原生写入仅保留在测试构建，用于精度和 ACK 实验。ClickHouse 源→四类事务目标的追加已验收，源不保证跨表一致快照，事务目标保留整体提交/回滚保证。
 
-本轮 release 模式完成 10 万与 100 万同宽行传输，百万行耗时 323.947 秒；任务缓冲峰值均为 33,554,590 字节，进程 RSS 峰值增量为 48,758,784 字节。64 MiB 是任务数据缓冲预算，不是整个进程 RSS 上限。PostgreSQL 真实协议验收确认：数据库已提交但 COMMIT 响应丢失时报告结果不明，不自动重放。跨平台退出及 SSH/TLS 故障手工验收尚未完成，不以这些自动测试代替。
+2026-10-21 的 release 验收完成 10 万与 100 万同宽行传输，百万行耗时 323.947 秒；任务缓冲峰值均为 33,554,590 字节，进程 RSS 峰值增量为 48,758,784 字节。64 MiB 是任务数据缓冲预算，不是整个进程 RSS 上限。PostgreSQL 真实协议验收确认：数据库已提交但 COMMIT 响应丢失时报告结果不明，不自动重放。本轮补充 PostgreSQL 等待查询/目标锁时的取消、COMMIT 长时间无响应裁决，以及真实 TLS 自定义 CA、主机名验证、断链和连接清理验收。跨平台窗口/退出实机与 SSH 故障验收仍未完成。
 
-跨类型首期仅开放已验证的整数范围包含、文本和二进制同族映射；小数、布尔、浮点、UUID、JSON 和时间的跨类型转换仍阻塞。同类型支持范围由原生驱动预检决定。ClickHouse `String` 允许任意字节，只能映射到事务目标的二进制列，不隐式转成文本。
+跨类型开放范围可证明包含的整数、文本、二进制，以及 PostgreSQL/MySQL/MariaDB/SQL Server 之间的精确小数、DATE、TIME 和无时区 timestamp。PostgreSQL/SQL Server/SQLite 的布尔可互传，并可传入已支持的整数目标。冻结源数据时再次校验精度、日期/时刻范围和布尔值，拒绝小数或时间精度缩窄、零日期、非法布尔、时区丢失等情况。SQLite 小数/时间、MySQL TIMESTAMP、带时区转换、SQL Server 旧 DATETIME、浮点、UUID、JSON 等跨类型映射继续阻塞；MySQL 任意 TINYINT 不推断为布尔。同类型支持范围由原生驱动预检决定。ClickHouse `String` 允许任意字节，只能映射到事务目标的二进制列，不隐式转成文本。
 
 隔离验收工具不会读取个人保存连接，可创建专属 Docker 数据库或使用显式提供的测试库环境变量：
 
@@ -88,9 +88,11 @@ SQL Server 数据任务要求数据库级 `VIEW DEFINITION`，并拒绝当前用
 python3 scripts/data-tasks/validate_test.py
 python3 scripts/data-tasks/validate.py --phase a --report /tmp/db-connect-data-tasks-a.json
 # 跨类型 / ClickHouse 增量分别使用 --phase b / --phase c
+# PostgreSQL TLS：独立临时 CA 与专属容器，结束后清理
+python3 scripts/data-tasks/validate_tls.py
 ```
 
-工具逐项输出 `passed`、`failed`、`not_run`；退出码分别为全部通过 `0`、测试失败 `1`、环境缺失或项目未运行 `2`。`--no-docker` 禁止启动容器，`--no-pull` 禁止下载缺少的数据库镜像。`--skip-performance` 会明确将百万行验收标为未运行。
+工具逐项输出 `passed`、`failed`、`not_run`、`blocked`；退出码分别为全部通过 `0`、测试失败 `1`、环境缺失、项目未运行或能力受阻塞 `2`。`--no-docker` 禁止启动容器，`--no-pull` 禁止下载缺少的数据库镜像。`--skip-performance` 会明确将百万行验收标为未运行。
 
 ### 外键管理
 

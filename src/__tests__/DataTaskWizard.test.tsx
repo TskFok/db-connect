@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import * as api from "../services/dataTasks";
 import { useConnectionStore } from "../stores/connectionStore";
@@ -42,7 +48,10 @@ beforeEach(() => {
 
 async function selectOption(label: string, option: string) {
   fireEvent.mouseDown(screen.getByRole("combobox", { name: label }));
-  fireEvent.click(await screen.findByRole("option", { name: option }));
+  const selected = await screen.findByRole("option", { name: option });
+  await act(async () => {
+    fireEvent.click(selected);
+  });
 }
 it("按向导默认同名映射并仅使用后端开放的追加模式启动快照", async () => {
   useConnectionStore.setState({

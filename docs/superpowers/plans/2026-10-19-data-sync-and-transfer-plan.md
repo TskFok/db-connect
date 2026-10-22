@@ -10,9 +10,27 @@
 
 **Spec：** 本文件的“范围与语义”“数据流与一致性”“接口约定”为配套设计，设计和实施计划合并于此，不另建 spec 文件。
 
-**状态：** 已进入实施与验收，核心代码、前端及多数据库真实测试已落地；仍有跨平台手工、SSH/TLS 故障和最终全量回归待完成。ClickHouse 目标写入因跨批 DDL 保护不足明确阻塞，阶段 C 按源与目标分别记录，不宣称全部交付。持续证据见[验收矩阵](../manual-tests/2026-10-19-data-sync-and-transfer-matrix.md)。
+**状态：** 核心同步/传输、界面遗漏和受限跨库精确类型已实现；本轮补充取消/提交超时、真实 TLS 与回归测试。仍需三平台实机、SSH、真实磁盘满及其他驱动取消时延验收。ClickHouse 目标因无法原子绑定预览物理表与写入依赖继续阻塞，不能宣称原计划全部完成。持续证据见[验收矩阵](../manual-tests/2026-10-19-data-sync-and-transfer-matrix.md)。
 
-### 已取得的独立验收证据（2026-10-21）
+### 2026-10-22 收尾实施记录
+
+起点：`d324cc3`，开始本轮时 `master` 工作区干净；本轮用户明确授权继续实现剩余部分、修复界面、补测试和验收。保留当前分支，不自动提交或发布。
+
+|工作包|负责范围与依赖|本轮状态|
+|---|---|---|
+|界面与交互回归|错误原因、模式/映射、四模式配置恢复与入口上下文隔离、执行/取消/恢复及草稿保护|已完成：定向25项，全量170文件/2221项通过|
+|无损跨类型传输|精确小数、布尔、明确兼容的DATE/TIME/无时区timestamp；范围/精度及规范值守卫|已完成：MySQL与MariaDB新增矩阵各26项、SQL Server TINYINT额外2项真实回归通过|
+|ClickHouse 目标安全写入|单流与同查询检查仍不能原子绑定预览对象和写入依赖；正式入口拒绝|受阻：保持禁用，原生实验仅cfg(test)|
+|生命周期与故障验收|关闭窗口保留可访问性；PG取消/提交超时；真实TLS证书与断链清理|实现及自动测试完成；三平台实机、SSH和其他驱动完整取消时延未运行|
+|最终回归与状态更新|全量前后端、真实有向矩阵、Clippy/格式/文档核对|已完成本轮回归与状态核对；受阻/未运行项目独立保留|
+
+实施决策：复用既有请求中的字段映射，不为确认页捏造后端未返回的类型。数据库安全限制只在机制和真实测试成立后放开；无法在本机运行的平台验收须明确保留为未运行，不能以单元测试代替实机结果。
+
+本轮最终验证：前端170文件/2221项、Rust884项（107项环境型测试默认忽略，数据任务真实实例另跑）、Clippy、Rust格式与构建通过。真实综合矩阵11个检查组passed、0 failed、1 not_run（未重跑历史性能）、1 blocked（ClickHouse目标）；跨类型42项、ClickHouse16项、PG协议7项均通过。TLS单独4项通过，验收工具7+10项单测通过。全局Prettier67个既有问题文件未修改，本轮前端变更文件格式通过。
+
+独立审查发现并修复了SQL Server TINYINT布尔规范值、跨入口旧草稿覆盖及TLS清理失败误报；最终回归进一步修复PG迟到取消打断回滚，并连续12轮/24项验证。计划中的完成标记按实际证据更新，详细结果、13/45毫秒的本机PG取消测量及清理记录见[最终综合报告](../manual-tests/data-task-validation-final-2026-10-22.json)和[TLS报告](../manual-tests/data-task-tls-validation-2026-10-22.json)。
+
+### 已取得的独立验收证据（2026-10-21 至 2026-10-22）
 
 - [x] 前端全量 169 文件、2206 项测试，以及构建与 ESLint 通过。
 - [x] PostgreSQL 适配器定向 10 项通过，含外部入向 FK、继承、写规则与规则漂移、权限、序列及回滚。
@@ -20,8 +38,9 @@
 - [x] PostgreSQL 1/10/100 表真实协议计数均为 5 次元数据 SELECT、1 次快照 SELECT；SQLite 对应计数为 4 次与 1 次。PG 协议验收模块 5 项通过（4 项真实库、1 项计数单测）。
 - [x] MySQL、MariaDB 各自真实 real_contract 覆盖完整执行器；阶段 B 的 12 个有向组合均通过追加/替换，矩阵共 13 项通过，含 SQL Server 四模式取消回滚。
 - [x] release 模式 10 万/100 万同宽行完整传输：19.571/323.947 秒，RSS 峰值 36,503,552/85,262,336 字节，增量 48,758,784 字节；临时数据峰值 70,600,000/706,000,000 字节；缓冲峰值均为 33,554,590 字节，结束后 spool 为 0。原始日志和测量边界见验收矩阵。
-- [ ] ClickHouse 源到四类事务目标的本轮最终真实结果待汇总；ClickHouse 目标公共写入保持阻塞，原生批次实验不代表开放。
-- [ ] macOS/Linux/Windows 的退出与临时文件手工验收、SSH/TLS 故障、完整取消时延测量及最终 Rust 全量/Clippy 回归尚未全部完成。
+- [x] ClickHouse 源到四类事务目标已有真实验收；目标公共写入保持阻塞，原生批次实验不代表开放。
+- [x] 本轮真实 TLS 四项验收及清理工具十项测试通过；PG 待查询/锁取消、提交确认丢失及超时已有真实回归。
+- [ ] macOS/Linux/Windows 的退出与临时文件实机验收、SSH、其他驱动完整取消时延及真实 ENOSPC 尚未完成。
 
 上述独立证据只覆盖所述条件。下方原任务若同时包含未验证类型、平台、故障或测量要求，仍保留未勾选。
 
@@ -81,7 +100,7 @@
 | SQLite → SQLite | 同步、追加、替换；目标须是不同物理文件 | — | — |
 | SQL Server → SQL Server | 同步、追加、替换；限连接已选 database 内的 schema | — | — |
 | 上述四类之间 | 暂禁用 | 仅追加/替换，按明确的无损类型映射开放；不同类型之间不做行差异同步 | — |
-| ClickHouse 作为源 | 暂禁用并显示原因 | 暂禁用 | 受支持类型的追加传输；四类事务目标最终验收待汇总，源不提供跨表一致快照 |
+| ClickHouse 作为源 | 暂禁用并显示原因 | 暂禁用 | 受支持类型的追加传输；四类事务目标已验收，源不提供跨表一致快照 |
 | ClickHouse 作为目标（含同类型） | 禁用并显示原因 | 禁用 | 当前 blocked：按表名分批 INSERT 缺少跨批 DDL/对象身份保护；原生批次实验保留，公共目标写入不开放 |
 
 阶段 A 必须完整覆盖两种功能及四类数据库才算核心完成；B、C 是独立验收增量，不应因 UI 中出现入口便宣称支持。阶段 C 的 ClickHouse 源读取只保证单次读取语义，不宣称跨表事务快照。
@@ -268,9 +287,9 @@ Tauri 命令（返回值均外包 `Result<..., DataTaskError>`）：
 
 **接口：** `DataTaskRegistry::register_preview(task_id, request)`、`begin_execution(input)`、`cancel(task_id)`、`snapshot(task_id)`；统一返回上文契约。
 
-- [ ] 写测试：非法 kind/mode 拒绝；同一 execution_id 只执行一次；先取消后登记生效；过期计划不可启动；提交中取消不能变成已回滚；旧 sequence 不覆盖终态。
-- [ ] 实现状态转移、原子执行槽、计划/执行 ID 绑定、任务保留上限，保证不得持有注册表锁执行数据库或磁盘 I/O。
-- [ ] 运行 `cargo test --manifest-path src-tauri/Cargo.toml data_tasks::registry` 与 `npm test -- src/__tests__/dataTaskContract.test.ts`，预期上述断言全部通过。
+- [x] 写测试：非法 kind/mode 拒绝；同一 execution_id 只执行一次；先取消后登记生效；过期计划不可启动；提交中取消不能变成已回滚；旧 sequence 不覆盖终态。
+- [x] 实现状态转移、原子执行槽、计划/执行 ID 绑定、任务保留上限，保证不得持有注册表锁执行数据库或磁盘 I/O。
+- [x] 运行 `cargo test --manifest-path src-tauri/Cargo.toml data_tasks::registry` 与 `npm test -- src/__tests__/dataTaskContract.test.ts`，预期上述断言全部通过。
 
 建议提交：`feat: 增加数据任务契约与生命周期管理`。
 
@@ -280,10 +299,11 @@ Tauri 命令（返回值均外包 `Result<..., DataTaskError>`）：
 
 **接口：** `DataValue`、`CanonicalRow`、`SpoolWriter::push_batch`、`SpoolWriter::finish -> SpoolHandle`、`SpoolHandle::read_page`、`external_sort -> SortedSpool`、`ResourceBudget`。
 
-- [ ] 写测试：`9007199254740993`、u64 上界、高精度 decimal、NULL/空串、0x00 二进制、时区与微秒精度、NaN/Infinity；复合键长度前缀避免拼接碰撞。
-- [ ] 写边界测试：8 MiB 单行、64 MiB 缓冲预算、5 GiB 配额的缩小模拟、损坏密文、nonce 唯一、磁盘满、取消/过期清理、分页不把完整 spool 加载入内存。
-- [ ] 实现有界批次编码、带认证的加密块、外部排序和分页索引；中间文件全部计入配额；密钥不持久化。
-- [ ] 运行 `cargo test --manifest-path src-tauri/Cargo.toml data_tasks::value` 和 `cargo test --manifest-path src-tauri/Cargo.toml data_tasks::spool`；预期无精度损失、无超预算静默截断。
+- [x] 写测试：`9007199254740993`、u64 上界、高精度 decimal、NULL/空串、0x00 二进制、时区与微秒精度、NaN/Infinity；复合键长度前缀避免拼接碰撞。
+- [x] 写边界测试：8 MiB 单行、64 MiB 缓冲预算、5 GiB 配额的缩小模拟、损坏密文、nonce 唯一、文件写失败模拟、取消/过期清理、分页不把完整 spool 加载入内存。
+- [ ] 真实文件系统 ENOSPC（磁盘满）注入与清理验收；配额拒绝和写失败模拟不能代替物理磁盘满。
+- [x] 实现有界批次编码、带认证的加密块、外部排序和分页索引；中间文件全部计入配额；密钥不持久化。
+- [x] 运行 `cargo test --manifest-path src-tauri/Cargo.toml data_tasks::value` 和 `cargo test --manifest-path src-tauri/Cargo.toml data_tasks::spool`；预期无精度损失、无超预算静默截断。
 
 建议提交：`feat: 增加无损数据值与有界快照存储`。
 
@@ -293,10 +313,10 @@ Tauri 命令（返回值均外包 `Result<..., DataTaskError>`）：
 
 **接口：** `resolve_endpoints(request) -> ResolvedEndpoints`、`load_data_metadata(endpoint) -> DataMetadataSnapshot`、`validate_mapping(request, source, target) -> ValidatedMapping`、`get_capabilities(...) -> DataTaskCapabilities`。
 
-- [ ] 写测试：仅比较保存连接 ID 不足以排除同库同表；SQLite canonical path/文件身份相同被拒绝；网络端点结合可获得的服务实例身份、database/schema/table 归一化，不能确认源目标隔离时阻塞破坏性操作。
-- [ ] 写测试：相同保存连接下不同库可按能力使用；普通自增主键可保留；只读目标、实例只读、视图、缺表、缺列、非空无默认列、共享/权限不足的生成器、重复目标表、无主键同步、未识别排序规则、触发器、外键环、RLS/权限不可验证均有明确原因。
-- [ ] 实现固定次数批量元数据读取和内存校验；同类型规则仅用于 row_sync，跨类型传输由阶段能力开关控制，不修改现有结构同步的限制。
-- [ ] 运行 `cargo test --manifest-path src-tauri/Cargo.toml data_tasks::metadata`；用查询计数 fake 验证 1/10/100 表的元数据查询次数一致。
+- [x] 写测试：仅比较保存连接 ID 不足以排除同库同表；SQLite canonical path/文件身份相同被拒绝；网络端点结合可获得的服务实例身份、database/schema/table 归一化，不能确认源目标隔离时阻塞破坏性操作。
+- [x] 写测试：相同保存连接下不同库可按能力使用；普通自增主键可保留；只读目标、实例只读、视图、缺表、缺列、非空无默认列、共享/权限不足的生成器、重复目标表、无主键同步、未识别排序规则、触发器、外键环、RLS/权限不可验证均有明确原因。
+- [x] 实现固定次数批量元数据读取和内存校验；同类型规则仅用于 row_sync，跨类型传输由阶段能力开关控制，不修改现有结构同步的限制。
+- [x] 运行 `cargo test --manifest-path src-tauri/Cargo.toml data_tasks::metadata`；以 SQLite trace 与 PostgreSQL TCP 协议真实计数验证 1/10/100 表的固定元数据预算。
 
 建议提交：`feat: 增加数据任务能力与映射预检`。
 
@@ -306,10 +326,10 @@ Tauri 命令（返回值均外包 `Result<..., DataTaskError>`）：
 
 **接口：** `build_row_sync_plan(request, snapshots) -> StoredDataPlan`、`build_transfer_plan(request, snapshots) -> StoredDataPlan`、`fingerprint(plan) -> String`；`StoredDataPlan` 内含后端快照引用，IPC 只返回 `DataTaskPreview`。
 
-- [ ] 固定用例：源 `(1,A),(2,B)`、目标 `(2,old),(3,C)`；合并结果统计为 insert=1/update=1/retained=1/delete=0，镜像为 insert=1/update=1/delete=1；空源镜像产生清空风险，空源追加为零操作。
-- [ ] 写测试：复合主键、重复/空键、列顺序变化、规范化小数、大小写冲突、无变化、不同顺序相同快照、每个重要输入改变均影响指纹；对缺少数据内容的结构指纹不得视作足够保护。
-- [ ] 实现排序归并、精确统计、分页差异索引、参数化 DML 示例和风险列表；不为每行生成并持久化独立 SQL。
-- [ ] 运行 `cargo test --manifest-path src-tauri/Cargo.toml data_tasks::plan`；预期同一逻辑输入指纹稳定，关闭删除时执行计划中没有删除。
+- [x] 固定用例：源 `(1,A),(2,B)`、目标 `(2,old),(3,C)`；合并结果统计为 insert=1/update=1/retained=1/delete=0，镜像为 insert=1/update=1/delete=1；空源镜像产生清空风险，空源追加为零操作。
+- [x] 写测试：复合主键、重复/空键、列顺序变化、规范化小数、大小写冲突、无变化、不同顺序相同快照、每个重要输入改变均影响指纹；对缺少数据内容的结构指纹不得视作足够保护。
+- [x] 实现排序归并、精确统计、分页差异索引、参数化 DML 示例和风险列表；不为每行生成并持久化独立 SQL。
+- [x] 运行 `cargo test --manifest-path src-tauri/Cargo.toml data_tasks::plan`；预期同一逻辑输入指纹稳定，关闭删除时执行计划中没有删除。
 
 建议提交：`feat: 增加表数据差异与传输计划预览`。
 
@@ -319,10 +339,10 @@ Tauri 命令（返回值均外包 `Result<..., DataTaskError>`）：
 
 **接口：** 每种适配器实现 `read_snapshot(...) -> RowBatchStream`、`begin_protected_write(...) -> WriteSession`、`write_batch(...)`、`verify_snapshot(...)`、`commit/rollback/cancel`；SQLite blocking 驱动通过有界通道衔接，不阻塞 Tokio 工作线程。
 
-- [ ] 先用临时 SQLite 文件测试全流程：不同列形状多表的单 SELECT 流、主键同步、无主键追加、替换回滚、外键顺序、只读文件、取消后锁释放。
-- [ ] PostgreSQL 隔离库测试相同行为，补充 schema 引用、精确 numeric、bytea、时间类型、用户权限、一致读取、事务锁，以及 serial/identity 显式键保留和生成器高水位维护；SQLite 验证 INTEGER PRIMARY KEY/AUTOINCREMENT 对应行为。
-- [ ] 两连接竞态测试：预览后修改目标导致零写入；执行校验与写入间另一连接不能插入幻影行；最终验证失败回滚所有目标表。
-- [ ] 运行 `cargo test --manifest-path src-tauri/Cargo.toml data_tasks::adapters::sqlite` 和 `cargo test --manifest-path src-tauri/Cargo.toml data_tasks::adapters::postgres`；真实 PostgreSQL 测试通过后才能开启对应能力。
+- [x] 先用临时 SQLite 文件测试全流程：不同列形状多表的单 SELECT 流、主键同步、无主键追加、替换回滚、外键顺序、只读文件、取消后锁释放。
+- [x] PostgreSQL 隔离库测试相同行为，补充 schema 引用、精确 numeric、bytea、时间类型、用户权限、一致读取、事务锁，以及 serial/identity 显式键保留和生成器高水位维护；SQLite 验证 INTEGER PRIMARY KEY/AUTOINCREMENT 对应行为。
+- [x] 两连接竞态测试：预览后修改目标导致零写入；执行校验与写入间另一连接不能插入幻影行；最终验证失败回滚所有目标表。
+- [x] 运行 `cargo test --manifest-path src-tauri/Cargo.toml data_tasks::adapters::sqlite` 和 `cargo test --manifest-path src-tauri/Cargo.toml data_tasks::adapters::postgres`；真实 PostgreSQL 测试通过后才能开启对应能力。
 
 建议分别提交：`feat: 支持 SQLite 数据同步与传输`、`feat: 支持 PostgreSQL 数据同步与传输`。
 
@@ -330,10 +350,10 @@ Tauri 命令（返回值均外包 `Result<..., DataTaskError>`）：
 
 **文件：** 新建 `adapters/mysql.rs`、`sqlserver.rs`；扩展任务 5 的共同契约测试。
 
-- [ ] MySQL/MariaDB 测试：非事务表拒绝、连接字符集、unsigned bigint、decimal、binary、AUTO_INCREMENT 显式键/高水位/回滚间隙、锁/事务控制顺序、一致读取、只读实例、驱动取消后连接丢弃；不支持集合载荷所需能力的版本预检阻塞。
-- [ ] SQL Server 测试：连接 database 与 schema 定位、参数预算、nvarchar、datetime2/datetimeoffset、decimal、varbinary、identity 键保留与会话设置恢复、computed/rowversion 排除、快照隔离不可用时的行为、取消不支持时关闭专属会话并确认回滚。
-- [ ] 完成集合读取与批量绑定；锁语义通过双连接并发、幻读和目标结构变化测试，不复用普通编辑器的“取消不支持”路径假装已撤销。
-- [ ] 运行 `cargo test --manifest-path src-tauri/Cargo.toml data_tasks::adapters::mysql` 和 `cargo test --manifest-path src-tauri/Cargo.toml data_tasks::adapters::sqlserver`；分别用真实 MySQL、MariaDB、SQL Server 夹具验收，未验证的组合保持关闭。
+- [x] MySQL/MariaDB 测试：非事务表拒绝、连接字符集、unsigned bigint、decimal、binary、AUTO_INCREMENT 显式键/高水位/回滚间隙、锁/事务控制顺序、一致读取、只读实例、驱动取消后连接丢弃；不支持集合载荷所需能力的版本预检阻塞。
+- [x] SQL Server 测试：连接 database 与 schema 定位、参数预算、nvarchar、datetime2/datetimeoffset、decimal、varbinary、identity 键保留与会话设置恢复、computed/rowversion 排除、快照隔离不可用时的行为、取消不支持时关闭专属会话并确认回滚。
+- [x] 完成集合读取与批量绑定；锁语义通过双连接并发、幻读和目标结构变化测试，不复用普通编辑器的“取消不支持”路径假装已撤销。
+- [x] 运行 `cargo test --manifest-path src-tauri/Cargo.toml data_tasks::adapters::mysql` 和 `cargo test --manifest-path src-tauri/Cargo.toml data_tasks::adapters::sqlserver`；分别用真实 MySQL、MariaDB、SQL Server 夹具验收，未验证的组合保持关闭。
 
 建议分别提交：`feat: 支持 MySQL 数据同步与传输`、`feat: 支持 SQL Server 数据同步与传输`。
 
@@ -343,11 +363,11 @@ Tauri 命令（返回值均外包 `Result<..., DataTaskError>`）：
 
 **接口：** `prepare_task(request, context) -> StoredDataPlan`、`execute_plan(plan, cancellation, progress) -> DataTaskResult`；以 `WriteSession` 固定同一物理会话完成锁定、重读、写入、校验、提交。
 
-- [ ] fake 适配器测试：旧配置/旧结构/旧目标内容/过期计划均不发业务 DML；缺少删除确认被拒绝；相同执行 ID 重发只提交一次。
-- [ ] 故障注入：第 N 批失败、最终校验不符、取消、回滚失败、COMMIT 前断线、COMMIT 响应丢失分别得到准确终态；结果不明绝不自动重试。
-- [ ] 实现内存依赖排序与集合 DML 批次；合并验证预期为“源快照覆盖同键 + 保留目标独有”，镜像/替换验证为源映射结果，追加验证为目标基线加源数据的多重集合。
-- [ ] 实现超时/取消、进度节流和清理；业务结果和 cleanup_errors 分开记录，已提交不能因为关闭连接失败显示为未提交。
-- [ ] 运行 `cargo test --manifest-path src-tauri/Cargo.toml data_tasks::executor`；SQLite 端到端覆盖同步、追加、替换与全部回滚路径。
+- [x] registry 与真实 SQLite/网络适配器测试：旧配置/旧结构/旧目标内容/过期计划均不发业务 DML；缺少删除确认被拒绝；相同执行 ID 重发只提交一次。
+- [x] 故障注入：第 N 批失败、最终校验不符、取消、回滚失败、COMMIT 前断线、COMMIT 响应丢失分别得到准确终态；结果不明绝不自动重试。
+- [x] 实现内存依赖排序与集合 DML 批次；合并验证预期为“源快照覆盖同键 + 保留目标独有”，镜像/替换验证为源映射结果，追加验证为目标基线加源数据的多重集合。
+- [x] 实现超时/取消、进度节流和清理；业务结果和 cleanup_errors 分开记录，已提交不能因为关闭连接失败显示为未提交。
+- [x] 运行 `cargo test --manifest-path src-tauri/Cargo.toml data_tasks::integration_tests`，结合 registry 与 acceptance_network_tests；SQLite 端到端覆盖同步、追加、替换和回滚。原 executor 过滤器没有测试，不再用其零匹配结果验收。
 
 建议提交：`feat: 实现数据任务事务执行与结果校验`。
 
@@ -355,11 +375,13 @@ Tauri 命令（返回值均外包 `Result<..., DataTaskError>`）：
 
 **文件：** 新建 `commands/data_tasks.rs`、`db/data_tasks/history.rs`；修改 `lib.rs`、模块注册；新建 `src/services/dataTasks.ts`。
 
-- [ ] 命令测试：前端伪造路径/行载荷不被接受；错误脱敏；事件失败不改变数据库提交结果；先订阅后执行和丢事件后查询可恢复正确状态。
-- [ ] 历史仅保存端点引用、表名、模式、计数、时间、状态和错误码，不保存凭据、全量数据、SQL 参数或完整错误数据值；JSON 采用临时文件写入后原子替换，最多 100 条。
-- [ ] 重启不重放任务；对可能已发送提交的遗留记录标注需核对，对未开始写入的预览标注中断，清理本应用管理目录中的失效快照。
-- [ ] Tauri 退出时若有任务，提供继续等待/取消任务后退出；窗口关闭与整个应用退出分别处理，行为按平台验证。
-- [ ] 运行 `cargo test --manifest-path src-tauri/Cargo.toml commands::data_tasks`、`cargo test --manifest-path src-tauri/Cargo.toml data_tasks::history`、`npm test -- src/__tests__/dataTaskService.test.ts`。
+- [x] 命令测试：前端伪造路径/行载荷不被接受；错误脱敏；先订阅后执行和丢事件后查询可恢复正确状态。
+- [ ] 单独注入 Tauri 原生事件发送失败，验证数据库已提交结果不被改写。
+- [x] 历史仅保存端点引用、表名、模式、计数、时间、状态和错误码，不保存凭据、全量数据、SQL 参数或完整错误数据值；JSON 采用临时文件写入后原子替换，最多 100 条。
+- [x] 重启不重放任务；对可能已发送提交的遗留记录标注需核对，对未开始写入的预览标注中断，清理本应用管理目录中的失效快照。
+- [x] Tauri 窗口关闭与应用退出共用继续等待/取消后退出流程，保持窗口可见，终态前不退出；4项生命周期单测通过。
+- [ ] 在 macOS/Linux/Windows 实际窗口中验收关闭、继续等待、取消后退出和临时目录权限。
+- [x] 运行 `cargo test --manifest-path src-tauri/Cargo.toml commands::data_tasks`、`cargo test --manifest-path src-tauri/Cargo.toml data_tasks::history`、`npm test -- src/__tests__/dataTaskService.test.ts`。
 
 建议提交：`feat: 接入数据任务命令进度与历史记录`。
 
@@ -367,13 +389,13 @@ Tauri 命令（返回值均外包 `Result<..., DataTaskError>`）：
 
 **文件：** 新建上述 `components/dataTasks/` 组件、`stores/dataTaskStore.ts`、`utils/dataTaskCapabilities.ts`、`utils/dataTaskProgress.ts`；修改 App、DatabaseOverview 和必要的表数据失效接口。
 
-- [ ] 在页脚并列提供“数据同步”“数据传输”，数据库概览选中表可预填向导；与现有“数据库对比/结构同步”文案明确区分。按现有 DeferredFeature 模式懒加载。
-- [ ] 向导顺序：源/目标 → 表与字段映射 → 模式 → 预检/读取 → 预览 → 确认执行 → 结果。切换端点/模式立即废弃旧预览，保存连接列表变更同步提示。
-- [ ] 同步预览显示新增/修改/删除/保留数量和分页行差异；传输预览显示准确行数、映射与转换风险。镜像/替换需明确确认目标范围和删除数量，空源清空单独确认。
-- [ ] 运行中可关闭面板再打开；扫描用不定进度，执行显示处理数量与阶段。取消显示“正在取消/等待回滚”，提交中显示“正在确认提交结果”，不提前显示完成。
-- [ ] 成功、部分成功和结果不明均按可能受影响目标表失效缓存；新增 `markTableDataStale(connId, database, table)`，保留 `pendingChangesCache`，存在未提交编辑时提示数据已变化，不能调用会删除草稿的缓存移除方法代替。
-- [ ] 新建测试：`dataTaskStore.test.ts`、`dataTaskService.test.ts`、`dataTaskProgress.test.ts`、`DataTaskWizard.test.tsx`、`DataTaskPreview.test.tsx`、`DataTaskPanel.test.tsx`、`dataTaskInvalidation.test.ts`。覆盖乱序事件、重复点击、弹窗重开、过期计划、模式能力、目标编辑保护和零变化。
-- [ ] 运行 `npm test -- src/__tests__/dataTaskStore.test.ts src/__tests__/dataTaskService.test.ts src/__tests__/dataTaskProgress.test.ts src/__tests__/DataTaskWizard.test.tsx src/__tests__/DataTaskPreview.test.tsx src/__tests__/DataTaskPanel.test.tsx src/__tests__/dataTaskInvalidation.test.ts src/__tests__/AppLazyFeatures.test.tsx`，预期全通过。
+- [x] 在页脚并列提供“数据同步”“数据传输”，数据库概览选中表可预填向导；与现有“数据库对比/结构同步”文案明确区分。按现有 DeferredFeature 模式懒加载。
+- [x] 向导顺序：源/目标 → 表与字段映射 → 模式 → 预检/读取 → 预览 → 确认执行 → 结果。切换端点/模式立即废弃旧预览，保存连接列表变更同步提示。
+- [x] 同步预览显示新增/修改/删除/保留数量和分页行差异；传输预览显示准确行数、映射与转换风险。镜像/替换需明确确认目标范围和删除数量，空源清空单独确认。
+- [x] 运行中可关闭面板再打开；扫描用不定进度，执行显示处理数量与阶段。取消显示“正在取消/等待回滚”，提交中显示“正在确认提交结果”，不提前显示完成。
+- [x] 成功、部分成功和结果不明均按可能受影响目标表失效缓存；新增 `markTableDataStale(connId, database, table)`，保留 `pendingChangesCache`，存在未提交编辑时提示数据已变化，不能调用会删除草稿的缓存移除方法代替。
+- [x] 新建测试：`dataTaskStore.test.ts`、`dataTaskService.test.ts`、`dataTaskProgress.test.ts`、`DataTaskWizard.test.tsx`、`DataTaskPreview.test.tsx`、`DataTaskPanel.test.tsx`、`dataTaskInvalidation.test.ts`。覆盖乱序事件、重复点击、弹窗重开、过期计划、模式能力、目标编辑保护和零变化。
+- [x] 运行 `npm test -- src/__tests__/dataTaskStore.test.ts src/__tests__/dataTaskService.test.ts src/__tests__/dataTaskProgress.test.ts src/__tests__/DataTaskWizard.test.tsx src/__tests__/DataTaskPreview.test.tsx src/__tests__/DataTaskPanel.test.tsx src/__tests__/dataTaskInvalidation.test.ts src/__tests__/AppLazyFeatures.test.tsx`，预期全通过。
 
 建议提交：`feat: 增加数据同步与传输向导及任务面板`。
 
@@ -381,24 +403,25 @@ Tauri 命令（返回值均外包 `Result<..., DataTaskError>`）：
 
 **依赖：** 阶段 A 验收通过。**文件：** 扩展 `value.rs`、`metadata.rs`、四类适配器与 `DataTransferPreview.tsx`；新增 `db/data_tasks/type_mapping.rs`。
 
-- [ ] 定义 `resolve_transfer_type(source_type, target_type) -> Compatible / RequiresExplicitMapping / Unsupported`，第一版仅放开范围可证明包含的整数、小数、布尔、文本、二进制和明确兼容的时间类型；无损失败直接阻塞。
-- [ ] 显式阻塞 decimal 精度缩小、有符号转无符号溢出、文本截断、时区丢失、枚举/数组/空间/自定义类型隐式转字符串；字段重命名不改变类型规则。
-- [ ] 按有向源→目标组合逐个验收，不因 A→B 通过自动开放 B→A；目标已存在，继续不自动翻译 DDL，不处理跨类型行同步。
-- [ ] 运行 `cargo test --manifest-path src-tauri/Cargo.toml data_tasks::type_mapping` 和隔离矩阵中的全部已开放有向组合；预期逐值无损回读、一致回滚及同样的查询预算。
+- [x] 定义 `resolve_transfer_type(source_type, target_type) -> Compatible / RequiresExplicitMapping / Unsupported`，第一版仅放开范围可证明包含的整数、小数、布尔、文本、二进制和明确兼容的时间类型；无损失败直接阻塞。
+- [x] 显式阻塞 decimal 精度缩小、有符号转无符号溢出、文本截断、时区丢失、枚举/数组/空间/自定义类型隐式转字符串；字段重命名不改变类型规则。
+- [x] 按有向源→目标组合逐个验收，不因 A→B 通过自动开放 B→A；目标已存在，继续不自动翻译 DDL，不处理跨类型行同步。
+- [x] 运行 `cargo test --manifest-path src-tauri/Cargo.toml data_tasks::type_mapping` 和隔离矩阵中的全部已开放有向组合；已开放方向逐值无损回读、追加/替换、冻结源和写入前拒绝得到真实验证；查询预算单列于任务12。
 
 建议提交：`feat: 支持受限类型的跨数据库数据传输`。
 
 ### 任务 11：ClickHouse 追加传输（阶段 C）
 
-**2026-10-21 安全收缩：** 原目标写入条目暂不开放。真实实验中，首批确认后 RENAME 目标并创建同名新表会使后续按名 INSERT 写入新 UUID；尚无经过证明的跨批 DDL 保护机制。以下目标批次条目可作为原生实验验收，但不满足公共写入开放条件；ClickHouse→ClickHouse 同样阻塞。源→事务目标独立验收，不能用其通过代替目标安全保证。
+**2026-10-22 复核：** 原目标写入条目继续阻塞。批次之间 RENAME/CREATE 会替换目标；单条流式 INSERT 可固定已解析对象，但同查询 UUID/依赖检查与依赖绑定之间仍存在窗口。真实隔离实验中新建物化视图收到数据，不能用单流加守卫宣称预览身份保护成立。正式适配器写入口也直接拒绝，实验写入仅编译进测试。以下目标批次条目可作为原生实验验收，但不满足公共写入开放条件；ClickHouse→ClickHouse 同样阻塞。源→事务目标独立验收，不能用其通过代替目标安全保证。
 
 **依赖：** 阶段 B 的类型映射与任务框架。**文件：** 新建 `adapters/clickhouse.rs`，扩展能力矩阵、结果与 UI 测试。
 
-- [ ] 首先验证单次集合流、Nullable/Decimal/DateTime64/UInt64 等类型；未覆盖类型明确拒绝，不借用显示值 JSON 拼 INSERT。
+- [x] 首先验证单次集合流、Nullable/Decimal/DateTime64/UInt64 等类型；未覆盖类型明确拒绝，不借用显示值 JSON 拼 INSERT。
 - [ ] ClickHouse 为目标时仅开放经验证的直接本地表引擎和普通追加写入；Distributed、异步插入及可能重新解释重复行的特殊引擎先阻塞。完成意味着数据库确认接收已记录批次，不伪造全库事务保证。
 - [ ] 每批记录确认状态和累计行数；第 N 批失败返回 partial，响应丢失返回 outcome_unknown，禁止自动重放。不将 ClickHouse 排序键当作唯一主键，不开放镜像、UPDATE、DELETE 或替换。
-- [ ] ClickHouse 为源、事务库为目标时保留目标事务保证，但展示源端无跨表一致快照的限制；ClickHouse→ClickHouse 也按同一批次语义验收。
-- [ ] 运行 `cargo test --manifest-path src-tauri/Cargo.toml data_tasks::adapters::clickhouse` 及隔离集成矩阵；UI 测试确认不支持能力不可进入执行。
+- [x] ClickHouse 为源、四类事务库为目标时保留目标事务保证，展示源端无跨表一致快照限制；四方向受限追加已验收。
+- [ ] ClickHouse→ClickHouse 目标身份/依赖保护及公开批次语义验收（当前禁用）。
+- [x] 最终复跑 ClickHouse 真实模块16项通过；正式写入口拒绝与伪造能力标记守卫单测通过。此结果覆盖源能力/保护/实验，不代表目标开放。
 
 建议提交：`feat: 支持 ClickHouse 受限追加传输`。
 
@@ -406,13 +429,16 @@ Tauri 命令（返回值均外包 `Result<..., DataTaskError>`）：
 
 **文件：** 新建 `db/data_tasks/integration_tests.rs`、`scripts/data-tasks/validate.py` 和手工矩阵；更新 README。夹具只使用专属临时 SQLite 文件及脚本创建的隔离数据库，不读取个人保存连接。
 
-- [ ] 自动数据集包含：空表、百万行、100 表、复合主键、无主键追加、中文/保留字标识符、宽表、8 MiB 边界行、大整数、精确小数、二进制、时间、NULL、外键、唯一冲突及不同排序规则。
-- [ ] 真实驱动验收事务锁、取消、读写权限、SSH/TLS 临时连接清理、网络中断、磁盘配额、提交不明；MariaDB 单独验证，不以 MySQL 结果替代。
-- [ ] 查询计数分别记录元数据 SELECT、数据快照 SELECT、控制语句和批量 DML：1/10/100 表元数据预算固定，每端每快照数据 SELECT=1；行数增加不增加读取 SQL 次数。
-- [ ] 百万行传输超过现有 100,000 行普通查询上限仍完整；比较 10 万与 100 万同宽行的 RSS 和临时磁盘峰值，缓冲分配受 64 MiB 预算控制，内存不得随总行数线性增长。记录硬件/数据库/版本/吞吐与取消清理时长，不预设未经测量的每秒行数承诺。
-- [ ] 正常驱动、数据库可响应时，取消控制在 1 秒内进入 cancelling；在 10 秒预算内尝试驱动取消/回滚，超时继续明确展示清理或结果不明，不能仅为达成数字把未回滚标成已取消。
-- [ ] 验证前端初始包未包含任务大组件、预览分页受 IPC 上限保护、模式切换不重用旧计划、未提交编辑不丢失；覆盖 macOS/Linux/Windows 的临时文件和退出行为。
-- [ ] 更新 README 和手工验收矩阵，分阶段列出支持组合、源快照语义、目标锁时段、事务边界、阻塞条件、失败后的操作方式。
+- [x] 自动数据集包含：空表、百万行、100 表、复合主键、无主键追加、中文/保留字标识符、宽表、8 MiB 边界行、大整数、精确小数、二进制、时间、NULL、外键、唯一冲突及不同排序规则。
+- [x] 真实驱动验收事务锁、取消、读写权限、网络中断、磁盘配额、提交不明；MariaDB 单独验证。PostgreSQL TLS通过正确/错误CA、DNS校验、断链及专属连接归零四项。
+- [ ] SSH 隧道中断与连接/临时文件清理：现入口会写用户 known_hosts，需先提供隔离目录或测试入口；不覆盖HOME或触碰个人known_hosts。
+- [x] SQLite/PG真实计数：1/10/100表元数据固定4/5次SELECT，每端每次快照数据SELECT=1；PG协议同时统计实际DML与COMMIT，证明未知提交不重放。MySQL另有100表元数据预算验收。
+- [ ] 补齐其余驱动全部1/10/100表的独立协议查询计数记录；集合读取实现不能代替全部规模的真实计数。
+- [x] 百万行传输超过现有 100,000 行普通查询上限仍完整；比较 10 万与 100 万同宽行的 RSS 和临时磁盘峰值，缓冲分配受 64 MiB 预算控制，内存不得随总行数线性增长。本机SQLite release耗时/RSS/临时磁盘/缓冲峰值见独立性能报告；本轮未重复性能测试，不将历史结果计作本次新测。
+- [x] UI取消立即进入cancelling并等待后端终态；PG原生取消覆盖首行前查询/目标锁，等待原操作响应后再回滚；回滚和COMMIT确认均有10秒预算，无法确认则Unknown，不重放。
+- [ ] 其余驱动全部阶段及不同负载的取消/完整清理时延矩阵；本机PG数据不能替代这些测量。
+- [x] 前端懒加载、IPC分页上限、模式切换/草稿上下文隔离、未提交编辑保护有自动回归。三平台实机行为见任务8未完成项。
+- [x] 更新 README 和手工验收矩阵，分阶段列出支持组合、源快照语义、目标锁时段、事务边界、阻塞条件、失败后的操作方式。
 
 最终检查命令（仅在后续实施完成时运行）：
 
@@ -428,7 +454,7 @@ python3 scripts/data-tasks/validate.py --phase a
 # 阶段 B/C 完成后分别运行 --phase b / --phase c
 ```
 
-`validate.py` 已随实现新增，逐项输出 passed/failed/not_run；未安装数据库、没有 Docker 或没有匹配测试不得把跳过视作通过，非零退出区分环境阻塞与测试失败。最终实际运行结果以验收矩阵为准。
+`validate.py` 已随实现新增，逐项输出 passed/failed/not_run/blocked；未安装数据库、没有 Docker 或没有匹配测试不得把跳过视作通过，非零退出区分环境阻塞与测试失败。最终实际运行结果以验收矩阵为准。
 
 建议提交：`test: 补充数据同步传输集成与性能验收`、`docs: 补充数据同步传输使用说明`。
 
@@ -438,11 +464,13 @@ python3 scripts/data-tasks/validate.py --phase a
 
 阶段 A 完成必须同时满足：
 
-- [ ] 四类数据库的同类型行同步、追加、替换均有真实适配器验证；不支持的表/类型给出可操作原因。
-- [ ] 只读预览无业务写入；指纹与目标漂移保护不能绕过；镜像与替换默认关闭。
-- [ ] 百万行完整传输、精确值保持、SQL 查询预算、取消/回滚/提交不明路径均有证据。
-- [ ] 现有结构同步、SQL 导入导出、分页编辑、连接管理和首屏懒加载回归通过。
-- [ ] 成功只在数据库提交得到确认后展示；记录清理失败和结果不明，用户可重新打开任务查看。
+- [x] 四类数据库的同类型行同步、追加、替换均有真实适配器验证；不支持的表/类型给出可操作原因。
+- [x] 只读预览无业务写入；指纹与目标漂移保护不能绕过；镜像与替换默认关闭。
+- [x] 百万行完整传输、精确值保持、SQL 查询预算、取消/回滚/提交不明路径均有证据。
+- [x] 现有结构同步、SQL 导入导出、分页编辑、连接管理和首屏懒加载回归通过。
+- [x] 成功只在数据库提交得到确认后展示；记录清理失败和结果不明，用户可重新打开任务查看。
+
+- [ ] 任务8/12中发布级实机与故障扩展验收全部完成（含SSH、三平台、真实ENOSPC及其他驱动计数/取消时延）。核心功能已有证据不代表本完整验收阶段结束。
 
 阶段 B/C 分别按矩阵单独完成；没有实现的能力继续禁用，不使用文档或入口代替实现。
 

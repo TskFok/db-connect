@@ -27,6 +27,17 @@ class ValidationTests(unittest.TestCase):
         executable.chmod(0o700)
         self.validation.binary = executable
 
+    def test_blocked_capability_is_incomplete_not_passed_or_failed(self):
+        self.assertEqual(validation_module.verdict([{"status": "blocked"}]), 2)
+        self.assertEqual(validation_module.verdict([{"status": "passed"}]), 0)
+        self.assertEqual(validation_module.verdict([{"status": "failed"}, {"status": "blocked"}]), 1)
+
+    def test_cancellation_timings_are_preserved_without_query_content(self):
+        self.fixture("DATA_TASK_CANCEL_METRICS phase=pending_snapshot elapsed_ms=51\nDATA_TASK_CANCEL_METRICS phase=pending_target_lock elapsed_ms=62\ntest result: ok. 2 passed; 0 failed; 0 ignored")
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = self.validation.tests("network", "real_")
+        self.assertEqual(result["cancellation_latency_ms"], {"pending_snapshot": 51, "pending_target_lock": 62})
+
     def test_zero_matched_tests_are_not_reported_as_success(self):
         self.fixture("test result: ok. 0 passed; 0 failed; 4 ignored")
         with contextlib.redirect_stdout(io.StringIO()):
@@ -35,13 +46,14 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(self.validation.results[-1]["status"], "not_run")
 
     def test_failure_is_reported_without_echoing_database_values(self):
-        self.fixture("private database value\ntest result: FAILED. 2 passed; 1 failed; 0 ignored", 101)
+        self.fixture("private database value\nfailures:\n    db::data_tasks::real_cancel\ntest result: FAILED. 2 passed; 1 failed; 0 ignored", 101)
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             result = self.validation.tests("driver", "real_")
         self.assertIsNone(result)
         self.assertEqual(self.validation.results[-1]["status"], "failed")
         self.assertNotIn("private database value", output.getvalue())
+        self.assertEqual(self.validation.results[-1]["failed_tests"], ["db::data_tasks::real_cancel"])
 
     def test_metrics_keep_exact_integer_counts(self):
         self.fixture("DATA_TASK_METRICS rows=1000000 peak_spool_bytes=9007199254740993\ntest result: ok. 1 passed; 0 failed; 0 ignored")

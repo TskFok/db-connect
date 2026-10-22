@@ -2,6 +2,8 @@
 mod acceptance_network_tests;
 #[cfg(test)]
 mod acceptance_tests;
+#[cfg(test)]
+mod acceptance_tls_tests;
 pub mod adapters;
 #[cfg(test)]
 mod cross_type_tests;

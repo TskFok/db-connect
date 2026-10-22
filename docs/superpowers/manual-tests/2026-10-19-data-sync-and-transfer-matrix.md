@@ -2,7 +2,7 @@
 
 设计与范围：[实施计划](../plans/2026-10-19-data-sync-and-transfer-plan.md)。本矩阵记录实际证据；代码存在、入口可见或跳过测试均不代表支持。
 
-更新于 2026-10-21。下表记录本轮定向验收；Rust 全量与 Clippy 最终回归待汇总，不宣称整个计划已完成。
+更新于 2026-10-22。记录当前实现、实际自动验收和仍未运行的实机条件；ClickHouse 目标仍受阻塞，不宣称原计划全部完成。
 
 ## 隔离规则
 
@@ -16,18 +16,20 @@
 |---|---|---|
 |A|SQLite、PostgreSQL、MySQL/MariaDB、SQL Server 同类型合并、镜像、追加、替换|各真实驱动的完整事务、值绑定、锁、取消与生成器验收通过|
 |B|四类事务数据库之间的有向追加/替换|逐个方向验证类型范围、无损回读、回滚及相同查询预算；不开放跨类型行同步|
-|C：源|ClickHouse → 四类事务目标的受限追加|逐方向验证类型与目标事务；源不提供跨表一致快照；本轮四方向真实验收通过|
-|C：目标|所有 ClickHouse 目标组合当前 blocked|按名多批 INSERT 不能防止批次间 DDL 替换目标；在可证明的对象身份/DDL 保护机制完成前不开放公共写入|
+|C：源|ClickHouse → 四类事务目标的受限追加|逐方向验证类型与目标事务；源不提供跨表一致快照；四方向真实验收通过|
+|C：目标|所有 ClickHouse 目标组合当前 blocked|多批按名写入可被DDL替换目标；单流加同查询UUID/依赖检查仍非原子绑定。正式适配器写入口也直接拒绝，实验实现仅cfg(test)|
 
 ## 自动证据
 
-2026-10-22 最终 Rust 回归：873 passed / 0 failed / 69 ignored；显式真实库验收另见 [阶段 C 综合报告](data-task-validation-c-2026-10-22.json)。`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 和 `git diff --check` 通过。前端最近一次全量为 169 文件 / 2206 测试通过，构建及 ESLint 通过；变更文件 Prettier 通过，全局 67 个格式问题均已核对存在于 HEAD，未顺带重排。
+本轮前端全量 **170 文件 / 2221 测试通过**，构建、ESLint、变更前端文件 Prettier 通过；包含定向交互 25 项。全局 Prettier 仍报告 67 个既有文件问题，与本轮修改文件交集为空，未顺带重排。
 
-综合工具退出码为 `2`：本轮显式跳过重复性能测试（实际性能证据在独立报告中），且 ClickHouse 目标未开放；报告无 failed，不能解读为阶段 C 全部完成。
+Rust全量 **884 passed / 0 failed / 107 ignored**，Clippy、Rust格式和git diff检查通过。真实实例显式验收与默认忽略项分开统计；最终综合矩阵11组passed、0 failed、1 not_run、1 blocked，详情见[本轮综合报告](data-task-validation-final-2026-10-22.json)。测试工具单测为主验收器 7 项、TLS 清理 10 项，均通过。[TLS 独立报告](data-task-tls-validation-2026-10-22.json)记录 4 项真实验收及专属容器、匿名卷、临时证书清理。
+
+本轮未重复历史百万行性能测试，保留独立性能报告；ClickHouse 目标状态为 `blocked`。综合工具退出码 `2` 表示这两类未完成条件，不应解读为所有阶段全部完成；任何实际失败仍返回 `1`。
 
 |项目|状态|证据|
 |---|---|---|
-|前端契约、向导、进度、历史、乱序事件与草稿保护|passed|169 文件、2206 项 Vitest；构建及 ESLint 通过（首次集成记录，后续最终回归另记）|
+|前端契约、向导、进度、历史、乱序事件与草稿保护|passed|170文件/2221项；补错误原因、模式/映射、四模式重预览、切换入口/seed、确认payload、防重、取消终态、丢响应只查询和缓存草稿保护|
 |SQLite 元数据查询预算|passed|真实 trace：1/10/100 表均 4 次 SELECT|
 |SQLite 数据读取查询预算|passed|真实 trace：1/10/100 表每次快照均 1 次集合 SELECT|
 |PostgreSQL 查询预算|passed|真实 TCP 协议统计 Execute：1/10/100 表均 5 次元数据 SELECT、1 次快照 SELECT；预编译语句重复执行也计数|
@@ -37,13 +39,16 @@
 |配置删除/变更、只读后端守卫、多进程目录保护|passed|commands 定向测试；内存配置摘要与独占目录锁|
 |PostgreSQL 适配器|passed|适配器定向 10 项通过；覆盖权限、外部入向 FK、继承、写规则及规则漂移、序列锁与回滚|
 |SQL Server 外部依赖可见性|passed|受限 schema 授权、数据库级授权叠加对象/schema DENY、成员角色/public DENY 和隐藏 RLS 的真实回归；完整适配器 7 项通过，固定查询类别未增加|
-|PostgreSQL COMMIT 响应丢失|passed|真实 TCP 代理收到服务器 COMMIT CommandComplete 后断开；任务为 OutcomeUnknown / Unknown，独立连接确认 2 行已提交，INSERT 与 COMMIT 各执行 1 次，无重放；协议验收模块合计 5 项通过（4 项真实库、1 项计数单测）|
+|PostgreSQL COMMIT 响应丢失|passed|真实 TCP 代理收到服务器 COMMIT CommandComplete 后断开；任务为 OutcomeUnknown / Unknown，独立连接确认 2 行已提交，INSERT 与 COMMIT 各执行 1 次，无重放；本轮协议模块7项真实验收，另有1项计数单测；同时覆盖COMMIT响应一直扣留时的10秒Unknown与无重放|
 |MySQL 与 MariaDB|passed|分别在专属实例运行 real_contract，均覆盖完整任务执行器；MariaDB 不沿用 MySQL 的结果|
-|跨类型事务目标（阶段 B）|passed|12 个有向组合逐一验证 Append + Replace；矩阵共 14 项通过，另含 PostgreSQL 四模式及 SQL Server 四模式取消与回滚|
+|跨类型事务目标（阶段 B）|passed|12个基础有向组合追加/替换；新增精确类型矩阵MySQL8.4、MariaDB11.4各26项通过；PG/SQLite布尔→SQL Server TINYINT额外2项，最终综合cross_type共42项|
 |百万行、RSS 与临时磁盘峰值|passed|同宽 10 万/100 万行 release 实测见下表；完整传输且清理后 spool 为 0|
-|ClickHouse 源 → SQLite / PostgreSQL / MySQL / SQL Server|passed|四方向实际执行、逐值回读与目标事务验证通过；CH 模块共 13 项真实验收同时覆盖原生精度与目标拒绝零写入|
-|ClickHouse 目标（包括 ClickHouse→ClickHouse）|blocked|并发 RENAME + CREATE 同名表可令后续 INSERT 落入不同 UUID 的表；已决定关闭公共目标写入。原生写入实验不计为开放验收|
-|跨平台退出、临时目录权限及 SSH/TLS 故障|not_run|尚未完成对应平台/连接的实际操作；PG 回环明文代理仅证明 COMMIT 响应丢失路径|
+|ClickHouse 源 → SQLite / PostgreSQL / MySQL / SQL Server|passed|四方向实际执行、逐值回读与目标事务验证通过；CH 模块新增一致性和ACK实验，最终共16项真实验收同时覆盖原生精度与目标拒绝零写入|
+|ClickHouse 目标（包括 ClickHouse→ClickHouse）|blocked|同查询UUID/依赖检查之后、依赖绑定之前新建物化视图，仍可收到写入数据；单流不足以保护预览依赖。正式写入口无条件拒绝，测试实验不计为开放|
+|PostgreSQL 待查询/目标保护锁取消|passed|原生CancelRequest覆盖首行前等待；等待原操作响应后再回滚，避免迟到取消打断ROLLBACK。针对偶发问题连续12轮/24项通过；最终单次取消至返回分别13/45毫秒（本机PG查询/锁等待，不代表全部驱动或端到端UI时延）|
+|PostgreSQL TLS与临时连接|passed|真实verify_identity自定义CA精确传输，错误CA/错误DNS拒绝且目标零写入，加密连接断链得Unknown；每例专属连接归零，证书/容器/卷清理完成|
+|窗口关闭与退出逻辑|passed|活动任务期间窗口保持可见，确认去重、继续等待、取消后等终态；4项决策测试与macOS编译通过|
+|三平台实机、SSH、真实ENOSPC|not_run|未实际操作macOS/Linux/Windows完整窗口与临时目录路径；SSH入口缺少隔离known_hosts注入，未使用个人目录；配额/写失败模拟不等价于物理磁盘满|
 
 ### 阶段 B 有向组合
 
@@ -56,7 +61,7 @@
 |MySQL|SQLite、PostgreSQL、SQL Server|passed|
 |SQL Server|SQLite、PostgreSQL、MySQL|passed|
 
-类型边界：跨类型当前只开放整数范围包含、文本和二进制同族映射；其余跨类型家族在无完整规范值验收前阻塞。ClickHouse `String` 按任意字节保存，只映射到目标二进制列；`Nullable` 仍需目标允许空值。ClickHouse 原生 Decimal/DateTime64 的精度测试不代表这些类型已开放跨库映射。
+类型边界：除整数范围包含、文本和二进制，开放 PostgreSQL/MySQL/MariaDB/SQL Server 之间的精确小数、DATE、TIME 和无时区 timestamp；PostgreSQL/SQL Server/SQLite 布尔互传及到受支持整数目标。字段声明必须满足目标范围/精度包含，冻结值还会逐项校验，按目标原生格式规范化。新测试覆盖大精度小数、NULL、闰日、微秒、SQL Server默认7位精度、预览后源修改、替换前拒绝和SQL Server TINYINT规范值。SQLite小数/时间、MySQL TIMESTAMP、MySQL任意TINYINT→布尔、带时区转换、旧SQL Server DATETIME/rowversion、浮点/UUID/JSON等继续拒绝；不放开精度缩窄、零日期、BC/infinity、负/超24小时TIME或非法布尔。ClickHouse `String` 按任意字节保存，只映射到目标二进制列；`Nullable` 仍需目标允许空值。ClickHouse 原生 Decimal/DateTime64 的精度测试不代表这些类型已开放跨库映射。
 
 ### 性能实测
 

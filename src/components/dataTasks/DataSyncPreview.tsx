@@ -20,11 +20,13 @@ import type {
   DataDiffPage,
   DataTaskPreview,
   DataValuePreview,
+  TableMapping,
 } from "../../types/dataTasks";
 import {
   TARGET_SCOPE_RISK,
   EMPTY_SOURCE_RISK,
   requiredPreviewConfirmations,
+  dataTaskModeLabels,
 } from "../../utils/dataTaskCapabilities";
 function displayValue(value: DataValuePreview | null): string {
   if (!value) return "（不存在）";
@@ -35,11 +37,13 @@ export function DataTaskPreviewView({
   accepted,
   onAcceptedChange,
   showDiff = true,
+  mappings,
 }: {
   preview: DataTaskPreview;
   accepted: string[];
   onAcceptedChange: (ids: string[]) => void;
   showDiff?: boolean;
+  mappings?: TableMapping[];
 }) {
   const connections = useConnectionStore((state) => state.savedConnections);
   const [tableId, setTableId] = useState(preview.tables[0]?.table_id);
@@ -99,6 +103,11 @@ export function DataTaskPreviewView({
         column={1}
         items={[
           {
+            key: "mode",
+            label: "执行模式",
+            children: dataTaskModeLabels[preview.mode],
+          },
+          {
             key: "source-endpoint",
             label: "源端",
             children: `${connections.find((connection) => connection.id === preview.source.saved_connection_id)?.name ?? preview.source.saved_connection_id} / ${preview.source.database}`,
@@ -143,6 +152,17 @@ export function DataTaskPreviewView({
           key={table.table_id}
           title={`${table.source_table} → ${preview.target.database}.${table.target_table}`}
         >
+          {mappings
+            ?.find(
+              (mapping) =>
+                mapping.source_table === table.source_table &&
+                mapping.target_table === table.target_table
+            )
+            ?.columns.map((column) => (
+              <div key={column.target_column}>
+                {column.source_column} → {column.target_column}
+              </div>
+            ))}
           <Space wrap>
             <span>源行数 {formatDataCount(table.counts.source_rows)}</span>
             <span>目标行数 {formatDataCount(table.counts.target_rows)}</span>

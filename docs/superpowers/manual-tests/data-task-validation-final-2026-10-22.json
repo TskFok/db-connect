@@ -1,0 +1,93 @@
+{
+  "phase": "c",
+  "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "generated_at": "2026-10-22T04:34:43.764333+00:00",
+  "source_revision": "d324cc3e37b67ddb9813368c6d76084f314a93bc",
+  "working_tree_dirty": true,
+  "results": [
+    {
+      "name": "rust_build",
+      "status": "passed",
+      "detail": "已构建当前工作区测试程序"
+    },
+    {
+      "name": "core_contracts",
+      "status": "passed",
+      "detail": "94 通过，85 个显式忽略的测试另行验收",
+      "elapsed_seconds": 26.624
+    },
+    {
+      "name": "sqlite_performance",
+      "status": "not_run",
+      "detail": "显式跳过百万行与 RSS 比较"
+    },
+    {
+      "name": "postgres",
+      "status": "passed",
+      "detail": "9 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 5.761
+    },
+    {
+      "name": "postgres_modes",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 2.935
+    },
+    {
+      "name": "postgres_network_fault_and_query_budget",
+      "status": "passed",
+      "detail": "7 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 12.077,
+      "cancellation_latency_ms": {
+        "pending_snapshot": 13,
+        "pending_target_lock": 45
+      }
+    },
+    {
+      "name": "mysql",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 11.675
+    },
+    {
+      "name": "mariadb",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 11.823
+    },
+    {
+      "name": "sqlserver",
+      "status": "passed",
+      "detail": "3 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.227
+    },
+    {
+      "name": "sqlserver_modes_and_cancel",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 2.338
+    },
+    {
+      "name": "cross_type_matrix",
+      "status": "passed",
+      "detail": "42 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 36.97
+    },
+    {
+      "name": "clickhouse_native_and_source",
+      "status": "passed",
+      "detail": "16 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 6.45
+    },
+    {
+      "name": "clickhouse_target",
+      "status": "blocked",
+      "detail": "无法原子绑定预览物理表与写入依赖；真实并发DDL回归证明单流加UUID守卫仍不足，公共目标写入保持禁用"
+    }
+  ],
+  "fixture_cleanup": {
+    "containers_removed": 5,
+    "anonymous_volumes": "removed_with_containers",
+    "credentials_file": "removed"
+  }
+}

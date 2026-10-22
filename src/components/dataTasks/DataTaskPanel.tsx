@@ -17,7 +17,11 @@ import {
   isDataTaskTerminal,
   dataTaskPercent,
 } from "../../utils/dataTaskProgress";
-import type { DataTaskKind, DataTaskSeed } from "../../types/dataTasks";
+import type {
+  DataTaskKind,
+  DataTaskSeed,
+  DataTaskRequest,
+} from "../../types/dataTasks";
 import { DataTaskWizard } from "./DataTaskWizard";
 import { DataSyncPreview } from "./DataSyncPreview";
 import { requiredPreviewConfirmations } from "../../utils/dataTaskCapabilities";
@@ -44,6 +48,13 @@ export function DataTaskPanel({
   const [pending, setPending] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [wizardKey, setWizardKey] = useState(0);
+  const wizardContext = JSON.stringify([kind, seed]);
+  const [draft, setDraft] = useState<{
+    context: string;
+    request: DataTaskRequest;
+  }>();
+  const draftRequest =
+    draft?.context === wizardContext ? draft.request : undefined;
   useEffect(() => {
     if (!open) return;
     void useDataTaskStore
@@ -127,6 +138,7 @@ export function DataTaskPanel({
                   if (selectedId)
                     await useDataTaskStore.getState().discard(selectedId);
                   useDataTaskStore.setState({ selectedTaskId: null });
+                  setDraft(undefined);
                   setWizardKey((k) => k + 1);
                 })
               }
@@ -137,9 +149,10 @@ export function DataTaskPanel({
         )}
         {!task && (
           <DataTaskWizard
-            key={`${kind}:${wizardKey}:${JSON.stringify(seed)}`}
-            kind={kind}
+            key={`${wizardContext}:${wizardKey}`}
+            kind={draftRequest?.kind ?? kind}
             seed={seed}
+            initialRequest={draftRequest}
             onInvalidate={invalidate}
             onStarted={(id) =>
               useDataTaskStore.setState({ selectedTaskId: id })
@@ -182,6 +195,7 @@ export function DataTaskPanel({
               <>
                 <Preview
                   preview={task.preview}
+                  mappings={task.request.mappings}
                   accepted={accepted}
                   onAcceptedChange={setAccepted}
                 />
@@ -202,6 +216,10 @@ export function DataTaskPanel({
                     onClick={() =>
                       void act(async () => {
                         await useDataTaskStore.getState().discard(task.task_id);
+                        setDraft({
+                          context: wizardContext,
+                          request: task.request,
+                        });
                         setWizardKey((k) => k + 1);
                       })
                     }
