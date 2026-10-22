@@ -21,6 +21,22 @@
 
 ## 自动证据
 
+### MySQL 5.7 兼容性修复（2026-10-22）
+
+原版本白名单遗漏 MySQL 5.7，导致读取元数据时直接报“当前仅 MySQL 8.4 与 MariaDB 11.4 原生会话经过真实验收”。已在本机专属临时数据目录、回环地址随机端口的 MySQL 5.7.37 实例复现，并在修复后通过 `real_mysql_session_contract`：覆盖合并、镜像、追加、替换、精确值回读、冲突回滚、取消回滚、并发写入及 DDL 保护、生成器、只读与权限守卫。未访问应用保存连接或业务数据库。
+
+运行时新增接受 `5.7.<补丁>` 和 `5.7.<补丁>-log`，补丁须至少为 8；下限依据 [MySQL 5.7.8 引入 JSON 类型及构造函数](https://dev.mysql.com/doc/relnotes/mysql/5.7/en/news-5-7-8.html)。真实实例证据限于 5.7.37，不代表每个补丁版本都已实测。MySQL 8.4、MariaDB 11.4 和其他数据库的既有门禁不变。新增版本边界单测先失败后通过，MySQL 模块本轮 7 项单测与 1 项真实合约测试全部通过；100 表元数据仍为固定 5 次 SELECT 加 1 次 SHOW GRANTS，每次多表快照仍为 1 次 SELECT。
+
+本次工作区全量回归：Rust **886 passed / 0 failed / 107 ignored**；前端 **170 文件 / 2231 测试通过**；Clippy、Rust 格式及 `git diff --check` 通过。前端测试仍输出 React `act` 与 Ant Design 警告，无失败。
+
+复验时将 `DB_CONNECT_DATA_TASK_MYSQL_URL` 显式指向专属 MySQL 5.7 隔离实例，再运行：
+
+```sh
+cargo test --manifest-path src-tauri/Cargo.toml --lib db::data_tasks::adapters::mysql::tests::real_mysql_session_contract -- --ignored --exact --nocapture
+```
+
+### 原综合验收
+
 本轮前端全量 **170 文件 / 2221 测试通过**，构建、ESLint、变更前端文件 Prettier 通过；包含定向交互 25 项。全局 Prettier 仍报告 67 个既有文件问题，与本轮修改文件交集为空，未顺带重排。
 
 Rust全量 **884 passed / 0 failed / 107 ignored**，Clippy、Rust格式和git diff检查通过。真实实例显式验收与默认忽略项分开统计；最终综合矩阵11组passed、0 failed、1 not_run、1 blocked，详情见[本轮综合报告](data-task-validation-final-2026-10-22.json)。测试工具单测为主验收器 7 项、TLS 清理 10 项，均通过。[TLS 独立报告](data-task-tls-validation-2026-10-22.json)记录 4 项真实验收及专属容器、匿名卷、临时证书清理。

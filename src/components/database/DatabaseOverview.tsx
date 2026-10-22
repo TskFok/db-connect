@@ -135,10 +135,6 @@ export function DatabaseOverview() {
   const [dataTaskKind, setDataTaskKind] = useState<"row_sync" | "transfer">(
     "row_sync"
   );
-  const [dataTaskTables, setDataTaskTables] = useState<string[]>([]);
-  useEffect(() => {
-    setDataTaskTables([]);
-  }, [selectedDatabase, activeConnection?.connId]);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [editDbModalOpen, setEditDbModalOpen] = useState(false);
   const [sessionDrawerOpen, setSessionDrawerOpen] = useState(false);
@@ -1081,12 +1077,6 @@ export function DatabaseOverview() {
                         className="database-table-list"
                         columns={columns}
                         dataSource={filteredList}
-                        rowSelection={{
-                          selectedRowKeys: dataTaskTables,
-                          onChange: (keys) =>
-                            setDataTaskTables(keys.map(String)),
-                          preserveSelectedRowKeys: false,
-                        }}
                         rowKey="name"
                         size="small"
                         pagination={false}
@@ -1268,7 +1258,6 @@ export function DatabaseOverview() {
                 saved_connection_id: activeConnection?.config.id ?? "",
                 database: selectedDatabase,
               },
-              tables: dataTaskTables,
             }}
             onClose={() => setDataTaskOpen(false)}
           />

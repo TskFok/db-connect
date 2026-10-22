@@ -123,6 +123,13 @@ fn decode_payload(
     Ok(row)
 }
 fn server_version_verified(version: &str) -> bool {
+    if let Some(patch) = version.strip_prefix("5.7.") {
+        // 集合快照依赖 5.7.8 引入的 JSON 函数；开启日志的原生实例可带 -log 后缀。
+        let patch = patch.strip_suffix("-log").unwrap_or(patch);
+        return !patch.is_empty()
+            && patch.bytes().all(|byte| byte.is_ascii_digit())
+            && patch.parse::<u32>().is_ok_and(|patch| patch >= 8);
+    }
     if let Some(patch) = version.strip_prefix("8.4.") {
         return !patch.is_empty() && patch.bytes().all(|byte| byte.is_ascii_digit());
     }
@@ -382,7 +389,7 @@ impl MySqlSession {
         let facts:Row=conn.query_first("SELECT @@version,@@global.read_only,@@innodb_table_locks,@@lower_case_table_names,@@hostname,@@port,@@server_id,DATABASE()").await.map_err(db_error)?.ok_or(DATABASE_ERROR)?;
         if !server_version_verified(&cell::<String>(&facts, 0)?) {
             return Err(
-                "unsupported_capability: 当前仅 MySQL 8.4 与 MariaDB 11.4 原生会话经过真实验收"
+                "unsupported_capability: 数据任务支持 MySQL 5.7（5.7.8 及以上补丁版本）、MySQL 8.4 与 MariaDB 11.4 原生会话"
                     .into(),
             );
         }
@@ -754,6 +761,25 @@ mod tests {
         assert!(!server_version_verified("8.0.42"));
         assert!(!server_version_verified("11.8.1-MariaDB"));
         assert!(!server_version_verified("8.4.0-unverified-fork"));
+    }
+    #[test]
+    fn mysql_57_with_json_snapshot_support_is_accepted() {
+        for version in ["5.7.8", "5.7.37", "5.7.44", "5.7.44-log"] {
+            assert!(server_version_verified(version), "{version}");
+        }
+    }
+    #[test]
+    fn mysql_without_json_snapshot_support_or_native_version_is_rejected() {
+        for version in [
+            "5.6.51",
+            "5.7.7",
+            "5.7.",
+            "5.7.44.1",
+            "5.7.44-unverified-fork",
+            "5.7.25-TiDB-v6.5.0",
+        ] {
+            assert!(!server_version_verified(version), "{version}");
+        }
     }
     #[test]
     fn schema_grants_are_verified_without_accepting_table_only_or_wrong_scope() {
@@ -1513,7 +1539,7 @@ mod tests {
         std::fs::remove_dir_all(directory).unwrap();
     }
     #[tokio::test]
-    #[ignore = "需要显式配置 DB_CONNECT_DATA_TASK_MYSQL_URL 的专属 MySQL 8.4 容器"]
+    #[ignore = "需要显式配置 DB_CONNECT_DATA_TASK_MYSQL_URL 的专属 MySQL 5.7/8.4 隔离实例"]
     async fn real_mysql_session_contract() {
         real_contract("DB_CONNECT_DATA_TASK_MYSQL_URL").await;
         real_engine_contract("DB_CONNECT_DATA_TASK_MYSQL_URL").await;

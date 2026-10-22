@@ -65,7 +65,7 @@ export function DataTaskWizard({
   }>({ source: [], target: [] });
   const [mappings, setMappings] = useState<TableMapping[]>(
     initialRequest?.mappings ??
-      (seed?.tables?.length ? seed.tables : [""]).map((table) => ({
+      (seed?.tables ?? []).map((table) => ({
         source_table: table,
         target_table: table,
         columns: [{ source_column: "", target_column: "" }],
@@ -153,10 +153,10 @@ export function DataTaskWizard({
             setCapabilities(value);
             const endpoints = JSON.stringify([source, target]);
             if (mappingEndpoints.current !== endpoints) {
-              const defaults = defaultDataTaskMappings(
-                value,
-                JSON.parse(selectedSeedTables) as string[]
-              );
+              const selected = JSON.parse(selectedSeedTables) as string[];
+              const defaults = selected.length
+                ? defaultDataTaskMappings(value, selected)
+                : [];
               setMappings(defaults.length <= 100 ? defaults : []);
               mappingEndpoints.current = endpoints;
             }
@@ -293,7 +293,7 @@ export function DataTaskWizard({
           <Space direction="vertical" style={{ width: "100%" }}>
             <Alert
               type="info"
-              message="已默认选择同名表和同名字段，可从建议中调整或填写真实名称；每个目标表仅映射一次，字段必须一对一。后端会批量校验元数据、主键与无损类型兼容性。"
+              message="请选择需要同步或传输的源表，选中后自动匹配同名目标表和字段，可继续调整表与字段映射。"
             />
             {!!capabilities?.source_tables.length && (
               <Select
