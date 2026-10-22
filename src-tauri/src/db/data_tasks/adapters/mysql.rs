@@ -21,6 +21,10 @@ use crate::{
     },
 };
 use mysql_async::{prelude::*, Conn, Params, Row, Value};
+
+#[cfg(test)]
+#[path = "mysql_version_tests.rs"]
+mod version_tests;
 use serde_json::Value as Json;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, sync::atomic::Ordering, time::Duration};
@@ -69,11 +73,30 @@ fn decode_payload(
     let mut values = Vec::new();
     for field in json.as_array().ok_or("MySQL 集合快照形状无效")? {
         let kind = field["t"].as_str().ok_or("MySQL 集合快照类型缺失")?;
-        let text = || {
-            field["v"]
+        let bytes = if kind == "null" {
+            if !field["v"].is_null() {
+                return Err("MySQL NULL 载荷无效".into());
+            }
+            Vec::new()
+        } else {
+            let encoded = field["v"]
                 .as_str()
-                .ok_or_else(|| "MySQL 集合快照值必须采用无损字符串".to_string())
+                .ok_or("MySQL 集合快照值必须采用十六进制字符串")?;
+            if encoded.len() % 2 != 0 {
+                return Err("MySQL 十六进制长度无效".into());
+            }
+            encoded
+                .as_bytes()
+                .chunks_exact(2)
+                .map(|pair| {
+                    std::str::from_utf8(pair)
+                        .ok()
+                        .and_then(|s| u8::from_str_radix(s, 16).ok())
+                        .ok_or_else(|| "MySQL 十六进制编码无效".to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()?
         };
+        let text = || std::str::from_utf8(&bytes).map_err(|_| "MySQL 文本不是有效 UTF-8");
         values.push(match kind {
             "null" => DataValue::Null,
             "int" => DataValue::Int(text()?.parse().map_err(|_| "MySQL 有符号整数溢出")?),
@@ -82,27 +105,10 @@ fn decode_payload(
                 DataValue::Decimal(crate::db::data_tasks::value::normalize_decimal(text()?)?)
             }
             "text" => DataValue::Text(text()?.into()),
-            "binary" => {
-                let value = text()?;
-                if value.len() % 2 != 0 {
-                    return Err("MySQL 二进制十六进制长度无效".into());
-                }
-                DataValue::Binary(
-                    value
-                        .as_bytes()
-                        .chunks_exact(2)
-                        .map(|pair| {
-                            std::str::from_utf8(pair)
-                                .ok()
-                                .and_then(|s| u8::from_str_radix(s, 16).ok())
-                                .ok_or_else(|| "MySQL 二进制十六进制编码无效".to_string())
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                )
-            }
+            "binary" => DataValue::Binary(bytes),
             "date" | "datetime" | "timestamp" | "time" => DataValue::Temporal {
                 kind: kind.into(),
-                value: text()?.into(),
+                value: crate::db::data_tasks::value::normalize_mysql_temporal(text()?),
             },
             _ => return Err("unsupported_capability: MySQL 值类型未经无损验收".into()),
         });
@@ -123,14 +129,38 @@ fn decode_payload(
     Ok(row)
 }
 fn server_version_verified(version: &str) -> bool {
+    let native = version.strip_suffix("-log").unwrap_or(version);
+    if let Some(patch) = native.strip_prefix("5.5.") {
+        // 5.5.25a 是官方修订版，不能当作第三方分支后缀。
+        let patch = if patch == "25a" { "25" } else { patch };
+        return !patch.is_empty()
+            && patch.bytes().all(|byte| byte.is_ascii_digit())
+            && patch.parse::<u32>().is_ok_and(|patch| patch >= 8);
+    }
+    if let Some(patch) = native.strip_prefix("5.6.") {
+        return !patch.is_empty()
+            && patch.bytes().all(|byte| byte.is_ascii_digit())
+            && patch.parse::<u32>().is_ok_and(|patch| patch >= 10);
+    }
     if let Some(patch) = version.strip_prefix("5.7.") {
-        // 集合快照依赖 5.7.8 引入的 JSON 函数；开启日志的原生实例可带 -log 后缀。
+        // 保留已有 5.7.8 下限；5.7 稳定发行系列从 5.7.9 开始。
         let patch = patch.strip_suffix("-log").unwrap_or(patch);
         return !patch.is_empty()
             && patch.bytes().all(|byte| byte.is_ascii_digit())
             && patch.parse::<u32>().is_ok_and(|patch| patch >= 8);
     }
     if let Some(patch) = version.strip_prefix("8.4.") {
+        return !patch.is_empty() && patch.bytes().all(|byte| byte.is_ascii_digit());
+    }
+    // 8.0.11 是首个 GA；其余创新系列仍需各自的真实驱动验收。
+    if let Some(patch) = version.strip_prefix("8.0.") {
+        let patch = patch.strip_suffix("-log").unwrap_or(patch);
+        return !patch.is_empty()
+            && patch.bytes().all(|byte| byte.is_ascii_digit())
+            && patch.parse::<u32>().is_ok_and(|patch| patch >= 11);
+    }
+    if let Some(patch) = version.strip_prefix("9.7.") {
+        let patch = patch.strip_suffix("-log").unwrap_or(patch);
         return !patch.is_empty() && patch.bytes().all(|byte| byte.is_ascii_digit());
     }
     version
@@ -141,6 +171,11 @@ fn server_version_verified(version: &str) -> bool {
         })
 }
 fn verify_grants(grants: &[String], database: &str, read_only: bool) -> bool {
+    // MySQL 8.0.16+ 的 partial_revokes 会在全局 GRANT 后附加 REVOKE。
+    // 无法证明被隐藏的跨库依赖完整可见时，不能仅凭全局授权提前放行。
+    if grants.iter().any(|grant| grant.starts_with("REVOKE ")) {
+        return false;
+    }
     let mut permissions = std::collections::BTreeSet::new();
     let mut global_select = false;
     for grant in grants {
@@ -251,15 +286,17 @@ fn snapshot_sql(
             let kind = wire_type(&column.declared_type)?;
             let column = id(name);
             let value = if kind == "binary" {
-                format!("HEX({column})")
+                column.clone()
             } else {
                 format!("CAST({column} AS CHAR CHARACTER SET utf8mb4)")
             };
-            fields.push(format!("CASE WHEN {column} IS NULL THEN JSON_OBJECT('t','null','v',NULL) ELSE JSON_OBJECT('t','{kind}','v',{value}) END"));
+            // 只拼接固定 ASCII 结构和 HEX 字符；不依赖 5.7.8 才有的 JSON 函数，
+            // 也不会把 SQL QUOTE 的转义规则误当作 JSON 转义。
+            fields.push(format!("CASE WHEN {column} IS NULL THEN '{{\"t\":\"null\",\"v\":null}}' ELSE CONCAT('{{\"t\":\"{kind}\",\"v\":\"',HEX({value}),'\"}}') END"));
         }
         selects.push(format!(
-            "SELECT {index} AS __data_table,JSON_ARRAY({}) AS __data_payload FROM {}.{}",
-            fields.join(","),
+            "SELECT {index} AS __data_table,CONCAT('[',{},']') AS __data_payload FROM {}.{}",
+            fields.join(",',',"),
             id(database),
             id(&p.table)
         ));
@@ -389,7 +426,7 @@ impl MySqlSession {
         let facts:Row=conn.query_first("SELECT @@version,@@global.read_only,@@innodb_table_locks,@@lower_case_table_names,@@hostname,@@port,@@server_id,DATABASE()").await.map_err(db_error)?.ok_or(DATABASE_ERROR)?;
         if !server_version_verified(&cell::<String>(&facts, 0)?) {
             return Err(
-                "unsupported_capability: 数据任务支持 MySQL 5.7（5.7.8 及以上补丁版本）、MySQL 8.4 与 MariaDB 11.4 原生会话"
+                "unsupported_capability: 数据任务支持 MySQL 5.5（至少 5.5.8）、5.6（至少 5.6.10）、5.7（至少 5.7.8）、8.0（至少 8.0.11）、8.4、9.7 与 MariaDB 11.4 原生会话"
                     .into(),
             );
         }
@@ -584,7 +621,13 @@ impl DataSession for MySqlSession {
     fn begin_read(&mut self) -> SessionFuture<'_, ()> {
         Box::pin(async move {
             checked(&self.cancel)?;
-            self.connection()?.query_drop("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ; START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY").await.map_err(db_error)
+            let conn = self.connection()?;
+            let read_only = if conn.server_version() >= (5, 6, 5) {
+                ", READ ONLY"
+            } else {
+                ""
+            };
+            conn.query_drop(format!("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ; START TRANSACTION WITH CONSISTENT SNAPSHOT{read_only}")).await.map_err(db_error)
         })
     }
     fn begin_protected_write(&mut self, tables: Vec<String>) -> SessionFuture<'_, ()> {
@@ -723,8 +766,99 @@ impl DataSession for MySqlSession {
 mod tests {
     use super::*;
     #[test]
+    fn temporal_fraction_padding_does_not_change_values_or_keys() {
+        let row = |kind: &str, value: &str| {
+            let hex = value
+                .as_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02X}"))
+                .collect::<String>();
+            decode_payload(
+                "t",
+                &[0],
+                &serde_json::json!([{"t":kind,"v":hex}]).to_string(),
+            )
+            .unwrap()
+        };
+        for (kind, plain, padded) in [
+            (
+                "datetime",
+                "2026-10-22 12:34:56",
+                "2026-10-22 12:34:56.000000",
+            ),
+            (
+                "timestamp",
+                "2026-10-22 12:34:56.12",
+                "2026-10-22 12:34:56.120000",
+            ),
+            ("time", "-838:59:58", "-838:59:58.000000"),
+            ("time", "838:59:58.1234", "838:59:58.123400"),
+        ] {
+            assert_eq!(row(kind, plain), row(kind, padded));
+            assert_eq!(
+                row(kind, plain).key_bytes().unwrap(),
+                row(kind, padded).key_bytes().unwrap()
+            );
+        }
+        assert_ne!(
+            row("time", "12:00:00.123456"),
+            row("time", "12:00:00.123457")
+        );
+    }
+    #[test]
+    fn portable_snapshot_decodes_hex_without_json_server_functions() {
+        let row = decode_payload(
+            "t",
+            &[0],
+            r#"[{"t":"int","v":"2D3432"},{"t":"text","v":"00270A5C22E4B8ADF09F9880"},{"t":"text","v":""},{"t":"null","v":null},{"t":"binary","v":"00FF"}]"#,
+        ).unwrap();
+        assert_eq!(row.values[0], DataValue::Int(-42));
+        assert_eq!(row.values[1], DataValue::Text("\0'\n\\\"中😀".into()));
+        assert_eq!(row.values[2], DataValue::Text(String::new()));
+        assert_eq!(row.values[3], DataValue::Null);
+        assert_eq!(row.values[4], DataValue::Binary(vec![0, 255]));
+    }
+    #[test]
+    fn mysql_55_and_56_ga_releases_are_accepted() {
+        for version in [
+            "5.5.8",
+            "5.5.25a",
+            "5.5.25a-log",
+            "5.5.62",
+            "5.6.10",
+            "5.6.51-log",
+        ] {
+            assert!(server_version_verified(version), "{version}");
+        }
+        for version in [
+            "5.1.73",
+            "5.5.7",
+            "5.5.62-fork",
+            "5.5.62a",
+            "5.6.9",
+            "5.6.51-TiDB",
+        ] {
+            assert!(!server_version_verified(version), "{version}");
+        }
+    }
+    #[test]
     fn snapshot_preserves_native_unsigned_decimal_binary_and_temporal_values() {
-        let row = decode_payload("t", &[0], r#"[{"t":"uint","v":"18446744073709551615"},{"t":"decimal","v":"12345678901234567890.123456789"},{"t":"binary","v":"00FF"},{"t":"datetime","v":"2026-10-19 12:34:56.123456"},{"t":"null","v":null}]"#).unwrap();
+        let hex = |value: &str| {
+            value
+                .as_bytes()
+                .iter()
+                .map(|b| format!("{b:02X}"))
+                .collect::<String>()
+        };
+        let payload = serde_json::json!([
+            {"t":"uint","v":hex("18446744073709551615")},
+            {"t":"decimal","v":hex("12345678901234567890.123456789")},
+            {"t":"binary","v":"00FF"},
+            {"t":"datetime","v":hex("2026-10-19 12:34:56.123456")},
+            {"t":"null","v":null}
+        ])
+        .to_string();
+        let row = decode_payload("t", &[0], &payload).unwrap();
         assert_eq!(row.values[0], DataValue::UInt(u64::MAX));
         assert_eq!(
             row.values[1],
@@ -745,6 +879,9 @@ mod tests {
         assert!(decode_payload("t", &[], r#"[{"t":"uint","v":9007199254740993}]"#).is_err());
         assert!(decode_payload("t", &[], r#"[{"t":"binary","v":"GG"}]"#).is_err());
         assert!(decode_payload("t", &[], r#"[{"t":"float","v":"NaN"}]"#).is_err());
+        assert!(decode_payload("t", &[], r#"[{"t":"text","v":"FF"}]"#).is_err());
+        assert!(decode_payload("t", &[], r#"[{"t":"text","v":"0"}]"#).is_err());
+        assert!(decode_payload("t", &[], r#"[{"t":"null","v":"00"}]"#).is_err());
     }
     #[test]
     fn protected_write_never_starts_transaction_after_table_locks() {
@@ -758,7 +895,7 @@ mod tests {
     fn only_verified_server_versions_are_accepted() {
         assert!(server_version_verified("8.4.8"));
         assert!(server_version_verified("11.4.10-MariaDB-ubu2404"));
-        assert!(!server_version_verified("8.0.42"));
+        assert!(!server_version_verified("8.1.0"));
         assert!(!server_version_verified("11.8.1-MariaDB"));
         assert!(!server_version_verified("8.4.0-unverified-fork"));
     }
@@ -769,9 +906,45 @@ mod tests {
         }
     }
     #[test]
-    fn mysql_without_json_snapshot_support_or_native_version_is_rejected() {
+    fn mysql_80_ga_and_97_versions_are_accepted() {
         for version in [
-            "5.6.51",
+            "8.0.11",
+            "8.0.36",
+            "8.0.46",
+            "8.0.46-log",
+            "9.7.0",
+            "9.7.1",
+            "9.7.1-log",
+        ] {
+            assert!(server_version_verified(version), "{version}");
+        }
+    }
+    #[test]
+    fn mysql_unverified_series_prereleases_and_forks_are_rejected() {
+        for version in [
+            "8.0.10",
+            "8.0.11-rc",
+            "8.0.",
+            "8.0.46.1",
+            "8.0.46-unverified-fork",
+            "8.0.11-TiDB-v8.0.0",
+            "8.2.0",
+            "8.3.0",
+            "9.0.0",
+            "9.6.0",
+            "9.7.",
+            "9.7.0-rc",
+            "9.7.0-unverified-fork",
+            "9.8.0",
+            "10.0.0",
+        ] {
+            assert!(!server_version_verified(version), "{version}");
+        }
+    }
+    #[test]
+    fn mysql_unsupported_releases_or_non_native_versions_are_rejected() {
+        for version in [
+            "5.4.3",
             "5.7.7",
             "5.7.",
             "5.7.44.1",
@@ -805,6 +978,28 @@ mod tests {
             false
         ));
     }
+    #[test]
+    fn partial_revokes_cannot_hide_dependencies_behind_global_grants() {
+        let grants = vec![
+            "GRANT ALL PRIVILEGES ON *.* TO `writer`@`%`".into(),
+            "REVOKE SELECT ON `external_db`.* FROM `writer`@`%`".into(),
+        ];
+        assert!(!verify_grants(&grants, "target", false));
+        let mut reversed = grants.clone();
+        reversed.reverse();
+        assert!(!verify_grants(&reversed, "target", false));
+        assert!(!verify_grants(&grants, "external_db", true));
+        // MySQL 8.0+ 的 SHOW GRANTS 会枚举全局静态权限。
+        let explicit = vec![
+            "GRANT SELECT, INSERT, UPDATE, DELETE, LOCK TABLES, TRIGGER, REFERENCES ON *.* TO `writer`@`%`".into(),
+            "REVOKE SELECT ON `external_db`.* FROM `writer`@`%`".into(),
+        ];
+        assert!(!verify_grants(&explicit, "target", false));
+        assert!(!verify_grants(&explicit, "external_db", true));
+        let mut reversed = explicit;
+        reversed.reverse();
+        assert!(!verify_grants(&reversed, "target", false));
+    }
     async fn fixture(env: &str) -> (Conn, ConnectionConfig, DataEndpoint) {
         let url = std::env::var(env).expect("必须显式配置本任务专属 MySQL/MariaDB 测试容器 URL");
         let opts = mysql_async::Opts::from_url(&url).expect("隔离测试 URL 无效");
@@ -812,6 +1007,16 @@ mod tests {
         assert_ne!(opts.tcp_port(), 3306, "只允许独占容器随机端口");
         let database = format!("data_task_fixture_{}", uuid::Uuid::new_v4().simple());
         let mut observer = Conn::new(opts.clone()).await.expect("无法连接专属夹具");
+        let version: String = observer
+            .query_first("SELECT @@version")
+            .await
+            .unwrap()
+            .unwrap();
+        // 验收报告仅采集服务端版本，不输出连接 URL 或数据内容。
+        assert!(version
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b".-_".contains(&byte)));
+        println!("DATA_TASK_MYSQL_VERSION {version}");
         observer
             .query_drop(format!(
                 "CREATE DATABASE {} CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",
@@ -855,8 +1060,25 @@ mod tests {
         use std::sync::{atomic::AtomicBool, Arc};
         let (mut observer, config, endpoint) = fixture(env).await;
         let db = id(&endpoint.database);
-        observer.query_drop(format!("CREATE TABLE {db}.exact_values(id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,n DECIMAL(65,20) NULL,b VARBINARY(100),ts DATETIME(6),s VARCHAR(100)) ENGINE=InnoDB; CREATE TABLE {db}.heterogeneous(v TEXT) ENGINE=InnoDB; CREATE TABLE {db}.unsafe_engine(id INT) ENGINE=MyISAM; INSERT INTO {db}.exact_values VALUES(9007199254740993,123456789012345678901234567890.12345678901234567890,x'00ff','2026-10-20 12:34:56.123456','中文'); INSERT INTO {db}.heterogeneous VALUES(''),(NULL)" )).await.unwrap();
-        observer.query_drop(format!("CREATE TABLE {db}.defaults(id INT PRIMARY KEY,n INT DEFAULT 1,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,g INT GENERATED ALWAYS AS(n+1) STORED) ENGINE=InnoDB; CREATE TRIGGER {db}.default_trigger BEFORE UPDATE ON {db}.defaults FOR EACH ROW SET NEW.n=NEW.n")).await.unwrap();
+        let fractional = observer.server_version() >= (5, 6, 4);
+        let generated = observer.server_version() >= (5, 7, 6);
+        let datetime_type = if fractional {
+            "DATETIME(6)"
+        } else {
+            "DATETIME"
+        };
+        let datetime_value = if fractional {
+            "2026-10-20 12:34:56.123456"
+        } else {
+            "2026-10-20 12:34:56"
+        };
+        let generated_definition = if generated {
+            "g INT GENERATED ALWAYS AS(n+1) STORED"
+        } else {
+            "g INT DEFAULT 2"
+        };
+        observer.query_drop(format!("CREATE TABLE {db}.exact_values(id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,n DECIMAL(65,20) NULL,b VARBINARY(100),ts {datetime_type},s VARCHAR(100)) ENGINE=InnoDB; CREATE TABLE {db}.heterogeneous(v TEXT) ENGINE=InnoDB; CREATE TABLE {db}.unsafe_engine(id INT) ENGINE=MyISAM; INSERT INTO {db}.exact_values VALUES(9007199254740993,123456789012345678901234567890.12345678901234567890,x'00ff','{datetime_value}','中文'); INSERT INTO {db}.heterogeneous VALUES(''),(NULL)" )).await.unwrap();
+        observer.query_drop(format!("CREATE TABLE {db}.defaults(id INT PRIMARY KEY,n INT DEFAULT 1,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,{generated_definition}) ENGINE=InnoDB; CREATE TRIGGER {db}.default_trigger BEFORE UPDATE ON {db}.defaults FOR EACH ROW SET NEW.n=NEW.n")).await.unwrap();
         observer.query_drop(format!("CREATE TABLE {db}.limit_values(id BIGINT UNSIGNED PRIMARY KEY,v BIGINT UNSIGNED) ENGINE=InnoDB; CREATE TABLE {db}.limit_values_copy LIKE {db}.limit_values; INSERT INTO {db}.limit_values VALUES(18446744073709551615,18446744073709551615)")).await.unwrap();
         let catalog_sql=(0..100).map(|i|format!("CREATE TABLE {db}.catalog_{i}(id INT PRIMARY KEY,v VARCHAR(40)) ENGINE=InnoDB;")).collect::<String>();
         observer.query_drop(catalog_sql).await.unwrap();
@@ -897,13 +1119,14 @@ mod tests {
                 .generated,
             "DEFAULT_GENERATED 是普通默认值，不能误判为计算列"
         );
-        assert!(
+        assert_eq!(
             defaults
                 .columns
                 .iter()
                 .find(|c| c.name == "g")
                 .unwrap()
-                .generated
+                .generated,
+            generated
         );
         assert!(defaults.enabled_user_triggers);
 
@@ -962,7 +1185,7 @@ mod tests {
             value.values[3],
             DataValue::Temporal {
                 kind: "datetime".into(),
-                value: "2026-10-20 12:34:56.123456".into()
+                value: datetime_value.into()
             }
         );
         assert!(rows.iter().any(|row| row.values == vec![DataValue::Null]));
@@ -1152,7 +1375,8 @@ mod tests {
             .await
             .unwrap_err()
             .contains("read_only_target"));
-        let user = format!("dt_{}", &uuid::Uuid::new_v4().simple().to_string()[..16]);
+        // MySQL 5.5/5.6 的用户名最多 16 字符。
+        let user = format!("dt_{}", &uuid::Uuid::new_v4().simple().to_string()[..13]);
         observer
             .query_drop(format!(
                 "CREATE USER '{user}'@'%' IDENTIFIED BY ''; GRANT SELECT ON {db}.* TO '{user}'@'%'"
@@ -1212,6 +1436,44 @@ mod tests {
                     .any(|fk| fk.parent_table == "exact_values")),
             "其它数据库的入向外键不能从预检中消失"
         );
+        let partial_revokes: Option<(String, String)> = observer
+            .query_first("SHOW VARIABLES LIKE 'partial_revokes'")
+            .await
+            .unwrap();
+        if let Some((_, previous)) = partial_revokes {
+            observer
+                .query_drop(format!(
+                    "SET GLOBAL partial_revokes=ON; \
+                     CREATE USER '{user}'@'%' IDENTIFIED BY ''; \
+                     GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,REFERENCES ON *.* TO '{user}'@'%'; \
+                     REVOKE SELECT ON {}.* FROM '{user}'@'%'",
+                    id(&external_database)
+                ))
+                .await
+                .unwrap();
+            let mut restricted_config = config.clone();
+            restricted_config.username = user.clone();
+            restricted_config.password = None;
+            let mut restricted = open_native(restricted_config, endpoint.clone(), cancel.clone())
+                .await
+                .unwrap();
+            assert!(
+                !restricted
+                    .load_metadata()
+                    .await
+                    .unwrap()
+                    .permissions_verified,
+                "全局授权后的部分撤销不能隐藏外部入向外键后继续放行"
+            );
+            drop(restricted);
+            assert!(matches!(previous.as_str(), "ON" | "OFF"));
+            observer
+                .query_drop(format!(
+                    "DROP USER '{user}'@'%'; SET GLOBAL partial_revokes={previous}"
+                ))
+                .await
+                .unwrap();
+        }
         observer
             .query_drop(format!("DROP DATABASE {}", id(&external_database)))
             .await
@@ -1238,7 +1500,18 @@ mod tests {
         let (target_observer, target_config, target_endpoint) = fixture(env).await;
         let source = id(&source_endpoint.database);
         let target = id(&target_endpoint.database);
-        observer.query_drop(format!("CREATE TABLE {source}.sync_rows(id BIGINT PRIMARY KEY AUTO_INCREMENT,v VARCHAR(80),amount DECIMAL(30,10),b VARBINARY(8),ts TIMESTAMP(6)) ENGINE=InnoDB; CREATE TABLE {target}.sync_rows LIKE {source}.sync_rows; CREATE TABLE {source}.no_key(v TEXT) ENGINE=InnoDB; CREATE TABLE {target}.no_key(v TEXT) ENGINE=InnoDB; INSERT INTO {source}.sync_rows VALUES(1,'A',12345678901234567890.1234567890,x'00ff','2026-10-20 12:34:56.123456'),(2,'B',NULL,NULL,NULL); INSERT INTO {target}.sync_rows VALUES(2,'old',NULL,NULL,NULL),(3,'C',NULL,NULL,NULL); INSERT INTO {source}.no_key VALUES(NULL),(''),('中文')")).await.unwrap();
+        let fractional = observer.server_version() >= (5, 6, 4);
+        let timestamp_type = if fractional {
+            "TIMESTAMP(6)"
+        } else {
+            "TIMESTAMP"
+        };
+        let timestamp_value = if fractional {
+            "2026-10-20 12:34:56.123456"
+        } else {
+            "2026-10-20 12:34:56"
+        };
+        observer.query_drop(format!("CREATE TABLE {source}.sync_rows(id BIGINT PRIMARY KEY AUTO_INCREMENT,v VARCHAR(80),amount DECIMAL(30,10),b VARBINARY(8),ts {timestamp_type} NULL) ENGINE=InnoDB; CREATE TABLE {target}.sync_rows LIKE {source}.sync_rows; CREATE TABLE {source}.no_key(v TEXT) ENGINE=InnoDB; CREATE TABLE {target}.no_key(v TEXT) ENGINE=InnoDB; INSERT INTO {source}.sync_rows VALUES(1,'A',12345678901234567890.1234567890,x'00ff','{timestamp_value}'),(2,'B',NULL,NULL,NULL); INSERT INTO {target}.sync_rows VALUES(2,'old',NULL,NULL,NULL),(3,'C',NULL,NULL,NULL); INSERT INTO {source}.no_key VALUES(NULL),(''),('中文')")).await.unwrap();
         let request = DataTaskRequest {
             protocol_version: 1,
             kind: DataTaskKind::RowSync,
@@ -1539,7 +1812,7 @@ mod tests {
         std::fs::remove_dir_all(directory).unwrap();
     }
     #[tokio::test]
-    #[ignore = "需要显式配置 DB_CONNECT_DATA_TASK_MYSQL_URL 的专属 MySQL 5.7/8.4 隔离实例"]
+    #[ignore = "需要显式配置 DB_CONNECT_DATA_TASK_MYSQL_URL 的专属 MySQL 5.5/5.6/5.7/8.0/8.4/9.7 隔离实例"]
     async fn real_mysql_session_contract() {
         real_contract("DB_CONNECT_DATA_TASK_MYSQL_URL").await;
         real_engine_contract("DB_CONNECT_DATA_TASK_MYSQL_URL").await;

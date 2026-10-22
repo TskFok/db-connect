@@ -62,6 +62,19 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(result["rows"], 1000000)
         self.assertEqual(result["peak_spool_bytes"], 9007199254740993)
 
+    def test_mysql_version_is_preserved_in_safe_metrics(self):
+        self.fixture("DATA_TASK_MYSQL_VERSION 5.7.44\ntest result: ok. 1 passed; 0 failed; 0 ignored")
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = self.validation.tests("mysql:5.7.44", "real_mysql_session_contract")
+        self.assertEqual(result.get("server_version"), "5.7.44")
+
+    def test_mysql_cross_versions_are_preserved_without_database_output(self):
+        self.fixture("DATA_TASK_MYSQL_CROSS_VERSION source=5.7.44 target=9.7.4\ntest result: ok. 1 passed; 0 failed; 0 ignored")
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = self.validation.tests("mysql-cross", "real_mysql_cross_version_contract")
+        self.assertEqual(result.get("source_server_version"), "5.7.44")
+        self.assertEqual(result.get("target_server_version"), "9.7.4")
+
     def test_missing_database_is_explicitly_not_run(self):
         with contextlib.redirect_stdout(io.StringIO()):
             self.validation.real_driver("postgres")

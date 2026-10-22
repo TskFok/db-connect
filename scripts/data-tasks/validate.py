@@ -58,7 +58,7 @@ class Validation:
         print("正在构建隔离验收测试程序…", flush=True)
         build_flags = [] if self.args.skip_performance else ["--release"]
         result = subprocess.run(["cargo", "test", "--manifest-path", str(MANIFEST), "--lib", "--no-run", "--message-format=json", *build_flags],
-                                cwd=ROOT, capture_output=True, text=True)
+                                cwd=ROOT, capture_output=True, text=True, timeout=getattr(self.args, "build_timeout", None))
         if result.returncode:
             # 编译诊断只含代码位置，不回显环境变量或连接 URI。
             print(result.stderr[-12000:], file=sys.stderr)
@@ -77,20 +77,33 @@ class Validation:
         self.record("rust_build", "passed", "已构建当前工作区测试程序")
         return True
 
-    def tests(self, name: str, test_filter: str, *, env: dict[str, str] | None = None, ignored=False, measure=False) -> dict | None:
+    def tests(self, name: str, test_filter: str, *, env: dict[str, str] | None = None, ignored=False, measure=False,
+              timeout: float | None = None, inherit_env=True, exact=False, required_metrics=()) -> dict | None:
         assert self.binary
         args = [str(self.binary), test_filter, "--nocapture", "--test-threads=1"]
         if ignored:
             args.append("--ignored")
+        if exact:
+            args.append("--exact")
         if measure and Path("/usr/bin/time").exists():
             args = ["/usr/bin/time", "-l" if sys.platform == "darwin" else "-v", *args]
-        process_env = os.environ.copy()
+        process_env = os.environ.copy() if inherit_env else {}
         process_env.update(env or {})
         start = time.monotonic()
-        result = subprocess.run(args, cwd=ROOT, env=process_env, capture_output=True, text=True)
+        try:
+            result = subprocess.run(args, cwd=ROOT, env=process_env, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self.record(name, "failed", "测试程序超过配置的超时时间", elapsed_seconds=round(time.monotonic() - start, 3))
+            return None
         output = result.stdout + "\n" + result.stderr
         summary = re.search(r"test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored", output)
         metrics = {"elapsed_seconds": round(time.monotonic() - start, 3)}
+        mysql_version = re.search(r"DATA_TASK_MYSQL_VERSION ([0-9][A-Za-z0-9.+_-]{0,127})(?=\s|$)", output)
+        if mysql_version:
+            metrics["server_version"] = mysql_version.group(1)
+        cross_versions = re.search(r"DATA_TASK_MYSQL_CROSS_VERSION source=([0-9][A-Za-z0-9.+_-]{0,127}) target=([0-9][A-Za-z0-9.+_-]{0,127})(?=\s|$)", output)
+        if cross_versions:
+            metrics["source_server_version"], metrics["target_server_version"] = cross_versions.groups()
         data = re.search(r"DATA_TASK_METRICS ([^\n]+)", output)
         if data:
             for key, value in re.findall(r"(\w+)=(\d+)", data.group(1)):
@@ -113,6 +126,9 @@ class Validation:
             metrics["failed_tests"] = sorted(set(re.findall(r"(?m)^    (db::[A-Za-z0-9_:]+)$", output)))
             # 仅保留测试标识，不打印真实驱动错误正文，避免测试依赖把连接信息带入输出。
             self.record(name, "failed", f"{passed} 通过，{failed} 失败；请单独运行对应 Rust 测试检查脱敏诊断", **metrics)
+            return None
+        if any(key not in metrics for key in required_metrics):
+            self.record(name, "not_run", "测试缺少必需的验收指标，不能确认契约已运行", **metrics)
             return None
         self.record(name, "passed", f"{passed} 通过，{skipped} 个显式忽略的测试另行验收", **metrics)
         return metrics

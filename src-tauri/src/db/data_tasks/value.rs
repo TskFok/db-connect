@@ -20,6 +20,20 @@ pub struct CanonicalRow {
     pub key: Vec<DataValue>,
     pub values: Vec<DataValue>,
 }
+/// MySQL 根据列精度补小数尾零；规范快照只删除这些零，不改变时区或时长范围。
+pub fn normalize_mysql_temporal(input: &str) -> String {
+    match input.split_once('.') {
+        Some((whole, fraction)) if fraction.bytes().all(|byte| byte.is_ascii_digit()) => {
+            let fraction = fraction.trim_end_matches('0');
+            if fraction.is_empty() {
+                whole.into()
+            } else {
+                format!("{whole}.{fraction}")
+            }
+        }
+        _ => input.into(),
+    }
+}
 /// 定点小数只做十进制字符规范化，绝不经过浮点数。
 pub fn normalize_decimal(input: &str) -> Result<String, String> {
     let (negative, digits) = if let Some(s) = input.strip_prefix('-') {

@@ -274,6 +274,10 @@ fn database_type_name(
         return Some("FLOAT4".into());
     }
     if database == DatabaseType::MySql {
+        // MySQL 不写 fsp 表示秒精度；同类型传输也不能把默认精度当作 6。
+        if matches!(upper.as_str(), "DATETIME" | "TIMESTAMP" | "TIME") {
+            return Some(format!("{upper}(0)"));
+        }
         if cross && target && matches!(upper.as_str(), "TEXT" | "TINYTEXT" | "BLOB" | "TINYBLOB") {
             return None;
         }
@@ -416,7 +420,11 @@ fn normalize_temporal(
     };
     Ok(super::value::DataValue::Temporal {
         kind: kind.into(),
-        value,
+        value: if target_db == DatabaseType::MySql {
+            super::value::normalize_mysql_temporal(&value)
+        } else {
+            value
+        },
     })
 }
 
@@ -599,6 +607,21 @@ pub fn normalize_transfer_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn mysql_default_temporal_precision_is_zero_for_same_type_transfers() {
+        use crate::models::types::DatabaseType::MySql;
+        for kind in ["DATETIME", "TIMESTAMP", "TIME"] {
+            assert_eq!(
+                resolve_database_transfer_type(MySql, &format!("{kind}(6)"), MySql, kind),
+                TypeCompatibility::Unsupported,
+                "{kind} 缺省精度为秒，不能接收微秒声明"
+            );
+            assert_eq!(
+                resolve_database_transfer_type(MySql, kind, MySql, &format!("{kind}(6)")),
+                TypeCompatibility::Compatible
+            );
+        }
+    }
     use crate::models::types::DatabaseType;
     #[test]
     fn exact_decimal_boolean_and_naive_temporal_cross_types_are_supported() {
@@ -792,7 +815,7 @@ mod tests {
                 MySql,
                 "DATETIME(6)",
                 "datetime",
-                "2026-10-21 12:34:56.120000",
+                "2026-10-21 12:34:56.12",
             ),
             (
                 "2026-10-21 12:34:56.1234",

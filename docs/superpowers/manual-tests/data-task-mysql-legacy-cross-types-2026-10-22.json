@@ -1,0 +1,228 @@
+{
+  "scope": "isolated_local_mysql84_mariadb114_postgres17_sqlserver2022_sqlite",
+  "run_id": "a47807088300444a8fdb4aff6a3d3eca",
+  "generated_at": "2026-10-22T07:10:10.819699+00:00",
+  "no_pull": true,
+  "inherited_data_task_environment_removed": true,
+  "sql_readiness_queries": 0,
+  "images": [
+    {
+      "driver": "mysql",
+      "image": "mysql:8.4",
+      "image_id": "sha256:6ea90827b1100f8f2ae306a539f86d2c264a26ed435a2a9f75551dd5c3aeb242",
+      "architecture": "arm64",
+      "repo_digests": [
+        "mysql@sha256:6ea90827b1100f8f2ae306a539f86d2c264a26ed435a2a9f75551dd5c3aeb242"
+      ]
+    },
+    {
+      "driver": "mariadb",
+      "image": "mariadb:11.4",
+      "image_id": "sha256:250e1609e93c0e6aecf64bfbab2d84d5e89d2481540fe77447ff6c855c3b1873",
+      "architecture": "arm64",
+      "repo_digests": [
+        "mariadb@sha256:250e1609e93c0e6aecf64bfbab2d84d5e89d2481540fe77447ff6c855c3b1873"
+      ]
+    },
+    {
+      "driver": "postgres",
+      "image": "postgres:17-alpine",
+      "image_id": "sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24",
+      "architecture": "arm64",
+      "repo_digests": [
+        "postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24"
+      ]
+    },
+    {
+      "driver": "sqlserver",
+      "image": "mcr.microsoft.com/mssql/server:2022-latest",
+      "image_id": "sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718",
+      "architecture": "amd64",
+      "repo_digests": [
+        "mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718"
+      ]
+    }
+  ],
+  "results": [
+    {
+      "name": "mariadb114_session_contract",
+      "mysql_family_image": "mariadb:11.4",
+      "status": "passed",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "exit_code": 0,
+      "elapsed_seconds": 13.431,
+      "test_filter": "db::data_tasks::adapters::mysql::tests::real_mariadb_session_contract",
+      "failed_tests": [],
+      "tested_names": [
+        "db::data_tasks::adapters::mysql::tests::real_mariadb_session_contract"
+      ],
+      "server_version": "11.4.13-MariaDB-ubu2404"
+    },
+    {
+      "name": "mysql84_session_contract",
+      "mysql_family_image": "mysql:8.4",
+      "status": "passed",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "exit_code": 0,
+      "elapsed_seconds": 12.869,
+      "test_filter": "db::data_tasks::adapters::mysql::tests::real_mysql_session_contract",
+      "failed_tests": [],
+      "tested_names": [
+        "db::data_tasks::adapters::mysql::tests::real_mysql_session_contract"
+      ],
+      "server_version": "8.4.11"
+    },
+    {
+      "name": "mysql84_cross_type_matrix",
+      "mysql_family_image": "mysql:8.4",
+      "status": "passed",
+      "passed": 42,
+      "failed": 0,
+      "ignored": 0,
+      "exit_code": 0,
+      "elapsed_seconds": 44.318,
+      "test_filter": "db::data_tasks::cross_type_tests::real_",
+      "failed_tests": [],
+      "tested_names": [
+        "db::data_tasks::cross_type_tests::real_exact_boolean_invalid_sqlite_blocks_before_replace",
+        "db::data_tasks::cross_type_tests::real_exact_boolean_invalid_sqlite_to_mysql_blocks_before_replace",
+        "db::data_tasks::cross_type_tests::real_exact_boolean_postgres_to_mysql",
+        "db::data_tasks::cross_type_tests::real_exact_boolean_postgres_to_sqlite",
+        "db::data_tasks::cross_type_tests::real_exact_boolean_postgres_to_sqlserver",
+        "db::data_tasks::cross_type_tests::real_exact_boolean_sqlite_to_mysql",
+        "db::data_tasks::cross_type_tests::real_exact_boolean_sqlite_to_postgres",
+        "db::data_tasks::cross_type_tests::real_exact_boolean_sqlite_to_sqlserver",
+        "db::data_tasks::cross_type_tests::real_exact_boolean_sqlserver_to_mysql",
+        "db::data_tasks::cross_type_tests::real_exact_boolean_sqlserver_to_postgres",
+        "db::data_tasks::cross_type_tests::real_exact_boolean_sqlserver_to_sqlite",
+        "db::data_tasks::cross_type_tests::real_exact_date_range_blocks_before_replace",
+        "db::data_tasks::cross_type_tests::real_exact_date_time_mysql_to_postgres",
+        "db::data_tasks::cross_type_tests::real_exact_date_time_mysql_to_sqlserver",
+        "db::data_tasks::cross_type_tests::real_exact_date_time_postgres_to_mysql",
+        "db::data_tasks::cross_type_tests::real_exact_date_time_postgres_to_sqlserver",
+        "db::data_tasks::cross_type_tests::real_exact_date_time_sqlserver_to_mysql",
+        "db::data_tasks::cross_type_tests::real_exact_date_time_sqlserver_to_postgres",
+        "db::data_tasks::cross_type_tests::real_exact_decimal_narrowing_blocks_before_replace",
+        "db::data_tasks::cross_type_tests::real_exact_decimal_timestamp_mysql_to_postgres",
+        "db::data_tasks::cross_type_tests::real_exact_decimal_timestamp_mysql_to_sqlserver",
+        "db::data_tasks::cross_type_tests::real_exact_decimal_timestamp_postgres_to_mysql",
+        "db::data_tasks::cross_type_tests::real_exact_decimal_timestamp_postgres_to_sqlserver",
+        "db::data_tasks::cross_type_tests::real_exact_decimal_timestamp_sqlserver_to_mysql",
+        "db::data_tasks::cross_type_tests::real_exact_decimal_timestamp_sqlserver_to_postgres",
+        "db::data_tasks::cross_type_tests::real_exact_pg_boolean_to_sqlserver_tinyint",
+        "db::data_tasks::cross_type_tests::real_exact_sqlite_boolean_to_sqlserver_tinyint",
+        "db::data_tasks::cross_type_tests::real_exact_temporal_narrowing_blocks_before_replace",
+        "db::data_tasks::cross_type_tests::real_mysql_to_postgres",
+        "db::data_tasks::cross_type_tests::real_mysql_to_sqlite",
+        "db::data_tasks::cross_type_tests::real_mysql_to_sqlserver",
+        "db::data_tasks::cross_type_tests::real_postgres_same_type_all_modes",
+        "db::data_tasks::cross_type_tests::real_postgres_to_mysql",
+        "db::data_tasks::cross_type_tests::real_postgres_to_sqlite",
+        "db::data_tasks::cross_type_tests::real_postgres_to_sqlserver",
+        "db::data_tasks::cross_type_tests::real_sqlite_to_mysql",
+        "db::data_tasks::cross_type_tests::real_sqlite_to_postgres",
+        "db::data_tasks::cross_type_tests::real_sqlite_to_sqlserver",
+        "db::data_tasks::cross_type_tests::real_sqlserver_same_type_executor_and_cancel",
+        "db::data_tasks::cross_type_tests::real_sqlserver_to_mysql",
+        "db::data_tasks::cross_type_tests::real_sqlserver_to_postgres",
+        "db::data_tasks::cross_type_tests::real_sqlserver_to_sqlite"
+      ]
+    },
+    {
+      "name": "mariadb114_cross_type_matrix",
+      "mysql_family_image": "mariadb:11.4",
+      "status": "passed",
+      "passed": 42,
+      "failed": 0,
+      "ignored": 0,
+      "exit_code": 0,
+      "elapsed_seconds": 41.961,
+      "test_filter": "db::data_tasks::cross_type_tests::real_",
+      "failed_tests": [],
+      "tested_names": [
+        "db::data_tasks::cross_type_tests::real_exact_boolean_invalid_sqlite_blocks_before_replace",
+        "db::data_tasks::cross_type_tests::real_exact_boolean_invalid_sqlite_to_mysql_blocks_before_replace",
+        "db::data_tasks::cross_type_tests::real_exact_boolean_postgres_to_mysql",
+        "db::data_tasks::cross_type_tests::real_exact_boolean_postgres_to_sqlite",
+        "db::data_tasks::cross_type_tests::real_exact_boolean_postgres_to_sqlserver",
+        "db::data_tasks::cross_type_tests::real_exact_boolean_sqlite_to_mysql",
+        "db::data_tasks::cross_type_tests::real_exact_boolean_sqlite_to_postgres",
+        "db::data_tasks::cross_type_tests::real_exact_boolean_sqlite_to_sqlserver",
+        "db::data_tasks::cross_type_tests::real_exact_boolean_sqlserver_to_mysql",
+        "db::data_tasks::cross_type_tests::real_exact_boolean_sqlserver_to_postgres",
+        "db::data_tasks::cross_type_tests::real_exact_boolean_sqlserver_to_sqlite",
+        "db::data_tasks::cross_type_tests::real_exact_date_range_blocks_before_replace",
+        "db::data_tasks::cross_type_tests::real_exact_date_time_mysql_to_postgres",
+        "db::data_tasks::cross_type_tests::real_exact_date_time_mysql_to_sqlserver",
+        "db::data_tasks::cross_type_tests::real_exact_date_time_postgres_to_mysql",
+        "db::data_tasks::cross_type_tests::real_exact_date_time_postgres_to_sqlserver",
+        "db::data_tasks::cross_type_tests::real_exact_date_time_sqlserver_to_mysql",
+        "db::data_tasks::cross_type_tests::real_exact_date_time_sqlserver_to_postgres",
+        "db::data_tasks::cross_type_tests::real_exact_decimal_narrowing_blocks_before_replace",
+        "db::data_tasks::cross_type_tests::real_exact_decimal_timestamp_mysql_to_postgres",
+        "db::data_tasks::cross_type_tests::real_exact_decimal_timestamp_mysql_to_sqlserver",
+        "db::data_tasks::cross_type_tests::real_exact_decimal_timestamp_postgres_to_mysql",
+        "db::data_tasks::cross_type_tests::real_exact_decimal_timestamp_postgres_to_sqlserver",
+        "db::data_tasks::cross_type_tests::real_exact_decimal_timestamp_sqlserver_to_mysql",
+        "db::data_tasks::cross_type_tests::real_exact_decimal_timestamp_sqlserver_to_postgres",
+        "db::data_tasks::cross_type_tests::real_exact_pg_boolean_to_sqlserver_tinyint",
+        "db::data_tasks::cross_type_tests::real_exact_sqlite_boolean_to_sqlserver_tinyint",
+        "db::data_tasks::cross_type_tests::real_exact_temporal_narrowing_blocks_before_replace",
+        "db::data_tasks::cross_type_tests::real_mysql_to_postgres",
+        "db::data_tasks::cross_type_tests::real_mysql_to_sqlite",
+        "db::data_tasks::cross_type_tests::real_mysql_to_sqlserver",
+        "db::data_tasks::cross_type_tests::real_postgres_same_type_all_modes",
+        "db::data_tasks::cross_type_tests::real_postgres_to_mysql",
+        "db::data_tasks::cross_type_tests::real_postgres_to_sqlite",
+        "db::data_tasks::cross_type_tests::real_postgres_to_sqlserver",
+        "db::data_tasks::cross_type_tests::real_sqlite_to_mysql",
+        "db::data_tasks::cross_type_tests::real_sqlite_to_postgres",
+        "db::data_tasks::cross_type_tests::real_sqlite_to_sqlserver",
+        "db::data_tasks::cross_type_tests::real_sqlserver_same_type_executor_and_cancel",
+        "db::data_tasks::cross_type_tests::real_sqlserver_to_mysql",
+        "db::data_tasks::cross_type_tests::real_sqlserver_to_postgres",
+        "db::data_tasks::cross_type_tests::real_sqlserver_to_sqlite"
+      ]
+    }
+  ],
+  "cleanup": [
+    {
+      "driver": "mysql",
+      "container_name": "db-connect-legacy-cross-mysql-a47807088300",
+      "status": "removed",
+      "anonymous_data_volumes": "removed",
+      "anonymous_volume_count": 1
+    },
+    {
+      "driver": "mariadb",
+      "container_name": "db-connect-legacy-cross-mariadb-a47807088300",
+      "status": "removed",
+      "anonymous_data_volumes": "removed",
+      "anonymous_volume_count": 1
+    },
+    {
+      "driver": "postgres",
+      "container_name": "db-connect-legacy-cross-postgres-a47807088300",
+      "status": "removed",
+      "anonymous_data_volumes": "removed",
+      "anonymous_volume_count": 1
+    },
+    {
+      "driver": "sqlserver",
+      "container_name": "db-connect-legacy-cross-sqlserver-a47807088300",
+      "status": "removed",
+      "anonymous_data_volumes": "removed",
+      "anonymous_volume_count": 1
+    }
+  ],
+  "binary_sha256": "76f4dc79335b47f4cd733d3c3c0988398ba28d6cdbf15cabb26d2a106dedb6b2",
+  "source_revision": "9fbdbe91d09c8683d38e39acf1f50c6e45a8c2bb",
+  "working_tree_dirty": true,
+  "binary_unchanged": true,
+  "elapsed_seconds": 139.142,
+  "status": "passed"
+}

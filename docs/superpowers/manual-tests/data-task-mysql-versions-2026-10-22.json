@@ -1,0 +1,277 @@
+{
+  "scope": "disposable_official_mysql_versions_loopback",
+  "images": [
+    "mysql:5.7.44",
+    "mysql:8.0.11",
+    "mysql:8.0.36",
+    "mysql:8.0.46",
+    "mysql:8.4"
+  ],
+  "reference_image": "mysql:9.7",
+  "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "generated_at": "2026-10-22T06:44:29.841497+00:00",
+  "interrupted": false,
+  "source_revision": "9fbdbe91d09c8683d38e39acf1f50c6e45a8c2bb",
+  "working_tree_dirty": true,
+  "binary_sha256": "904d334f907a2dbf9df93a9761706491b7c0d43a06b70d8850cb541bea9a4d54",
+  "resolved_images": [
+    {
+      "image": "mysql:9.7",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:8fb11c38b3551e22d50adbb688f027f8ff4ea2d2445aa277c1cc97b4af85ec54",
+      "repo_digests": [
+        "mysql@sha256:8fb11c38b3551e22d50adbb688f027f8ff4ea2d2445aa277c1cc97b4af85ec54"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "mysql:5.7.44",
+      "docker_platform": "linux/amd64",
+      "image_id": "sha256:4bc6bc963e6d8443453676cae56536f4b8156d78bae03c0145cbe47c2aad73bb",
+      "repo_digests": [
+        "mysql@sha256:4bc6bc963e6d8443453676cae56536f4b8156d78bae03c0145cbe47c2aad73bb"
+      ],
+      "architecture": "amd64"
+    },
+    {
+      "image": "mysql:8.0.11",
+      "docker_platform": "linux/amd64",
+      "image_id": "sha256:ffa442557c7a350939d9cd531f77d6cbb98e868aeb4a328289e0e5469101c20e",
+      "repo_digests": [
+        "mysql@sha256:ffa442557c7a350939d9cd531f77d6cbb98e868aeb4a328289e0e5469101c20e"
+      ],
+      "architecture": "amd64"
+    },
+    {
+      "image": "mysql:8.0.36",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:a532724022429812ec797c285c1b540a644c15e248579c6bfdf12a8fbaab4964",
+      "repo_digests": [
+        "mysql@sha256:a532724022429812ec797c285c1b540a644c15e248579c6bfdf12a8fbaab4964"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "mysql:8.0.46",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b",
+      "repo_digests": [
+        "mysql@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "mysql:8.4",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:6ea90827b1100f8f2ae306a539f86d2c264a26ed435a2a9f75551dd5c3aeb242",
+      "repo_digests": [
+        "mysql@sha256:6ea90827b1100f8f2ae306a539f86d2c264a26ed435a2a9f75551dd5c3aeb242"
+      ],
+      "architecture": "arm64"
+    }
+  ],
+  "results": [
+    {
+      "name": "reference:mysql:9.7",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 11.821,
+      "server_version": "9.7.4",
+      "image": "mysql:9.7",
+      "docker_platform": "linux/arm64"
+    },
+    {
+      "name": "mysql:5.7.44",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 15.104,
+      "server_version": "5.7.44",
+      "image": "mysql:5.7.44",
+      "docker_platform": "linux/amd64"
+    },
+    {
+      "name": "mysql:5.7.44->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.809,
+      "source_server_version": "5.7.44",
+      "target_server_version": "9.7.4",
+      "image": "mysql:5.7.44",
+      "docker_platform": "linux/amd64",
+      "target_image": "mysql:9.7"
+    },
+    {
+      "name": "reference->mysql:5.7.44",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.748,
+      "source_server_version": "9.7.4",
+      "target_server_version": "5.7.44",
+      "image": "mysql:9.7",
+      "docker_platform": "linux/arm64",
+      "target_image": "mysql:5.7.44"
+    },
+    {
+      "name": "mysql:8.0.11",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 13.952,
+      "server_version": "8.0.11",
+      "image": "mysql:8.0.11",
+      "docker_platform": "linux/amd64"
+    },
+    {
+      "name": "mysql:8.0.11->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.16,
+      "source_server_version": "8.0.11",
+      "target_server_version": "9.7.4",
+      "image": "mysql:8.0.11",
+      "docker_platform": "linux/amd64",
+      "target_image": "mysql:9.7"
+    },
+    {
+      "name": "reference->mysql:8.0.11",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.286,
+      "source_server_version": "9.7.4",
+      "target_server_version": "8.0.11",
+      "image": "mysql:9.7",
+      "docker_platform": "linux/arm64",
+      "target_image": "mysql:8.0.11"
+    },
+    {
+      "name": "mysql:8.0.36",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 12.179,
+      "server_version": "8.0.36",
+      "image": "mysql:8.0.36",
+      "docker_platform": "linux/arm64"
+    },
+    {
+      "name": "mysql:8.0.36->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 0.918,
+      "source_server_version": "8.0.36",
+      "target_server_version": "9.7.4",
+      "image": "mysql:8.0.36",
+      "docker_platform": "linux/arm64",
+      "target_image": "mysql:9.7"
+    },
+    {
+      "name": "reference->mysql:8.0.36",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 0.855,
+      "source_server_version": "9.7.4",
+      "target_server_version": "8.0.36",
+      "image": "mysql:9.7",
+      "docker_platform": "linux/arm64",
+      "target_image": "mysql:8.0.36"
+    },
+    {
+      "name": "mysql:8.0.46",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 12.962,
+      "server_version": "8.0.46",
+      "image": "mysql:8.0.46",
+      "docker_platform": "linux/arm64"
+    },
+    {
+      "name": "mysql:8.0.46->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.099,
+      "source_server_version": "8.0.46",
+      "target_server_version": "9.7.4",
+      "image": "mysql:8.0.46",
+      "docker_platform": "linux/arm64",
+      "target_image": "mysql:9.7"
+    },
+    {
+      "name": "reference->mysql:8.0.46",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 0.951,
+      "source_server_version": "9.7.4",
+      "target_server_version": "8.0.46",
+      "image": "mysql:9.7",
+      "docker_platform": "linux/arm64",
+      "target_image": "mysql:8.0.46"
+    },
+    {
+      "name": "mysql:8.4",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 14.211,
+      "server_version": "8.4.11",
+      "image": "mysql:8.4",
+      "docker_platform": "linux/arm64"
+    },
+    {
+      "name": "mysql:8.4->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 0.942,
+      "source_server_version": "8.4.11",
+      "target_server_version": "9.7.4",
+      "image": "mysql:8.4",
+      "docker_platform": "linux/arm64",
+      "target_image": "mysql:9.7"
+    },
+    {
+      "name": "reference->mysql:8.4",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 0.892,
+      "source_server_version": "9.7.4",
+      "target_server_version": "8.4.11",
+      "image": "mysql:9.7",
+      "docker_platform": "linux/arm64",
+      "target_image": "mysql:8.4"
+    }
+  ],
+  "cleanup": [
+    {
+      "image": "mysql:5.7.44",
+      "container_name": "db-connect-mysql-versions-candidate-b7f07de7ee604cb5",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mysql:8.0.11",
+      "container_name": "db-connect-mysql-versions-candidate-1ce5b448c05640c4",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mysql:8.0.36",
+      "container_name": "db-connect-mysql-versions-candidate-fcd84eeedd0e451e",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mysql:8.0.46",
+      "container_name": "db-connect-mysql-versions-candidate-904668ad8b664645",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mysql:8.4",
+      "container_name": "db-connect-mysql-versions-candidate-f328f9e0c7df4460",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mysql:9.7",
+      "container_name": "db-connect-mysql-versions-reference-f0c35f26e4404dba",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    }
+  ]
+}
