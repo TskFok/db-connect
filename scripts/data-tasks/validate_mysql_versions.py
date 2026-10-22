@@ -81,6 +81,14 @@ def mysql_tcp_ready(log: str) -> bool:
 
 
 class MySQLVersionValidation(Validation):
+    scope = "disposable_official_mysql_versions_loopback"
+    label = LABEL
+    resource_prefix = "db-connect-mysql-versions"
+    select_platform = staticmethod(image_platform)
+
+    def single_contract(self, image: str) -> tuple[str, str]:
+        return SINGLE_TEST, "DB_CONNECT_DATA_TASK_MYSQL_URL"
+
     def __init__(self, args: argparse.Namespace):
         super().__init__(args)
         self.run_id = uuid.uuid4().hex
@@ -112,19 +120,19 @@ class MySQLVersionValidation(Validation):
             raise FixtureError("无法读取本地镜像标识或架构") from None
 
     def create_fixture(self, image: str, role: str) -> dict:
-        selected_platform = image_platform(image, self.args.platform)
+        selected_platform = self.select_platform(image, self.args.platform)
         self.prepare_image(image, selected_platform)
-        resource = {"name": f"db-connect-mysql-versions-{role}-{uuid.uuid4().hex[:16]}",
+        resource = {"name": f"{self.resource_prefix}-{role}-{uuid.uuid4().hex[:16]}",
                     "image": image, "platform": selected_platform, "created": False, "cleaned": False}
         password = "DbTask9!" + secrets.token_hex(16)
-        with tempfile.TemporaryDirectory(prefix="db-connect-mysql-version-") as temporary:
+        with tempfile.TemporaryDirectory(prefix=self.resource_prefix + "-") as temporary:
             env_file = Path(temporary) / "container.env"
             env_file.write_text(f"MYSQL_ROOT_PASSWORD={password}\nMYSQL_ROOT_HOST=%\n", encoding="utf-8")
             env_file.chmod(0o600)
             # 在请求创建之前登记唯一名称，中断或超时也会核对所有权并清理。
             self.resources.append(resource)
             created = self.docker("create", "--pull=never", "--name", resource["name"],
-                                  "--label", f"{LABEL}={self.run_id}", "--platform", selected_platform,
+                                  "--label", f"{self.label}={self.run_id}", "--platform", selected_platform,
                                   "-p", "127.0.0.1::3306", "--volume", "/var/lib/mysql",
                                   "--env-file", str(env_file), image)
             if created.returncode:
@@ -169,7 +177,7 @@ class MySQLVersionValidation(Validation):
             elif inspected.returncode == 0:
                 items = json.loads(inspected.stdout)
                 if (isinstance(items, list) and len(items) == 1 and items[0].get("Name") == "/" + name
-                        and items[0].get("Config", {}).get("Labels", {}).get(LABEL) == self.run_id):
+                        and items[0].get("Config", {}).get("Labels", {}).get(self.label) == self.run_id):
                     removed = self.docker("rm", "-f", "-v", name)
                     if removed.returncode == 0:
                         result.update(status="removed", anonymous_data_volume="removed")
@@ -182,10 +190,11 @@ class MySQLVersionValidation(Validation):
     def contract(self, name: str, source: dict, target: dict | None = None):
         # 清除父进程全部数据任务配置，只有本次容器的 URL 可以进入真实测试。
         environment = {key: value for key, value in os.environ.items() if not key.startswith("DB_CONNECT_DATA_TASK_")}
-        environment["DB_CONNECT_DATA_TASK_MYSQL_URL"] = source["url"]
+        test_filter, source_key = (CROSS_TEST, "DB_CONNECT_DATA_TASK_MYSQL_URL") if target else self.single_contract(source["image"])
+        environment[source_key] = source["url"]
         if target:
             environment["DB_CONNECT_DATA_TASK_MYSQL_TARGET_URL"] = target["url"]
-        self.tests(name, CROSS_TEST if target else SINGLE_TEST, env=environment, ignored=True, exact=True,
+        self.tests(name, test_filter, env=environment, ignored=True, exact=True,
                    inherit_env=False, timeout=self.args.test_timeout,
                    required_metrics=("source_server_version", "target_server_version") if target else ("server_version",))
         self.results[-1].update(image=source["image"], docker_platform=source["platform"])
@@ -279,7 +288,7 @@ class MySQLVersionValidation(Validation):
                 dirty = bool(dirty_result.stdout) if dirty_result.returncode == 0 else None
             except (OSError, subprocess.TimeoutExpired, KeyboardInterrupt):
                 pass
-            report = {"scope": "disposable_official_mysql_versions_loopback", "images": self.args.images,
+            report = {"scope": self.scope, "images": self.args.images,
                       "reference_image": self.args.reference_image, "platform": platform.platform(),
                       "generated_at": datetime.now(timezone.utc).isoformat(), "interrupted": self.interrupted,
                       "source_revision": revision, "working_tree_dirty": dirty, "binary_sha256": self.binary_sha256,

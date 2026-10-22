@@ -21,6 +21,48 @@
 
 ## 自动证据
 
+### MariaDB 11.x / 12.x 兼容（2026-10-22）
+
+按照用户指定的优先范围，版本门禁扩展至 **11.0–11.8、12.0–12.3**；根据[官方发行记录](https://mariadb.org/mariadb/all-releases/)，每个系列的首个稳定版本均为 `.2`，因此拒绝 `.0`、`.1`、明确的预发布后缀和未知系列。接受常见 Ubuntu/Debian 发行包、原生 `-log` 后缀和 `5.5.5-` 兼容前缀。10.x 与 13.x 未在本次开放；版本范围不代表逐个补丁均已实测。
+
+在专属 MariaDB 12.3.3 实例中先复现了单库合约和与 MySQL 双向跨版本合约失败：`@@global.read_only` 返回字符串 `OFF`，原来的 `u8` 解码失败。依据[官方变量说明](https://mariadb.com/docs/server/server-management/variables-and-modes/server-system-variables#read_only)，改为 SQL 中将旧版布尔和 12.x 枚举统一为 0/1，真实合约分别验证 `ON`、`NO_LOCK`、`NO_LOCK_NO_ADMIN` 均阻止目标写入。
+
+[Galera 不支持 `LOCK TABLES`](https://mariadb.com/docs/galera-cluster/reference/mariadb-galera-cluster-known-limitations)，因此 MariaDB 的同一条服务端事实查询通过 `information_schema.GLOBAL_VARIABLES` 检查全局 `wsrep_on`，开启时不承诺受保护写入；未编译 Galera 的构建缺少该目录项时按关闭处理。这里没有增加 SQL 查询次数。真实单库合约继续检查 100 表元数据固定 **5 次 SELECT + 1 次 SHOW GRANTS**、多表快照 **1 次 SELECT**，并检查系统版本表和 InnoDB 序列不能作为普通物理表。Galera 集群本身未进行真实多节点验收，不宣称支持其目标写入。
+
+新增 `scripts/data-tasks/validate_mariadb_versions.py`，复用 MySQL 多版本验收器的隔离容器、脱敏报告和清理逻辑。MariaDB 单库执行独立 `real_mariadb_session_contract`；跨实例执行既有完整合约，覆盖合并、镜像、追加、替换、值保真、精度保护、外键与锁、取消和失败回滚。默认以 MySQL 8.4 为参考，也支持指定 MariaDB 11.4 作为参考；只读取本次创建的容器，不读取应用保存连接，不在探活循环中执行 SQL。
+
+```sh
+python3 scripts/data-tasks/validate_mariadb_versions.py \
+  --report artifacts/data-tasks/mariadb-versions.json
+
+python3 scripts/data-tasks/validate_mariadb_versions.py \
+  --images mariadb:11.0 mariadb:11.8 mariadb:12.3 \
+  --reference-image mariadb:11.4 \
+  --report artifacts/data-tasks/mariadb-cross-series.json
+```
+
+最终统一矩阵 **40 passed / 0 failed / 0 not_run**：MySQL 8.4.13 参考单库合约、13 个 MariaDB 单库合约及 26 个双向跨实例合约；14 个专属容器和匿名数据卷均已清理。版本、镜像摘要、二进制指纹和清理记录见[完整版本报告](data-task-mariadb-versions-2026-10-22.json)。
+
+|系列镜像|实际服务端版本|单库及与 MySQL 8.4 双向合约|
+|---|---|---|
+|`mariadb:11.0`|`11.0.6-MariaDB-ubu2204`|passed|
+|`mariadb:11.1`|`11.1.6-MariaDB-ubu2204`|passed|
+|`mariadb:11.2`|`11.2.6-MariaDB-ubu2204`|passed|
+|`mariadb:11.3`|`11.3.2-MariaDB-1:11.3.2+maria~ubu2204`|passed|
+|`mariadb:11.4`|`11.4.13-MariaDB-ubu2404`|passed|
+|`mariadb:11.5`|`11.5.2-MariaDB-ubu2404`|passed|
+|`mariadb:11.6`|`11.6.2-MariaDB-ubu2404`|passed|
+|`mariadb:11.7`|`11.7.2-MariaDB-ubu2404`|passed|
+|`mariadb:11.8`|`11.8.9-MariaDB-ubu2404`|passed|
+|`mariadb:12.0`|`12.0.2-MariaDB-ubu2404`|passed|
+|`mariadb:12.1`|`12.1.2-MariaDB-ubu2404`|passed|
+|`mariadb:12.2`|`12.2.2-MariaDB-ubu2404`|passed|
+|`mariadb:12.3`|`12.3.3-MariaDB-ubu2404`|passed|
+
+另以 MariaDB 11.4.13 为参考，对 MariaDB 11.0.6、11.8.9、12.3.3 执行单库和双向跨系列合约，**10 passed / 0 failed / 0 not_run**；4 个专属容器和匿名卷均清理，见[MariaDB 跨系列报告](data-task-mariadb-cross-series-2026-10-22.json)。两份最终报告使用同一二进制，合计 50 项真实合约通过。首次下载 12.1/12.2 镜像遇到临时失败，补齐镜像后使用 `--no-pull` 重跑统一矩阵，上表不将下载失败算作通过。
+
+本轮 `cargo test --manifest-path src-tauri/Cargo.toml --lib` 为 **896 passed / 0 failed / 108 ignored**，显式忽略的真实数据库用例按上述矩阵独立执行；Python 验收脚本测试 **52 passed**。新增版本边界、Galera 缺失变量及发行包版本指标测试均先确认失败再修复，Rust 格式与差异空白检查通过。
+
 ### MySQL 5.5 起的旧版兼容（2026-10-22）
 
 在既有 5.7/8.0/8.4/9.7 支持上，新增 **5.5.8+ 的 5.5 系列**和 **5.6.10+ 的 5.6 系列**，包含原生 `-log` 后缀及官方修订版 `5.5.25a`。两条新系列的下限为各自首个 GA；5.7 继续保留既有 5.7.8 下限。根据用户确认，最低覆盖 5.5，不开放 5.0/5.1。版本门禁覆盖系列范围，真实验收只代表表中列出的补丁。

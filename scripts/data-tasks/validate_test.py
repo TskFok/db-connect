@@ -75,6 +75,57 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(result.get("source_server_version"), "5.7.44")
         self.assertEqual(result.get("target_server_version"), "9.7.4")
 
+    def test_mariadb_package_versions_are_preserved_in_single_metrics(self):
+        for version in ("11.4.5-MariaDB-0+deb12u1", "11.4.5-MariaDB-1:11.4.5+maria~ubu2404"):
+            with self.subTest(version=version):
+                self.fixture(f"DATA_TASK_MYSQL_VERSION {version}\ntest result: ok. 1 passed; 0 failed; 0 ignored")
+                with contextlib.redirect_stdout(io.StringIO()):
+                    result = self.validation.tests("mariadb", "real_mariadb_session_contract")
+                self.assertEqual(result.get("server_version"), version)
+
+    def test_mariadb_package_versions_are_preserved_in_both_cross_metrics(self):
+        versions = ("11.4.5-MariaDB-0+deb12u1", "11.4.5-MariaDB-1:11.4.5+maria~ubu2404")
+        for source, target in (versions, versions[::-1]):
+            with self.subTest(source=source, target=target):
+                self.fixture(f"DATA_TASK_MYSQL_CROSS_VERSION source={source} target={target}\ntest result: ok. 1 passed; 0 failed; 0 ignored")
+                with contextlib.redirect_stdout(io.StringIO()):
+                    result = self.validation.tests("mariadb-cross", "real_mysql_cross_version_contract")
+                self.assertEqual(result.get("source_server_version"), source)
+                self.assertEqual(result.get("target_server_version"), target)
+
+    def test_version_metrics_stop_at_spaces_and_newlines_without_retaining_urls(self):
+        version = "11.4.5-MariaDB-1:11.4.5+maria~ubu2404"
+        private_url = "mysql://business:private@production/database"
+        for separator in (" ", "\n", "\t"):
+            with self.subTest(separator=repr(separator)):
+                self.fixture(f"DATA_TASK_MYSQL_VERSION {version}{separator}{private_url}\n"
+                             f"DATA_TASK_MYSQL_CROSS_VERSION source={version} target={version}{separator}{private_url}\n"
+                             "test result: ok. 1 passed; 0 failed; 0 ignored")
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    result = self.validation.tests("versions", "real_")
+                self.assertEqual(result.get("server_version"), version)
+                self.assertEqual(result.get("source_server_version"), version)
+                self.assertEqual(result.get("target_server_version"), version)
+                self.assertNotIn(private_url, str(self.validation.results) + output.getvalue())
+
+    def test_version_metrics_reject_urls_and_cross_line_source_target_pairs(self):
+        for token in ("mysql://business:private@production/database", "11.4.5:mysql://business:private@production/database"):
+            with self.subTest(token=token):
+                self.fixture(f"DATA_TASK_MYSQL_VERSION {token}\n"
+                             f"DATA_TASK_MYSQL_CROSS_VERSION source={token} target=8.4.0\n"
+                             f"DATA_TASK_MYSQL_CROSS_VERSION source=8.4.0 target={token}\n"
+                             "DATA_TASK_MYSQL_CROSS_VERSION source=11.4.5-MariaDB\ntarget=8.4.0\n"
+                             "test result: ok. 1 passed; 0 failed; 0 ignored")
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    result = self.validation.tests("versions", "real_", required_metrics=("server_version",))
+                self.assertIsNone(result)
+                report = self.validation.results[-1]
+                self.assertEqual(report["status"], "not_run")
+                self.assertFalse({"server_version", "source_server_version", "target_server_version"} & report.keys())
+                self.assertNotIn("private", str(report) + output.getvalue())
+
     def test_missing_database_is_explicitly_not_run(self):
         with contextlib.redirect_stdout(io.StringIO()):
             self.validation.real_driver("postgres")

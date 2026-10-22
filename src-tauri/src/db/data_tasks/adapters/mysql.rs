@@ -129,6 +129,9 @@ fn decode_payload(
     Ok(row)
 }
 fn server_version_verified(version: &str) -> bool {
+    if version.contains("-MariaDB") {
+        return mariadb_version_verified(version);
+    }
     let native = version.strip_suffix("-log").unwrap_or(version);
     if let Some(patch) = native.strip_prefix("5.5.") {
         // 5.5.25a 是官方修订版，不能当作第三方分支后缀。
@@ -163,12 +166,57 @@ fn server_version_verified(version: &str) -> bool {
         let patch = patch.strip_suffix("-log").unwrap_or(patch);
         return !patch.is_empty() && patch.bytes().all(|byte| byte.is_ascii_digit());
     }
-    version
-        .strip_prefix("11.4.")
-        .and_then(|tail| tail.split_once("-MariaDB"))
-        .is_some_and(|(patch, _)| {
-            !patch.is_empty() && patch.bytes().all(|byte| byte.is_ascii_digit())
+    false
+}
+fn mariadb_version_verified(version: &str) -> bool {
+    // 部分代理/握手保留 MySQL 兼容前缀，不能把 5.5.5 误当成实际服务端版本。
+    let version = version.strip_prefix("5.5.5-").unwrap_or(version);
+    let Some((release, suffix)) = version.split_once("-MariaDB") else {
+        return false;
+    };
+    let parts = release
+        .split('.')
+        .map(|part| {
+            if part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()) {
+                return None;
+            }
+            part.parse::<u32>().ok()
         })
+        .collect::<Option<Vec<_>>>();
+    let Some(parts) = parts else { return false };
+    // 11.0–11.8、12.0–12.3 各系列的首个稳定版本均为 x.y.2。
+    if !matches!(parts.as_slice(), [11, 0..=8, patch] | [12, 0..=3, patch] if *patch >= 2) {
+        return false;
+    }
+    let suffix = suffix.strip_suffix("-log").unwrap_or(suffix);
+    if suffix.is_empty() {
+        return true;
+    }
+    let Some(distribution) = suffix.strip_prefix('-') else {
+        return false;
+    };
+    let distribution = distribution
+        .strip_prefix(&format!("1:{release}+maria~"))
+        .unwrap_or(distribution);
+    ["ubu", "deb", "0+deb", "0ubuntu"].iter().any(|prefix| {
+        distribution.strip_prefix(prefix).is_some_and(|tail| {
+            tail.as_bytes().first().is_some_and(u8::is_ascii_digit)
+                && tail
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b".+~".contains(&byte))
+        })
+    })
+}
+fn server_facts_sql(version: (u16, u16, u16)) -> String {
+    // 驱动从 MariaDB 握手解析实际版本。当前 MySQL 支持至 9.x；MariaDB
+    // 支持 11.x/12.x，仅这两类会话读取 MariaDB 的变量目录。未编译
+    // Galera 的构建没有 WSREP_ON 这一行，COUNT 为 0，不会报未知变量。
+    let wsrep = if matches!(version.0, 11 | 12) {
+        "(SELECT COUNT(*) FROM information_schema.GLOBAL_VARIABLES WHERE VARIABLE_NAME='WSREP_ON' AND UPPER(VARIABLE_VALUE) NOT IN ('0','OFF'))"
+    } else {
+        "0"
+    };
+    format!("SELECT @@version,CAST(@@global.read_only AS CHAR) NOT IN ('0','OFF'),@@innodb_table_locks,@@lower_case_table_names,@@hostname,@@port,@@server_id,DATABASE(),{wsrep}")
 }
 fn verify_grants(grants: &[String], database: &str, read_only: bool) -> bool {
     // MySQL 8.0.16+ 的 partial_revokes 会在全局 GRANT 后附加 REVOKE。
@@ -423,10 +471,16 @@ impl MySqlSession {
         let config = self.config.clone();
         let conn = self.connection()?;
         // 每类一次集合目录读取。主键、FK、触发器、索引与权限查询次数不随表数变化。
-        let facts:Row=conn.query_first("SELECT @@version,@@global.read_only,@@innodb_table_locks,@@lower_case_table_names,@@hostname,@@port,@@server_id,DATABASE()").await.map_err(db_error)?.ok_or(DATABASE_ERROR)?;
+        // MariaDB 12.0 起 read_only 是 OFF/ON/NO_LOCK/NO_LOCK_NO_ADMIN 枚举；
+        // 统一成 0/1，同时兼容 MySQL 和 MariaDB 11.x 的布尔变量。
+        let facts: Row = conn
+            .query_first(server_facts_sql(conn.server_version()))
+            .await
+            .map_err(db_error)?
+            .ok_or(DATABASE_ERROR)?;
         if !server_version_verified(&cell::<String>(&facts, 0)?) {
             return Err(
-                "unsupported_capability: 数据任务支持 MySQL 5.5（至少 5.5.8）、5.6（至少 5.6.10）、5.7（至少 5.7.8）、8.0（至少 8.0.11）、8.4、9.7 与 MariaDB 11.4 原生会话"
+                "unsupported_capability: 数据任务支持 MySQL 5.5（至少 5.5.8）、5.6（至少 5.6.10）、5.7（至少 5.7.8）、8.0（至少 8.0.11）、8.4、9.7 与 MariaDB 11.0–11.8、12.0–12.3（各系列至少 x.y.2 稳定版）原生会话"
                     .into(),
             );
         }
@@ -441,7 +495,9 @@ impl MySqlSession {
             actual_database = actual_database.to_lowercase();
         }
         let read_only = cell::<u8>(&facts, 1)? != 0 || config.read_only.unwrap_or(false);
-        let locking = cell::<u8>(&facts, 2)? == 1;
+        // Galera 不支持 LOCK TABLES；即使当前会话关闭 wsrep，仍可能接收
+        // 其它节点的写入，因此必须检查 GLOBAL 开关，不能承诺目标保护。
+        let locking = cell::<u8>(&facts, 2)? == 1 && cell::<u8>(&facts, 8)? == 0;
         let rows:Vec<Row>=conn.exec("SELECT t.TABLE_NAME,t.TABLE_TYPE,COALESCE(t.ENGINE,''),c.COLUMN_NAME,c.COLUMN_TYPE,c.IS_NULLABLE,c.COLUMN_DEFAULT,c.EXTRA,c.COLLATION_NAME,COALESCE(k.ORDINAL_POSITION,0) FROM information_schema.TABLES t JOIN information_schema.COLUMNS c ON c.TABLE_SCHEMA=t.TABLE_SCHEMA AND c.TABLE_NAME=t.TABLE_NAME LEFT JOIN information_schema.KEY_COLUMN_USAGE k ON k.TABLE_SCHEMA=c.TABLE_SCHEMA AND k.TABLE_NAME=c.TABLE_NAME AND k.COLUMN_NAME=c.COLUMN_NAME AND k.CONSTRAINT_NAME='PRIMARY' WHERE t.TABLE_SCHEMA=? ORDER BY t.TABLE_NAME,c.ORDINAL_POSITION",(database.clone(),)).await.map_err(db_error)?;
         let mut tables: BTreeMap<String, DataTable> = BTreeMap::new();
         for row in rows {
@@ -900,6 +956,74 @@ mod tests {
         assert!(!server_version_verified("8.4.0-unverified-fork"));
     }
     #[test]
+    fn mariadb_stable_11_and_12_series_are_accepted() {
+        for version in [
+            "11.0.2-MariaDB",
+            "11.1.2-MariaDB",
+            "11.2.2-MariaDB",
+            "11.3.2-MariaDB",
+            "11.4.2-MariaDB",
+            "11.5.2-MariaDB",
+            "11.6.2-MariaDB",
+            "11.7.2-MariaDB",
+            "11.8.2-MariaDB",
+            "12.0.2-MariaDB",
+            "12.1.2-MariaDB",
+            "12.2.2-MariaDB",
+            "12.3.2-MariaDB",
+            "11.8.3-MariaDB-ubu2404",
+            "12.3.3-MariaDB-deb13",
+            "11.4.5-MariaDB-0+deb12u1",
+            "11.4.5-MariaDB-0ubuntu0.24.04.1",
+            "11.4.5-MariaDB-1:11.4.5+maria~ubu2404",
+            "5.5.5-11.8.3-MariaDB-log",
+        ] {
+            assert!(server_version_verified(version), "{version}");
+        }
+    }
+    #[test]
+    fn mariadb_prereleases_unknown_series_and_malformed_versions_are_rejected() {
+        for version in [
+            "11.0.1-MariaDB",
+            "11.4.1-MariaDB",
+            "11.8.1-MariaDB",
+            "12.0.1-MariaDB",
+            "12.3.1-MariaDB",
+            "11.9.2-MariaDB",
+            "12.4.2-MariaDB",
+            "13.0.2-MariaDB",
+            "10.11.10-MariaDB",
+            "11.8.2",
+            "11.8.-MariaDB",
+            "11.8.2.1-MariaDB",
+            "11.8.2-rc-MariaDB",
+            "11.8.2-MariaDB-rc",
+            "12.0.2-MariaDB-beta",
+            "11.8.2-MariaDBevil",
+            "11.8.2-MariaDB-unverified-fork",
+            "11.8.4294967296-MariaDB",
+            "5.5.5-11.8.1-MariaDB",
+            "5.5.5-8.4.8",
+            "5.5.5-5.5.5-11.8.2-MariaDB",
+        ] {
+            assert!(!server_version_verified(version), "{version}");
+        }
+    }
+    #[test]
+    fn mariadb_facts_do_not_require_a_galera_enabled_server_build() {
+        let sql = server_facts_sql((12, 3, 3));
+        assert!(
+            !sql.contains("@@global.wsrep_on"),
+            "未编译 Galera 的服务端没有该系统变量"
+        );
+        assert!(sql.contains("information_schema.GLOBAL_VARIABLES"));
+        assert!(sql.contains("VARIABLE_NAME='WSREP_ON'"));
+        assert!(
+            !server_facts_sql((8, 4, 11)).contains("GLOBAL_VARIABLES"),
+            "MySQL 不提供 MariaDB 的变量目录"
+        );
+    }
+    #[test]
     fn mysql_57_with_json_snapshot_support_is_accepted() {
         for version in ["5.7.8", "5.7.37", "5.7.44", "5.7.44-log"] {
             assert!(server_version_verified(version), "{version}");
@@ -1015,7 +1139,7 @@ mod tests {
         // 验收报告仅采集服务端版本，不输出连接 URL 或数据内容。
         assert!(version
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b".-_".contains(&byte)));
+            .all(|byte| byte.is_ascii_alphanumeric() || b".-_+:~".contains(&byte)));
         println!("DATA_TASK_MYSQL_VERSION {version}");
         observer
             .query_drop(format!(
@@ -1056,6 +1180,19 @@ mod tests {
             key_indices: key,
         }
     }
+    async fn assert_read_only_state(observer: &mut Conn, target: &mut MySqlSession, state: &str) {
+        observer
+            .query_drop(format!("SET GLOBAL read_only={state}"))
+            .await
+            .unwrap();
+        let metadata = target.load_metadata().await;
+        // 先复位再断言，失败也不能让后续隔离验收停留在只读状态。
+        observer
+            .query_drop("SET GLOBAL read_only=OFF")
+            .await
+            .unwrap();
+        assert!(metadata.unwrap().read_only, "{state} 必须阻止目标写入");
+    }
     async fn real_contract(env: &str) {
         use std::sync::{atomic::AtomicBool, Arc};
         let (mut observer, config, endpoint) = fixture(env).await;
@@ -1080,6 +1217,9 @@ mod tests {
         observer.query_drop(format!("CREATE TABLE {db}.exact_values(id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,n DECIMAL(65,20) NULL,b VARBINARY(100),ts {datetime_type},s VARCHAR(100)) ENGINE=InnoDB; CREATE TABLE {db}.heterogeneous(v TEXT) ENGINE=InnoDB; CREATE TABLE {db}.unsafe_engine(id INT) ENGINE=MyISAM; INSERT INTO {db}.exact_values VALUES(9007199254740993,123456789012345678901234567890.12345678901234567890,x'00ff','{datetime_value}','中文'); INSERT INTO {db}.heterogeneous VALUES(''),(NULL)" )).await.unwrap();
         observer.query_drop(format!("CREATE TABLE {db}.defaults(id INT PRIMARY KEY,n INT DEFAULT 1,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,{generated_definition}) ENGINE=InnoDB; CREATE TRIGGER {db}.default_trigger BEFORE UPDATE ON {db}.defaults FOR EACH ROW SET NEW.n=NEW.n")).await.unwrap();
         observer.query_drop(format!("CREATE TABLE {db}.limit_values(id BIGINT UNSIGNED PRIMARY KEY,v BIGINT UNSIGNED) ENGINE=InnoDB; CREATE TABLE {db}.limit_values_copy LIKE {db}.limit_values; INSERT INTO {db}.limit_values VALUES(18446744073709551615,18446744073709551615)")).await.unwrap();
+        if env == "DB_CONNECT_DATA_TASK_MARIADB_URL" {
+            observer.query_drop(format!("CREATE TABLE {db}.versioned_rows(id INT PRIMARY KEY) ENGINE=InnoDB WITH SYSTEM VERSIONING; CREATE SEQUENCE {db}.native_sequence ENGINE=InnoDB")).await.unwrap();
+        }
         let catalog_sql=(0..100).map(|i|format!("CREATE TABLE {db}.catalog_{i}(id INT PRIMARY KEY,v VARCHAR(40)) ENGINE=InnoDB;")).collect::<String>();
         observer.query_drop(catalog_sql).await.unwrap();
         let cancel = Arc::new(AtomicBool::new(false));
@@ -1129,6 +1269,27 @@ mod tests {
             generated
         );
         assert!(defaults.enabled_user_triggers);
+
+        if env == "DB_CONNECT_DATA_TASK_MARIADB_URL" {
+            assert!(
+                !meta
+                    .tables
+                    .iter()
+                    .find(|t| t.name == "versioned_rows")
+                    .unwrap()
+                    .physical,
+                "系统版本表不能按普通 InnoDB 表同步"
+            );
+            assert!(
+                !meta
+                    .tables
+                    .iter()
+                    .find(|t| t.name == "native_sequence")
+                    .unwrap()
+                    .physical,
+                "InnoDB 序列不能按普通数据表传输"
+            );
+        }
 
         assert!(meta.permissions_verified && meta.consistent_snapshot && meta.protected_write);
         assert!(
@@ -1411,19 +1572,11 @@ mod tests {
             .query_drop(format!("DROP USER '{user}'@'%'"))
             .await
             .unwrap();
-        observer
-            .query_drop("SET GLOBAL read_only=ON")
-            .await
-            .unwrap();
-        let instance_readonly = target.load_metadata().await;
-        observer
-            .query_drop("SET GLOBAL read_only=OFF")
-            .await
-            .unwrap();
-        assert!(
-            instance_readonly.unwrap().read_only,
-            "实例只读状态必须参与预检"
-        );
+        assert_read_only_state(&mut observer, &mut target, "ON").await;
+        if env == "DB_CONNECT_DATA_TASK_MARIADB_URL" && observer.server_version() >= (12, 0, 0) {
+            assert_read_only_state(&mut observer, &mut target, "NO_LOCK").await;
+            assert_read_only_state(&mut observer, &mut target, "NO_LOCK_NO_ADMIN").await;
+        }
         let external_database = format!("{}_external", endpoint.database);
         observer.query_drop(format!("CREATE DATABASE {}; CREATE TABLE {}.child(id INT PRIMARY KEY,parent BIGINT UNSIGNED,FOREIGN KEY(parent) REFERENCES {db}.exact_values(id)) ENGINE=InnoDB",id(&external_database),id(&external_database))).await.unwrap();
         let external_meta = target.load_metadata().await.unwrap();
@@ -1818,7 +1971,7 @@ mod tests {
         real_engine_contract("DB_CONNECT_DATA_TASK_MYSQL_URL").await;
     }
     #[tokio::test]
-    #[ignore = "需要显式配置 DB_CONNECT_DATA_TASK_MARIADB_URL 的专属 MariaDB 11.4 容器"]
+    #[ignore = "需要显式配置 DB_CONNECT_DATA_TASK_MARIADB_URL 的专属 MariaDB 11.x/12.x 隔离容器"]
     async fn real_mariadb_session_contract() {
         real_contract("DB_CONNECT_DATA_TASK_MARIADB_URL").await;
         real_engine_contract("DB_CONNECT_DATA_TASK_MARIADB_URL").await;

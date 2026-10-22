@@ -98,10 +98,10 @@ class Validation:
         output = result.stdout + "\n" + result.stderr
         summary = re.search(r"test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored", output)
         metrics = {"elapsed_seconds": round(time.monotonic() - start, 3)}
-        mysql_version = re.search(r"DATA_TASK_MYSQL_VERSION ([0-9][A-Za-z0-9.+_-]{0,127})(?=\s|$)", output)
+        mysql_version = re.search(r"DATA_TASK_MYSQL_VERSION ([0-9][A-Za-z0-9.+_:~-]{0,127})(?=\s|$)", output)
         if mysql_version:
             metrics["server_version"] = mysql_version.group(1)
-        cross_versions = re.search(r"DATA_TASK_MYSQL_CROSS_VERSION source=([0-9][A-Za-z0-9.+_-]{0,127}) target=([0-9][A-Za-z0-9.+_-]{0,127})(?=\s|$)", output)
+        cross_versions = re.search(r"DATA_TASK_MYSQL_CROSS_VERSION source=([0-9][A-Za-z0-9.+_:~-]{0,127}) target=([0-9][A-Za-z0-9.+_:~-]{0,127})(?=\s|$)", output)
         if cross_versions:
             metrics["source_server_version"], metrics["target_server_version"] = cross_versions.groups()
         data = re.search(r"DATA_TASK_METRICS ([^\n]+)", output)

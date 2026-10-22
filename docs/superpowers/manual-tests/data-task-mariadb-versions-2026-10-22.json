@@ -1,0 +1,653 @@
+{
+  "scope": "disposable_official_mariadb_versions_loopback",
+  "images": [
+    "mariadb:11.0",
+    "mariadb:11.1",
+    "mariadb:11.2",
+    "mariadb:11.3",
+    "mariadb:11.4",
+    "mariadb:11.5",
+    "mariadb:11.6",
+    "mariadb:11.7",
+    "mariadb:11.8",
+    "mariadb:12.0",
+    "mariadb:12.1",
+    "mariadb:12.2",
+    "mariadb:12.3"
+  ],
+  "reference_image": "mysql:8.4",
+  "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "generated_at": "2026-10-22T08:02:03.715458+00:00",
+  "interrupted": false,
+  "source_revision": "6ccb1d4aba63a432d08851ee02297e15cc48b02c",
+  "working_tree_dirty": true,
+  "binary_sha256": "b2c8fd75917a7a40fed3369f75c023b069185ef7adf59128d3a32ce3216487c7",
+  "resolved_images": [
+    {
+      "image": "mysql:8.4",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:76f0358884cb92d9a086d24e5671c38048d3fef40f2588703d73eb55392d6b69",
+      "repo_digests": [
+        "mysql@sha256:76f0358884cb92d9a086d24e5671c38048d3fef40f2588703d73eb55392d6b69"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "mariadb:11.0",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:9f56b2ac10055b68d07e3dcf2a17109fef77f1f08d504b1f028eb874457963b6",
+      "repo_digests": [
+        "mariadb@sha256:9f56b2ac10055b68d07e3dcf2a17109fef77f1f08d504b1f028eb874457963b6"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "mariadb:11.1",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:6f42bfc1b0ceacc22c49c1e934f6ed68c4cec658f199101dc0c8d45f3b90941d",
+      "repo_digests": [
+        "mariadb@sha256:6f42bfc1b0ceacc22c49c1e934f6ed68c4cec658f199101dc0c8d45f3b90941d"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "mariadb:11.2",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:ff87d49107a1e4878c63c3a3132bfdf628e6732879b8e4ceb72e041206d3aece",
+      "repo_digests": [
+        "mariadb@sha256:ff87d49107a1e4878c63c3a3132bfdf628e6732879b8e4ceb72e041206d3aece"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "mariadb:11.3",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:e101f9db31916a5d4d7d594dd0dd092fb23ab4f499f1d7a7425d1afd4162c4bc",
+      "repo_digests": [
+        "mariadb@sha256:e101f9db31916a5d4d7d594dd0dd092fb23ab4f499f1d7a7425d1afd4162c4bc"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "mariadb:11.4",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:250e1609e93c0e6aecf64bfbab2d84d5e89d2481540fe77447ff6c855c3b1873",
+      "repo_digests": [
+        "mariadb@sha256:250e1609e93c0e6aecf64bfbab2d84d5e89d2481540fe77447ff6c855c3b1873"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "mariadb:11.5",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:2d50fe0f77dac919396091e527e5e148a9de690e58f32875f113bef6506a17f5",
+      "repo_digests": [
+        "mariadb@sha256:2d50fe0f77dac919396091e527e5e148a9de690e58f32875f113bef6506a17f5"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "mariadb:11.6",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:bfb1298c06cd15f446f1c59600b3a856dae861705d1a2bd2a00edbd6c74ba748",
+      "repo_digests": [
+        "mariadb@sha256:bfb1298c06cd15f446f1c59600b3a856dae861705d1a2bd2a00edbd6c74ba748"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "mariadb:11.7",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:fcc7fcd7114adb5d41f14d116b8aac45f94280d2babfbbb71b4782922ee6d8d4",
+      "repo_digests": [
+        "mariadb@sha256:fcc7fcd7114adb5d41f14d116b8aac45f94280d2babfbbb71b4782922ee6d8d4"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "mariadb:11.8",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:f16d7a344413e519dff518f27bdb221388f84b0d274c97c4fb5f2cb0dc1b34fa",
+      "repo_digests": [
+        "mariadb@sha256:f16d7a344413e519dff518f27bdb221388f84b0d274c97c4fb5f2cb0dc1b34fa"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "mariadb:12.0",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:607835cd628b78e2876f6a586d0ec37b296c47683b31ef750002d3d17d3d8f7a",
+      "repo_digests": [
+        "mariadb@sha256:607835cd628b78e2876f6a586d0ec37b296c47683b31ef750002d3d17d3d8f7a"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "mariadb:12.1",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:e487701b1f7e3f47319fe005b417c72becb67824a58b7bd35c6505f070f66dcd",
+      "repo_digests": [
+        "mariadb@sha256:e487701b1f7e3f47319fe005b417c72becb67824a58b7bd35c6505f070f66dcd"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "mariadb:12.2",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:6a4c4bbf0447c2247801309513fcc0dd17c3f35390368139ce419387fdd1144d",
+      "repo_digests": [
+        "mariadb@sha256:6a4c4bbf0447c2247801309513fcc0dd17c3f35390368139ce419387fdd1144d"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "mariadb:12.3",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:99c125f103f5d081ebbc9ffe064e63daf7f688ac33a5f7f29af2d7260a96debf",
+      "repo_digests": [
+        "mariadb@sha256:99c125f103f5d081ebbc9ffe064e63daf7f688ac33a5f7f29af2d7260a96debf"
+      ],
+      "architecture": "arm64"
+    }
+  ],
+  "results": [
+    {
+      "name": "reference:mysql:8.4",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 12.493,
+      "server_version": "8.4.13",
+      "image": "mysql:8.4",
+      "docker_platform": "linux/arm64"
+    },
+    {
+      "name": "mariadb:11.0",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 11.988,
+      "server_version": "11.0.6-MariaDB-ubu2204",
+      "image": "mariadb:11.0",
+      "docker_platform": "linux/arm64"
+    },
+    {
+      "name": "mariadb:11.0->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.048,
+      "source_server_version": "11.0.6-MariaDB-ubu2204",
+      "target_server_version": "8.4.13",
+      "image": "mariadb:11.0",
+      "docker_platform": "linux/arm64",
+      "target_image": "mysql:8.4"
+    },
+    {
+      "name": "reference->mariadb:11.0",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.17,
+      "source_server_version": "8.4.13",
+      "target_server_version": "11.0.6-MariaDB-ubu2204",
+      "image": "mysql:8.4",
+      "docker_platform": "linux/arm64",
+      "target_image": "mariadb:11.0"
+    },
+    {
+      "name": "mariadb:11.1",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 11.924,
+      "server_version": "11.1.6-MariaDB-ubu2204",
+      "image": "mariadb:11.1",
+      "docker_platform": "linux/arm64"
+    },
+    {
+      "name": "mariadb:11.1->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.037,
+      "source_server_version": "11.1.6-MariaDB-ubu2204",
+      "target_server_version": "8.4.13",
+      "image": "mariadb:11.1",
+      "docker_platform": "linux/arm64",
+      "target_image": "mysql:8.4"
+    },
+    {
+      "name": "reference->mariadb:11.1",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 0.993,
+      "source_server_version": "8.4.13",
+      "target_server_version": "11.1.6-MariaDB-ubu2204",
+      "image": "mysql:8.4",
+      "docker_platform": "linux/arm64",
+      "target_image": "mariadb:11.1"
+    },
+    {
+      "name": "mariadb:11.2",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 12.205,
+      "server_version": "11.2.6-MariaDB-ubu2204",
+      "image": "mariadb:11.2",
+      "docker_platform": "linux/arm64"
+    },
+    {
+      "name": "mariadb:11.2->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.036,
+      "source_server_version": "11.2.6-MariaDB-ubu2204",
+      "target_server_version": "8.4.13",
+      "image": "mariadb:11.2",
+      "docker_platform": "linux/arm64",
+      "target_image": "mysql:8.4"
+    },
+    {
+      "name": "reference->mariadb:11.2",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.382,
+      "source_server_version": "8.4.13",
+      "target_server_version": "11.2.6-MariaDB-ubu2204",
+      "image": "mysql:8.4",
+      "docker_platform": "linux/arm64",
+      "target_image": "mariadb:11.2"
+    },
+    {
+      "name": "mariadb:11.3",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 12.632,
+      "server_version": "11.3.2-MariaDB-1:11.3.2+maria~ubu2204",
+      "image": "mariadb:11.3",
+      "docker_platform": "linux/arm64"
+    },
+    {
+      "name": "mariadb:11.3->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.084,
+      "source_server_version": "11.3.2-MariaDB-1:11.3.2+maria~ubu2204",
+      "target_server_version": "8.4.13",
+      "image": "mariadb:11.3",
+      "docker_platform": "linux/arm64",
+      "target_image": "mysql:8.4"
+    },
+    {
+      "name": "reference->mariadb:11.3",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.142,
+      "source_server_version": "8.4.13",
+      "target_server_version": "11.3.2-MariaDB-1:11.3.2+maria~ubu2204",
+      "image": "mysql:8.4",
+      "docker_platform": "linux/arm64",
+      "target_image": "mariadb:11.3"
+    },
+    {
+      "name": "mariadb:11.4",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 12.004,
+      "server_version": "11.4.13-MariaDB-ubu2404",
+      "image": "mariadb:11.4",
+      "docker_platform": "linux/arm64"
+    },
+    {
+      "name": "mariadb:11.4->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 0.991,
+      "source_server_version": "11.4.13-MariaDB-ubu2404",
+      "target_server_version": "8.4.13",
+      "image": "mariadb:11.4",
+      "docker_platform": "linux/arm64",
+      "target_image": "mysql:8.4"
+    },
+    {
+      "name": "reference->mariadb:11.4",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.028,
+      "source_server_version": "8.4.13",
+      "target_server_version": "11.4.13-MariaDB-ubu2404",
+      "image": "mysql:8.4",
+      "docker_platform": "linux/arm64",
+      "target_image": "mariadb:11.4"
+    },
+    {
+      "name": "mariadb:11.5",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 12.211,
+      "server_version": "11.5.2-MariaDB-ubu2404",
+      "image": "mariadb:11.5",
+      "docker_platform": "linux/arm64"
+    },
+    {
+      "name": "mariadb:11.5->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.034,
+      "source_server_version": "11.5.2-MariaDB-ubu2404",
+      "target_server_version": "8.4.13",
+      "image": "mariadb:11.5",
+      "docker_platform": "linux/arm64",
+      "target_image": "mysql:8.4"
+    },
+    {
+      "name": "reference->mariadb:11.5",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.473,
+      "source_server_version": "8.4.13",
+      "target_server_version": "11.5.2-MariaDB-ubu2404",
+      "image": "mysql:8.4",
+      "docker_platform": "linux/arm64",
+      "target_image": "mariadb:11.5"
+    },
+    {
+      "name": "mariadb:11.6",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 12.392,
+      "server_version": "11.6.2-MariaDB-ubu2404",
+      "image": "mariadb:11.6",
+      "docker_platform": "linux/arm64"
+    },
+    {
+      "name": "mariadb:11.6->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.078,
+      "source_server_version": "11.6.2-MariaDB-ubu2404",
+      "target_server_version": "8.4.13",
+      "image": "mariadb:11.6",
+      "docker_platform": "linux/arm64",
+      "target_image": "mysql:8.4"
+    },
+    {
+      "name": "reference->mariadb:11.6",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 0.96,
+      "source_server_version": "8.4.13",
+      "target_server_version": "11.6.2-MariaDB-ubu2404",
+      "image": "mysql:8.4",
+      "docker_platform": "linux/arm64",
+      "target_image": "mariadb:11.6"
+    },
+    {
+      "name": "mariadb:11.7",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 12.069,
+      "server_version": "11.7.2-MariaDB-ubu2404",
+      "image": "mariadb:11.7",
+      "docker_platform": "linux/arm64"
+    },
+    {
+      "name": "mariadb:11.7->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.102,
+      "source_server_version": "11.7.2-MariaDB-ubu2404",
+      "target_server_version": "8.4.13",
+      "image": "mariadb:11.7",
+      "docker_platform": "linux/arm64",
+      "target_image": "mysql:8.4"
+    },
+    {
+      "name": "reference->mariadb:11.7",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.009,
+      "source_server_version": "8.4.13",
+      "target_server_version": "11.7.2-MariaDB-ubu2404",
+      "image": "mysql:8.4",
+      "docker_platform": "linux/arm64",
+      "target_image": "mariadb:11.7"
+    },
+    {
+      "name": "mariadb:11.8",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 12.043,
+      "server_version": "11.8.9-MariaDB-ubu2404",
+      "image": "mariadb:11.8",
+      "docker_platform": "linux/arm64"
+    },
+    {
+      "name": "mariadb:11.8->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.106,
+      "source_server_version": "11.8.9-MariaDB-ubu2404",
+      "target_server_version": "8.4.13",
+      "image": "mariadb:11.8",
+      "docker_platform": "linux/arm64",
+      "target_image": "mysql:8.4"
+    },
+    {
+      "name": "reference->mariadb:11.8",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.297,
+      "source_server_version": "8.4.13",
+      "target_server_version": "11.8.9-MariaDB-ubu2404",
+      "image": "mysql:8.4",
+      "docker_platform": "linux/arm64",
+      "target_image": "mariadb:11.8"
+    },
+    {
+      "name": "mariadb:12.0",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 12.559,
+      "server_version": "12.0.2-MariaDB-ubu2404",
+      "image": "mariadb:12.0",
+      "docker_platform": "linux/arm64"
+    },
+    {
+      "name": "mariadb:12.0->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.942,
+      "source_server_version": "12.0.2-MariaDB-ubu2404",
+      "target_server_version": "8.4.13",
+      "image": "mariadb:12.0",
+      "docker_platform": "linux/arm64",
+      "target_image": "mysql:8.4"
+    },
+    {
+      "name": "reference->mariadb:12.0",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.391,
+      "source_server_version": "8.4.13",
+      "target_server_version": "12.0.2-MariaDB-ubu2404",
+      "image": "mysql:8.4",
+      "docker_platform": "linux/arm64",
+      "target_image": "mariadb:12.0"
+    },
+    {
+      "name": "mariadb:12.1",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 12.206,
+      "server_version": "12.1.2-MariaDB-ubu2404",
+      "image": "mariadb:12.1",
+      "docker_platform": "linux/arm64"
+    },
+    {
+      "name": "mariadb:12.1->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.033,
+      "source_server_version": "12.1.2-MariaDB-ubu2404",
+      "target_server_version": "8.4.13",
+      "image": "mariadb:12.1",
+      "docker_platform": "linux/arm64",
+      "target_image": "mysql:8.4"
+    },
+    {
+      "name": "reference->mariadb:12.1",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.156,
+      "source_server_version": "8.4.13",
+      "target_server_version": "12.1.2-MariaDB-ubu2404",
+      "image": "mysql:8.4",
+      "docker_platform": "linux/arm64",
+      "target_image": "mariadb:12.1"
+    },
+    {
+      "name": "mariadb:12.2",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 12.181,
+      "server_version": "12.2.2-MariaDB-ubu2404",
+      "image": "mariadb:12.2",
+      "docker_platform": "linux/arm64"
+    },
+    {
+      "name": "mariadb:12.2->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.12,
+      "source_server_version": "12.2.2-MariaDB-ubu2404",
+      "target_server_version": "8.4.13",
+      "image": "mariadb:12.2",
+      "docker_platform": "linux/arm64",
+      "target_image": "mysql:8.4"
+    },
+    {
+      "name": "reference->mariadb:12.2",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.044,
+      "source_server_version": "8.4.13",
+      "target_server_version": "12.2.2-MariaDB-ubu2404",
+      "image": "mysql:8.4",
+      "docker_platform": "linux/arm64",
+      "target_image": "mariadb:12.2"
+    },
+    {
+      "name": "mariadb:12.3",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 12.082,
+      "server_version": "12.3.3-MariaDB-ubu2404",
+      "image": "mariadb:12.3",
+      "docker_platform": "linux/arm64"
+    },
+    {
+      "name": "mariadb:12.3->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.051,
+      "source_server_version": "12.3.3-MariaDB-ubu2404",
+      "target_server_version": "8.4.13",
+      "image": "mariadb:12.3",
+      "docker_platform": "linux/arm64",
+      "target_image": "mysql:8.4"
+    },
+    {
+      "name": "reference->mariadb:12.3",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.069,
+      "source_server_version": "8.4.13",
+      "target_server_version": "12.3.3-MariaDB-ubu2404",
+      "image": "mysql:8.4",
+      "docker_platform": "linux/arm64",
+      "target_image": "mariadb:12.3"
+    }
+  ],
+  "cleanup": [
+    {
+      "image": "mariadb:11.0",
+      "container_name": "db-connect-mariadb-versions-candidate-36b0d23de9ba46f3",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mariadb:11.1",
+      "container_name": "db-connect-mariadb-versions-candidate-f4000ff3d0b54862",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mariadb:11.2",
+      "container_name": "db-connect-mariadb-versions-candidate-b7b7bb59d6f24cb0",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mariadb:11.3",
+      "container_name": "db-connect-mariadb-versions-candidate-00934d3790a34f9f",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mariadb:11.4",
+      "container_name": "db-connect-mariadb-versions-candidate-09c9ac0f3a2c444a",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mariadb:11.5",
+      "container_name": "db-connect-mariadb-versions-candidate-471967312b0740b8",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mariadb:11.6",
+      "container_name": "db-connect-mariadb-versions-candidate-89fbaad122bf4648",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mariadb:11.7",
+      "container_name": "db-connect-mariadb-versions-candidate-f2a242280e284fb0",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mariadb:11.8",
+      "container_name": "db-connect-mariadb-versions-candidate-8ebe866f1b45461c",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mariadb:12.0",
+      "container_name": "db-connect-mariadb-versions-candidate-1440128d3bb24267",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mariadb:12.1",
+      "container_name": "db-connect-mariadb-versions-candidate-ee4e9edecdec4f1e",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mariadb:12.2",
+      "container_name": "db-connect-mariadb-versions-candidate-8a8c000f87c84d14",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mariadb:12.3",
+      "container_name": "db-connect-mariadb-versions-candidate-26cc43f05f1f443b",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mysql:8.4",
+      "container_name": "db-connect-mariadb-versions-reference-65d015aa8ae84521",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    }
+  ]
+}

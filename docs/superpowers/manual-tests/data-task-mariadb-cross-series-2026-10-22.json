@@ -1,0 +1,183 @@
+{
+  "scope": "disposable_official_mariadb_versions_loopback",
+  "images": [
+    "mariadb:11.0",
+    "mariadb:11.8",
+    "mariadb:12.3"
+  ],
+  "reference_image": "mariadb:11.4",
+  "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "generated_at": "2026-10-22T07:51:24.033336+00:00",
+  "interrupted": false,
+  "source_revision": "6ccb1d4aba63a432d08851ee02297e15cc48b02c",
+  "working_tree_dirty": true,
+  "binary_sha256": "b2c8fd75917a7a40fed3369f75c023b069185ef7adf59128d3a32ce3216487c7",
+  "resolved_images": [
+    {
+      "image": "mariadb:11.4",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:250e1609e93c0e6aecf64bfbab2d84d5e89d2481540fe77447ff6c855c3b1873",
+      "repo_digests": [
+        "mariadb@sha256:250e1609e93c0e6aecf64bfbab2d84d5e89d2481540fe77447ff6c855c3b1873"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "mariadb:11.0",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:9f56b2ac10055b68d07e3dcf2a17109fef77f1f08d504b1f028eb874457963b6",
+      "repo_digests": [
+        "mariadb@sha256:9f56b2ac10055b68d07e3dcf2a17109fef77f1f08d504b1f028eb874457963b6"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "mariadb:11.8",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:f16d7a344413e519dff518f27bdb221388f84b0d274c97c4fb5f2cb0dc1b34fa",
+      "repo_digests": [
+        "mariadb@sha256:f16d7a344413e519dff518f27bdb221388f84b0d274c97c4fb5f2cb0dc1b34fa"
+      ],
+      "architecture": "arm64"
+    },
+    {
+      "image": "mariadb:12.3",
+      "docker_platform": "linux/arm64",
+      "image_id": "sha256:99c125f103f5d081ebbc9ffe064e63daf7f688ac33a5f7f29af2d7260a96debf",
+      "repo_digests": [
+        "mariadb@sha256:99c125f103f5d081ebbc9ffe064e63daf7f688ac33a5f7f29af2d7260a96debf"
+      ],
+      "architecture": "arm64"
+    }
+  ],
+  "results": [
+    {
+      "name": "reference:mariadb:11.4",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 12.071,
+      "server_version": "11.4.13-MariaDB-ubu2404",
+      "image": "mariadb:11.4",
+      "docker_platform": "linux/arm64"
+    },
+    {
+      "name": "mariadb:11.0",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 12.159,
+      "server_version": "11.0.6-MariaDB-ubu2204",
+      "image": "mariadb:11.0",
+      "docker_platform": "linux/arm64"
+    },
+    {
+      "name": "mariadb:11.0->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.366,
+      "source_server_version": "11.0.6-MariaDB-ubu2204",
+      "target_server_version": "11.4.13-MariaDB-ubu2404",
+      "image": "mariadb:11.0",
+      "docker_platform": "linux/arm64",
+      "target_image": "mariadb:11.4"
+    },
+    {
+      "name": "reference->mariadb:11.0",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.191,
+      "source_server_version": "11.4.13-MariaDB-ubu2404",
+      "target_server_version": "11.0.6-MariaDB-ubu2204",
+      "image": "mariadb:11.4",
+      "docker_platform": "linux/arm64",
+      "target_image": "mariadb:11.0"
+    },
+    {
+      "name": "mariadb:11.8",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 12.156,
+      "server_version": "11.8.9-MariaDB-ubu2404",
+      "image": "mariadb:11.8",
+      "docker_platform": "linux/arm64"
+    },
+    {
+      "name": "mariadb:11.8->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.394,
+      "source_server_version": "11.8.9-MariaDB-ubu2404",
+      "target_server_version": "11.4.13-MariaDB-ubu2404",
+      "image": "mariadb:11.8",
+      "docker_platform": "linux/arm64",
+      "target_image": "mariadb:11.4"
+    },
+    {
+      "name": "reference->mariadb:11.8",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.207,
+      "source_server_version": "11.4.13-MariaDB-ubu2404",
+      "target_server_version": "11.8.9-MariaDB-ubu2404",
+      "image": "mariadb:11.4",
+      "docker_platform": "linux/arm64",
+      "target_image": "mariadb:11.8"
+    },
+    {
+      "name": "mariadb:12.3",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 13.314,
+      "server_version": "12.3.3-MariaDB-ubu2404",
+      "image": "mariadb:12.3",
+      "docker_platform": "linux/arm64"
+    },
+    {
+      "name": "mariadb:12.3->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.249,
+      "source_server_version": "12.3.3-MariaDB-ubu2404",
+      "target_server_version": "11.4.13-MariaDB-ubu2404",
+      "image": "mariadb:12.3",
+      "docker_platform": "linux/arm64",
+      "target_image": "mariadb:11.4"
+    },
+    {
+      "name": "reference->mariadb:12.3",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 1.488,
+      "source_server_version": "11.4.13-MariaDB-ubu2404",
+      "target_server_version": "12.3.3-MariaDB-ubu2404",
+      "image": "mariadb:11.4",
+      "docker_platform": "linux/arm64",
+      "target_image": "mariadb:12.3"
+    }
+  ],
+  "cleanup": [
+    {
+      "image": "mariadb:11.0",
+      "container_name": "db-connect-mariadb-versions-candidate-4ecdc376e5b54278",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mariadb:11.8",
+      "container_name": "db-connect-mariadb-versions-candidate-08a62f4b91a04fec",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mariadb:12.3",
+      "container_name": "db-connect-mariadb-versions-candidate-4ea7aba41ce04136",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mariadb:11.4",
+      "container_name": "db-connect-mariadb-versions-reference-1709188f6cfc4202",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    }
+  ]
+}
