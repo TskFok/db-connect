@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Select, Button, Space, Checkbox } from "antd";
-import { SafeInput } from "../common/SafeInput";
+import { FilterValueEditor } from "./FilterValueEditor";
 import { SearchOutlined, PlusOutlined, MinusCircleOutlined } from "@ant-design/icons";
 import {
   buildWhereClauseFromFilters,
@@ -212,7 +212,6 @@ export function WhereFilterBuilder({
           onRemove={
             rows.length > 1 ? () => removeRow(row.id) : undefined
           }
-          onSearch={handleSearch}
         />
       ))}
       <Space wrap size="small">
@@ -247,15 +246,12 @@ function FilterRowInput({
   columns,
   onUpdate,
   onRemove,
-  onSearch,
 }: {
   row: FilterRow;
   columns: string[];
   onUpdate: (updates: Partial<FilterRow>) => void;
   onRemove?: () => void;
-  onSearch: () => void;
 }) {
-  const needsTwoValues = TWO_VALUE_OPERATORS.includes(row.operator as WhereOperator);
   const needsNoValue = NO_VALUE_OPERATORS.includes(row.operator as WhereOperator);
   const enabled = row.enabled !== false;
 
@@ -307,35 +303,7 @@ function FilterRowInput({
         }))}
       />
       {!needsNoValue && (
-        <>
-          <SafeInput
-            placeholder={needsTwoValues ? "起始值" : "值"}
-            title="字符串类型列可不填，表示匹配空字符串 ''"
-            size="small"
-            value={row.value}
-            onChange={(e) => onUpdate({ value: e.target.value })}
-            onPressEnter={(e) => {
-              if (e.nativeEvent.isComposing) return;
-              onSearch();
-            }}
-            style={{ width: 100 }}
-            allowClear
-          />
-          {needsTwoValues && (
-            <SafeInput
-              placeholder="结束值"
-              size="small"
-              value={row.value2 ?? ""}
-              onChange={(e) => onUpdate({ value2: e.target.value })}
-              onPressEnter={(e) => {
-                if (e.nativeEvent.isComposing) return;
-                onSearch();
-              }}
-              style={{ width: 100 }}
-              allowClear
-            />
-          )}
-        </>
+        <FilterValueEditor filter={row} onChange={onUpdate} />
       )}
       {onRemove && (
         <Button

@@ -1,11 +1,201 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
+import { Modal } from "antd";
 import { WhereFilterBuilder } from "../components/table/WhereFilterBuilder";
 import type { WhereFilterConfig } from "../utils/whereFilterUtils";
 
 const columns = ["id", "name", "status"];
 
+function editValue(value: string, rowIndex = 0) {
+  fireEvent.click(
+    screen.getAllByRole("button", { name: "编辑筛选值" })[rowIndex]
+  );
+  const dialog = screen.getByRole("dialog", { name: "编辑筛选值" });
+  fireEvent.change(within(dialog).getByRole("textbox", { name: "值" }), {
+    target: { value },
+  });
+  fireEvent.click(within(dialog).getByRole("button", { name: "确 定" }));
+}
+
 describe("WhereFilterBuilder", () => {
+  it("弹窗确认后回填长文本，输入换行不会提前应用筛选", () => {
+    const onFilter = vi.fn();
+    render(
+      <WhereFilterBuilder
+        columns={columns}
+        initialFilterRows={[{ column: "name", operator: "=", value: "原值" }]}
+        onFilter={onFilter}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑筛选值" }));
+    const dialog = screen.getByRole("dialog", { name: "编辑筛选值" });
+    const input = within(dialog).getByRole("textbox", { name: "值" });
+    expect(input).toHaveValue("原值");
+    const value = "较长的筛选内容".repeat(30) + "\n第二行内容";
+    fireEvent.change(input, { target: { value } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+    expect(onFilter).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "确 定" }));
+    expect(onFilter).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText("筛选"));
+    expect(onFilter.mock.calls[0][1][0].value).toBe(value);
+    fireEvent.click(screen.getByRole("button", { name: "编辑筛选值" }));
+    expect(screen.getByRole("textbox", { name: "值" })).toHaveValue(value);
+  });
+
+  it("取消弹窗丢弃草稿，重新打开仍显示原值", () => {
+    const onFilter = vi.fn();
+    render(
+      <WhereFilterBuilder
+        columns={columns}
+        initialFilterRows={[{ column: "name", operator: "=", value: "原值" }]}
+        onFilter={onFilter}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑筛选值" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "值" }), {
+      target: { value: "未保存的草稿" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "取 消" }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑筛选值" }));
+    expect(screen.getByRole("textbox", { name: "值" })).toHaveValue("原值");
+    fireEvent.click(screen.getByRole("button", { name: "取 消" }));
+    fireEvent.click(screen.getByText("筛选"));
+    expect(onFilter.mock.calls[0][0]).toBe("`name` = '原值'");
+  });
+
+  it("范围筛选在同一弹窗保存起始值和结束值", () => {
+    const onFilter = vi.fn();
+    render(
+      <WhereFilterBuilder
+        columns={columns}
+        initialFilterRows={[
+          { column: "id", operator: "BETWEEN", value: "1", value2: "9" },
+        ]}
+        onFilter={onFilter}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑筛选值" }));
+    expect(screen.getByRole("textbox", { name: "起始值" })).toHaveValue("1");
+    expect(screen.getByRole("textbox", { name: "结束值" })).toHaveValue("9");
+    fireEvent.change(screen.getByRole("textbox", { name: "起始值" }), {
+      target: { value: "10" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "结束值" }), {
+      target: { value: "99" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "确 定" }));
+    fireEvent.click(screen.getByText("筛选"));
+    expect(onFilter.mock.calls[0][0]).toBe("`id` BETWEEN 10 AND 99");
+    expect(onFilter.mock.calls[0][1][0]).toMatchObject({
+      value: "10",
+      value2: "99",
+    });
+  });
+
+  it("切换表时关闭旧值弹窗，丢弃未确认的草稿", () => {
+    const onFilter = vi.fn();
+    const { rerender } = render(
+      <WhereFilterBuilder
+        columns={columns}
+        initialFilterRows={[{ column: "name", operator: "=", value: "原值" }]}
+        onFilter={onFilter}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: "编辑筛选值" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "值" }), {
+      target: { value: "旧表草稿" },
+    });
+
+    rerender(
+      <WhereFilterBuilder
+        columns={columns}
+        initialFilterRows={[{ column: "status", operator: "=", value: "2" }]}
+        onFilter={onFilter}
+      />
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "编辑筛选值" }));
+    expect(screen.getByRole("textbox", { name: "值" })).toHaveValue("2");
+  });
+
+  it("嵌套弹窗按 Escape 只取消值编辑，外层仍可应用原值", () => {
+    const onFilter = vi.fn();
+    const onOuterCancel = vi.fn();
+    render(
+      <Modal open title="筛选" footer={null} onCancel={onOuterCancel}>
+        <WhereFilterBuilder
+          columns={columns}
+          initialFilterRows={[{ column: "name", operator: "=", value: "原值" }]}
+          primaryButtonText="保存并应用"
+          onFilter={onFilter}
+        />
+      </Modal>
+    );
+    fireEvent.click(screen.getByRole("button", { name: "编辑筛选值" }));
+    const input = screen.getByRole("textbox", { name: "值" });
+    fireEvent.change(input, { target: { value: "未保存" } });
+    fireEvent.keyDown(input, { key: "Escape", code: "Escape", keyCode: 27 });
+    expect(
+      screen.queryByRole("dialog", { name: "编辑筛选值" })
+    ).not.toBeInTheDocument();
+    expect(onOuterCancel).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("保存并应用"));
+    expect(onFilter.mock.calls[0][0]).toBe("`name` = '原值'");
+  });
+
+  it("弹窗清空已保存的字符串值后仍可筛选空字符串", () => {
+    const onFilter = vi.fn();
+    render(
+      <WhereFilterBuilder
+        columns={columns}
+        columnTypes={{ name: "varchar(50)" }}
+        initialFilterRows={[{ column: "name", operator: "=", value: "原值" }]}
+        onFilter={onFilter}
+      />
+    );
+    editValue("");
+    fireEvent.click(screen.getByText("筛选"));
+    expect(onFilter.mock.calls[0][0]).toBe("`name` = ''");
+  });
+
+  it("逗号分隔的多行列表仍按 IN 筛选", () => {
+    const onFilter = vi.fn();
+    render(
+      <WhereFilterBuilder
+        columns={columns}
+        initialFilterRows={[{ column: "id", operator: "IN", value: "" }]}
+        onFilter={onFilter}
+      />
+    );
+    editValue("1,\n2,\n3");
+    fireEvent.click(screen.getByText("筛选"));
+    expect(onFilter.mock.calls[0][0]).toBe("`id` IN (1, 2, 3)");
+  });
+
+  it.each(["IS NULL", "IS NOT NULL"] as const)(
+    "%s 不显示值编辑入口",
+    (operator) => {
+      const onFilter = vi.fn();
+      render(
+        <WhereFilterBuilder
+          columns={columns}
+          initialFilterRows={[{ column: "name", operator, value: "" }]}
+          onFilter={onFilter}
+        />
+      );
+      expect(
+        screen.queryByRole("button", { name: "编辑筛选值" })
+      ).not.toBeInTheDocument();
+      fireEvent.click(screen.getByText("筛选"));
+      expect(onFilter.mock.calls[0][0]).toBe(`\`name\` ${operator}`);
+    }
+  );
+
   it("点击筛选后不应因 initialFilterRows 回流而重建行（保留焦点）", () => {
     const onFilter = vi.fn();
     const { rerender } = render(
@@ -22,8 +212,8 @@ describe("WhereFilterBuilder", () => {
     const option = screen.getByTitle("id");
     fireEvent.click(option);
 
-    const valueInput = screen.getByPlaceholderText("值");
-    fireEvent.change(valueInput, { target: { value: "5" } });
+    editValue("5");
+    const valueButton = screen.getByRole("button", { name: "编辑筛选值" });
 
     fireEvent.click(screen.getByText("筛选"));
 
@@ -41,10 +231,10 @@ describe("WhereFilterBuilder", () => {
       />
     );
 
-    // 行不应被重建：输入框应保留原有值
-    const valueInputAfter = screen.getByPlaceholderText("值");
-    expect(valueInputAfter).toBeInTheDocument();
-    expect((valueInputAfter as HTMLInputElement).value).toBe("5");
+    // 行不应被重建：入口保留同一 DOM 节点及原有值
+    const valueButtonAfter = screen.getByRole("button", { name: "编辑筛选值" });
+    expect(valueButtonAfter).toBe(valueButton);
+    expect(valueButtonAfter).toHaveTextContent("5");
   });
 
   it("连续两次相同筛选不应重建行（_filterTrigger 机制配合 selfTriggeredRef）", () => {
@@ -63,8 +253,8 @@ describe("WhereFilterBuilder", () => {
     fireEvent.mouseDown(selects[1]);
     fireEvent.click(screen.getByTitle("name"));
 
-    const valueInput = screen.getByPlaceholderText("值");
-    fireEvent.change(valueInput, { target: { value: "Alice" } });
+    editValue("Alice");
+    const valueButton = screen.getByRole("button", { name: "编辑筛选值" });
 
     // 第一次筛选
     fireEvent.click(screen.getByText("筛选"));
@@ -95,9 +285,10 @@ describe("WhereFilterBuilder", () => {
       />
     );
 
-    // 输入框值应保持不变
-    const valueInputAfter = screen.getByPlaceholderText("值");
-    expect((valueInputAfter as HTMLInputElement).value).toBe("Alice");
+    // 编辑入口和已确认的值应保持不变
+    const valueButtonAfter = screen.getByRole("button", { name: "编辑筛选值" });
+    expect(valueButtonAfter).toBe(valueButton);
+    expect(valueButtonAfter).toHaveTextContent("Alice");
   });
 
   it("表切换时 initialFilterRows 外部变更应正常同步行", () => {
@@ -122,8 +313,9 @@ describe("WhereFilterBuilder", () => {
       />
     );
 
-    const valueInput = screen.getByPlaceholderText("值");
-    expect((valueInput as HTMLInputElement).value).toBe("1");
+    expect(
+      screen.getByRole("button", { name: "编辑筛选值" })
+    ).toHaveTextContent("1");
   });
 
   it("字符串列不填值时筛选应生成 = ''", () => {
@@ -143,8 +335,9 @@ describe("WhereFilterBuilder", () => {
     fireEvent.mouseDown(selects[1]);
     fireEvent.click(screen.getByTitle("name"));
 
-    const valueInput = screen.getByPlaceholderText("值");
-    expect((valueInput as HTMLInputElement).value).toBe("");
+    expect(
+      screen.getByRole("button", { name: "编辑筛选值" })
+    ).toHaveTextContent("点击输入值");
 
     fireEvent.click(screen.getByText("筛选"));
 
@@ -185,8 +378,7 @@ describe("WhereFilterBuilder", () => {
     fireEvent.mouseDown(selects[1]);
     fireEvent.click(screen.getByTitle("id"));
 
-    const valueInput = screen.getByPlaceholderText("值");
-    fireEvent.change(valueInput, { target: { value: "5" } });
+    editValue("5");
 
     // 取消勾选
     const checkbox = screen.getByRole("checkbox");
@@ -222,8 +414,7 @@ describe("WhereFilterBuilder", () => {
     fireEvent.mouseDown(selects[1]);
     fireEvent.click(screen.getByTitle("id"));
 
-    const valueInput = screen.getByPlaceholderText("值");
-    fireEvent.change(valueInput, { target: { value: "5" } });
+    editValue("5");
 
     // 添加第二个条件
     fireEvent.click(screen.getByText("添加条件"));
@@ -234,8 +425,7 @@ describe("WhereFilterBuilder", () => {
     const nameOptions = screen.getAllByTitle("name");
     fireEvent.click(nameOptions[nameOptions.length - 1]);
 
-    const valueInputs = screen.getAllByPlaceholderText("值");
-    fireEvent.change(valueInputs[1], { target: { value: "Alice" } });
+    editValue("Alice", 1);
 
     // 禁用第一个条件
     const checkboxes = screen.getAllByRole("checkbox");
@@ -319,8 +509,7 @@ describe("WhereFilterBuilder", () => {
     const selects = screen.getAllByRole("combobox");
     fireEvent.mouseDown(selects[1]); // 第 1 行列选择
     fireEvent.click(screen.getByTitle("id"));
-    const valueInput = screen.getByPlaceholderText("值");
-    fireEvent.change(valueInput, { target: { value: "1" } });
+    editValue("1");
 
     // 添加第 2 行并改为组 2，列 status = 2
     fireEvent.click(screen.getByText("添加条件"));
@@ -330,8 +519,7 @@ describe("WhereFilterBuilder", () => {
     fireEvent.mouseDown(allSelects[4]); // 第 2 行列选择
     const statusOptions = screen.getAllByTitle("status");
     fireEvent.click(statusOptions[statusOptions.length - 1]);
-    const inputs = screen.getAllByPlaceholderText("值");
-    fireEvent.change(inputs[1], { target: { value: "2" } });
+    editValue("2", 1);
 
     fireEvent.click(screen.getByText("筛选"));
     expect(onFilter).toHaveBeenCalledTimes(1);
