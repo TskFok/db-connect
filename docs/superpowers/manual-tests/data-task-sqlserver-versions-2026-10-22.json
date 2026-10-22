@@ -1,0 +1,335 @@
+{
+  "scope": "disposable_official_sqlserver_versions_loopback",
+  "images": [
+    "mcr.microsoft.com/mssql/server:2017-latest",
+    "mcr.microsoft.com/mssql/server:2019-latest",
+    "mcr.microsoft.com/mssql/server:2022-latest"
+  ],
+  "reference_image": "mcr.microsoft.com/mssql/server:2025-latest",
+  "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "generated_at": "2026-10-22T10:10:55.565837+00:00",
+  "interrupted": false,
+  "source_revision": "946637a0bdf2d840774c9d984322105a1c6490e0",
+  "working_tree_dirty": true,
+  "binary_sha256": "e83aebabf102c4d9d21ae1d8d77ad73cb3950cbd4f4542fb276dc75182cfca21",
+  "resolved_images": [
+    {
+      "image": "mcr.microsoft.com/mssql/server:2025-latest",
+      "docker_platform": "linux/amd64",
+      "image_id": "sha256:742481d1b1186cccc81220a1eaacef244ca8d0f7d19c8e5c70df8ae541ffbab2",
+      "repo_digests": [
+        "mcr.microsoft.com/mssql/server@sha256:742481d1b1186cccc81220a1eaacef244ca8d0f7d19c8e5c70df8ae541ffbab2"
+      ],
+      "architecture": "amd64"
+    },
+    {
+      "image": "mcr.microsoft.com/mssql/server:2017-latest",
+      "docker_platform": "linux/amd64",
+      "image_id": "sha256:aeef07e21e24e51fdbf06d6f0c3c742b50c6cb59bb9c6209c53b27513d95f50b",
+      "repo_digests": [
+        "mcr.microsoft.com/mssql/server@sha256:aeef07e21e24e51fdbf06d6f0c3c742b50c6cb59bb9c6209c53b27513d95f50b"
+      ],
+      "architecture": "amd64"
+    },
+    {
+      "image": "mcr.microsoft.com/mssql/server:2019-latest",
+      "docker_platform": "linux/amd64",
+      "image_id": "sha256:07d7dedecdbfcf6776035dc5eefb5bfd9aa1804b2f6b99f7dedb397d8a599069",
+      "repo_digests": [
+        "mcr.microsoft.com/mssql/server@sha256:07d7dedecdbfcf6776035dc5eefb5bfd9aa1804b2f6b99f7dedb397d8a599069"
+      ],
+      "architecture": "amd64"
+    },
+    {
+      "image": "mcr.microsoft.com/mssql/server:2022-latest",
+      "docker_platform": "linux/amd64",
+      "image_id": "sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718",
+      "repo_digests": [
+        "mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718"
+      ],
+      "architecture": "amd64"
+    }
+  ],
+  "results": [
+    {
+      "name": "reference:mcr.microsoft.com/mssql/server:2025-latest",
+      "status": "passed",
+      "detail": "5/5 项 SQL Server 单库合约通过",
+      "image": "mcr.microsoft.com/mssql/server:2025-latest",
+      "docker_platform": "linux/amd64",
+      "server_version": "17.0.5015.4",
+      "cases": [
+        {
+          "name": "reference:mcr.microsoft.com/mssql/server:2025-latest:real_sqlserver_rejects_invisible_external_foreign_keys",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 1.433,
+          "test_filter": "db::data_tasks::adapters::sqlserver::native_tests::real_sqlserver_rejects_invisible_external_foreign_keys"
+        },
+        {
+          "name": "reference:mcr.microsoft.com/mssql/server:2025-latest:real_sqlserver_rejects_invisible_external_row_security",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.44,
+          "test_filter": "db::data_tasks::adapters::sqlserver::native_tests::real_sqlserver_rejects_invisible_external_row_security"
+        },
+        {
+          "name": "reference:mcr.microsoft.com/mssql/server:2025-latest:real_sqlserver_native_lossless_snapshot_identity_and_protected_rollback",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 1.588,
+          "test_filter": "db::data_tasks::adapters::sqlserver::native_tests::real_sqlserver_native_lossless_snapshot_identity_and_protected_rollback"
+        },
+        {
+          "name": "reference:mcr.microsoft.com/mssql/server:2025-latest:real_sqlserver_same_type_executor_and_cancel",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 9.825,
+          "test_filter": "db::data_tasks::cross_type_tests::real_sqlserver_same_type_executor_and_cancel"
+        },
+        {
+          "name": "reference:mcr.microsoft.com/mssql/server:2025-latest:real_sqlserver_version_contract",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 7.547,
+          "server_version": "17.0.5015.4",
+          "test_filter": "db::data_tasks::adapters::sqlserver::version_tests::real_sqlserver_version_contract"
+        }
+      ],
+      "elapsed_seconds": 20.833
+    },
+    {
+      "name": "mcr.microsoft.com/mssql/server:2017-latest",
+      "status": "passed",
+      "detail": "5/5 项 SQL Server 单库合约通过",
+      "image": "mcr.microsoft.com/mssql/server:2017-latest",
+      "docker_platform": "linux/amd64",
+      "server_version": "14.0.3560.2",
+      "cases": [
+        {
+          "name": "mcr.microsoft.com/mssql/server:2017-latest:real_sqlserver_rejects_invisible_external_foreign_keys",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 1.255,
+          "test_filter": "db::data_tasks::adapters::sqlserver::native_tests::real_sqlserver_rejects_invisible_external_foreign_keys"
+        },
+        {
+          "name": "mcr.microsoft.com/mssql/server:2017-latest:real_sqlserver_rejects_invisible_external_row_security",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.215,
+          "test_filter": "db::data_tasks::adapters::sqlserver::native_tests::real_sqlserver_rejects_invisible_external_row_security"
+        },
+        {
+          "name": "mcr.microsoft.com/mssql/server:2017-latest:real_sqlserver_native_lossless_snapshot_identity_and_protected_rollback",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.95,
+          "test_filter": "db::data_tasks::adapters::sqlserver::native_tests::real_sqlserver_native_lossless_snapshot_identity_and_protected_rollback"
+        },
+        {
+          "name": "mcr.microsoft.com/mssql/server:2017-latest:real_sqlserver_same_type_executor_and_cancel",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 2.39,
+          "test_filter": "db::data_tasks::cross_type_tests::real_sqlserver_same_type_executor_and_cancel"
+        },
+        {
+          "name": "mcr.microsoft.com/mssql/server:2017-latest:real_sqlserver_version_contract",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 3.897,
+          "server_version": "14.0.3560.2",
+          "test_filter": "db::data_tasks::adapters::sqlserver::version_tests::real_sqlserver_version_contract"
+        }
+      ],
+      "elapsed_seconds": 8.707
+    },
+    {
+      "name": "mcr.microsoft.com/mssql/server:2017-latest->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 10.192,
+      "source_server_version": "14.0.3560.2",
+      "target_server_version": "17.0.5015.4",
+      "image": "mcr.microsoft.com/mssql/server:2017-latest",
+      "docker_platform": "linux/amd64",
+      "target_image": "mcr.microsoft.com/mssql/server:2025-latest"
+    },
+    {
+      "name": "reference->mcr.microsoft.com/mssql/server:2017-latest",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 10.041,
+      "source_server_version": "17.0.5015.4",
+      "target_server_version": "14.0.3560.2",
+      "image": "mcr.microsoft.com/mssql/server:2025-latest",
+      "docker_platform": "linux/amd64",
+      "target_image": "mcr.microsoft.com/mssql/server:2017-latest"
+    },
+    {
+      "name": "mcr.microsoft.com/mssql/server:2019-latest",
+      "status": "passed",
+      "detail": "5/5 项 SQL Server 单库合约通过",
+      "image": "mcr.microsoft.com/mssql/server:2019-latest",
+      "docker_platform": "linux/amd64",
+      "server_version": "15.0.4500.2",
+      "cases": [
+        {
+          "name": "mcr.microsoft.com/mssql/server:2019-latest:real_sqlserver_rejects_invisible_external_foreign_keys",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.688,
+          "test_filter": "db::data_tasks::adapters::sqlserver::native_tests::real_sqlserver_rejects_invisible_external_foreign_keys"
+        },
+        {
+          "name": "mcr.microsoft.com/mssql/server:2019-latest:real_sqlserver_rejects_invisible_external_row_security",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.147,
+          "test_filter": "db::data_tasks::adapters::sqlserver::native_tests::real_sqlserver_rejects_invisible_external_row_security"
+        },
+        {
+          "name": "mcr.microsoft.com/mssql/server:2019-latest:real_sqlserver_native_lossless_snapshot_identity_and_protected_rollback",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.681,
+          "test_filter": "db::data_tasks::adapters::sqlserver::native_tests::real_sqlserver_native_lossless_snapshot_identity_and_protected_rollback"
+        },
+        {
+          "name": "mcr.microsoft.com/mssql/server:2019-latest:real_sqlserver_same_type_executor_and_cancel",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 1.885,
+          "test_filter": "db::data_tasks::cross_type_tests::real_sqlserver_same_type_executor_and_cancel"
+        },
+        {
+          "name": "mcr.microsoft.com/mssql/server:2019-latest:real_sqlserver_version_contract",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 3.225,
+          "server_version": "15.0.4500.2",
+          "test_filter": "db::data_tasks::adapters::sqlserver::version_tests::real_sqlserver_version_contract"
+        }
+      ],
+      "elapsed_seconds": 6.626
+    },
+    {
+      "name": "mcr.microsoft.com/mssql/server:2019-latest->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 12.006,
+      "source_server_version": "15.0.4500.2",
+      "target_server_version": "17.0.5015.4",
+      "image": "mcr.microsoft.com/mssql/server:2019-latest",
+      "docker_platform": "linux/amd64",
+      "target_image": "mcr.microsoft.com/mssql/server:2025-latest"
+    },
+    {
+      "name": "reference->mcr.microsoft.com/mssql/server:2019-latest",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 9.03,
+      "source_server_version": "17.0.5015.4",
+      "target_server_version": "15.0.4500.2",
+      "image": "mcr.microsoft.com/mssql/server:2025-latest",
+      "docker_platform": "linux/amd64",
+      "target_image": "mcr.microsoft.com/mssql/server:2019-latest"
+    },
+    {
+      "name": "mcr.microsoft.com/mssql/server:2022-latest",
+      "status": "passed",
+      "detail": "5/5 项 SQL Server 单库合约通过",
+      "image": "mcr.microsoft.com/mssql/server:2022-latest",
+      "docker_platform": "linux/amd64",
+      "server_version": "16.0.4305.5",
+      "cases": [
+        {
+          "name": "mcr.microsoft.com/mssql/server:2022-latest:real_sqlserver_rejects_invisible_external_foreign_keys",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 1.146,
+          "test_filter": "db::data_tasks::adapters::sqlserver::native_tests::real_sqlserver_rejects_invisible_external_foreign_keys"
+        },
+        {
+          "name": "mcr.microsoft.com/mssql/server:2022-latest:real_sqlserver_rejects_invisible_external_row_security",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.262,
+          "test_filter": "db::data_tasks::adapters::sqlserver::native_tests::real_sqlserver_rejects_invisible_external_row_security"
+        },
+        {
+          "name": "mcr.microsoft.com/mssql/server:2022-latest:real_sqlserver_native_lossless_snapshot_identity_and_protected_rollback",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 0.804,
+          "test_filter": "db::data_tasks::adapters::sqlserver::native_tests::real_sqlserver_native_lossless_snapshot_identity_and_protected_rollback"
+        },
+        {
+          "name": "mcr.microsoft.com/mssql/server:2022-latest:real_sqlserver_same_type_executor_and_cancel",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 2.338,
+          "test_filter": "db::data_tasks::cross_type_tests::real_sqlserver_same_type_executor_and_cancel"
+        },
+        {
+          "name": "mcr.microsoft.com/mssql/server:2022-latest:real_sqlserver_version_contract",
+          "status": "passed",
+          "detail": "1 通过，0 个显式忽略的测试另行验收",
+          "elapsed_seconds": 4.687,
+          "server_version": "16.0.4305.5",
+          "test_filter": "db::data_tasks::adapters::sqlserver::version_tests::real_sqlserver_version_contract"
+        }
+      ],
+      "elapsed_seconds": 9.237
+    },
+    {
+      "name": "mcr.microsoft.com/mssql/server:2022-latest->reference",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 10.683,
+      "source_server_version": "16.0.4305.5",
+      "target_server_version": "17.0.5015.4",
+      "image": "mcr.microsoft.com/mssql/server:2022-latest",
+      "docker_platform": "linux/amd64",
+      "target_image": "mcr.microsoft.com/mssql/server:2025-latest"
+    },
+    {
+      "name": "reference->mcr.microsoft.com/mssql/server:2022-latest",
+      "status": "passed",
+      "detail": "1 通过，0 个显式忽略的测试另行验收",
+      "elapsed_seconds": 10.443,
+      "source_server_version": "17.0.5015.4",
+      "target_server_version": "16.0.4305.5",
+      "image": "mcr.microsoft.com/mssql/server:2025-latest",
+      "docker_platform": "linux/amd64",
+      "target_image": "mcr.microsoft.com/mssql/server:2022-latest"
+    }
+  ],
+  "cleanup": [
+    {
+      "image": "mcr.microsoft.com/mssql/server:2017-latest",
+      "container_name": "db-connect-sqlserver-versions-candidate-fcdf0020b285461f",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mcr.microsoft.com/mssql/server:2019-latest",
+      "container_name": "db-connect-sqlserver-versions-candidate-49069c07727b47b9",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mcr.microsoft.com/mssql/server:2022-latest",
+      "container_name": "db-connect-sqlserver-versions-candidate-badc05cb37354c5b",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    },
+    {
+      "image": "mcr.microsoft.com/mssql/server:2025-latest",
+      "container_name": "db-connect-sqlserver-versions-reference-fbbe26d630474eaf",
+      "status": "removed",
+      "anonymous_data_volume": "removed"
+    }
+  ]
+}

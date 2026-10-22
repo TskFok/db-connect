@@ -94,6 +94,31 @@ class ValidationTests(unittest.TestCase):
                 self.assertFalse({"server_version", "source_server_version", "target_server_version"}
                                  & self.validation.results[-1].keys())
 
+    def test_sqlserver_four_part_versions_are_preserved_without_private_text(self):
+        self.fixture("DATA_TASK_SQLSERVER_VERSION 16.0.4236.2 sqlserver://private\n"
+                     "DATA_TASK_SQLSERVER_CROSS_VERSION source=14.0.3475.1 target=17.0.1000.7 sqlserver://private\n"
+                     "test result: ok. 1 passed; 0 failed; 0 ignored")
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = self.validation.tests("sqlserver", "real_")
+        self.assertEqual(result.get("server_version"), "16.0.4236.2")
+        self.assertEqual(result.get("source_server_version"), "14.0.3475.1")
+        self.assertEqual(result.get("target_server_version"), "17.0.1000.7")
+        self.assertNotIn("private", str(self.validation.results))
+
+    def test_sqlserver_versions_reject_partial_suffix_and_cross_line_tokens(self):
+        for token in ("16.0.1", "16.0.1.2.3", "16.0.1.2-rc1", "16.0.1.2sqlserver://private", "sqlserver://private"):
+            with self.subTest(token=token):
+                self.fixture(f"DATA_TASK_SQLSERVER_VERSION {token}\n"
+                             f"DATA_TASK_SQLSERVER_CROSS_VERSION source={token} target=17.0.1000.7\n"
+                             f"DATA_TASK_SQLSERVER_CROSS_VERSION source=14.0.3475.1 target={token}\n"
+                             "DATA_TASK_SQLSERVER_CROSS_VERSION source=14.0.3475.1\ntarget=17.0.1000.7\n"
+                             "test result: ok. 1 passed; 0 failed; 0 ignored")
+                with contextlib.redirect_stdout(io.StringIO()):
+                    result = self.validation.tests("sqlserver", "real_", required_metrics=("server_version",))
+                self.assertIsNone(result)
+                self.assertFalse({"server_version", "source_server_version", "target_server_version"}
+                                 & self.validation.results[-1].keys())
+
     def test_mysql_cross_versions_are_preserved_without_database_output(self):
         self.fixture("DATA_TASK_MYSQL_CROSS_VERSION source=5.7.44 target=9.7.4\ntest result: ok. 1 passed; 0 failed; 0 ignored")
         with contextlib.redirect_stdout(io.StringIO()):
@@ -190,6 +215,27 @@ raise SystemExit(101 if failed else 0)
         for module in ("::postgres::tests::", "::end_to_end_tests::", "::atomicity_tests::",
                        "::cross_type_tests::", "::acceptance_network_tests::"):
             self.assertTrue(any(module in name for name in selected), module)
+
+    def test_sqlserver_single_instance_runner_excludes_cross_version_contract(self):
+        self.validation.urls = {"sqlserver": "sqlserver://isolated@127.0.0.1:51433/master"}
+        executable = Path(self.directory.name) / "sqlserver_tests"
+        executable.write_text("""#!/usr/bin/env python3
+import sys
+tests = [
+ 'db::data_tasks::adapters::sqlserver::native_tests::real_sqlserver_native_lossless_snapshot_identity_and_protected_rollback',
+ 'db::data_tasks::adapters::sqlserver::version_tests::real_sqlserver_cross_version_contract',
+ 'db::data_tasks::cross_type_tests::real_sqlserver_same_type_executor_and_cancel',
+]
+selected = [name for name in tests if sys.argv[1] in name]
+failed = sum('cross_version' in name for name in selected)
+print(f'test result: {"FAILED" if failed else "ok"}. {len(selected)-failed} passed; {failed} failed; 0 ignored')
+raise SystemExit(101 if failed else 0)
+""", encoding="utf-8")
+        executable.chmod(0o700)
+        self.validation.binary = executable
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.validation.real_driver("sqlserver")
+        self.assertEqual([row["status"] for row in self.validation.results], ["passed", "passed"])
 
     def test_real_drivers_share_explicit_fixture_environment_with_matrix(self):
         self.validation.urls = {"postgres": "postgres://isolated@127.0.0.1:55432/postgres",

@@ -110,6 +110,12 @@ class Validation:
         postgres_cross_versions = re.search(r"DATA_TASK_POSTGRES_CROSS_VERSION source=([1-9][0-9]*\.[0-9]+) target=([1-9][0-9]*\.[0-9]+)(?=\s|$)", output)
         if postgres_cross_versions:
             metrics["source_server_version"], metrics["target_server_version"] = postgres_cross_versions.groups()
+        sqlserver_version = re.search(r"DATA_TASK_SQLSERVER_VERSION ([1-9][0-9]*\.[0-9]+\.[0-9]+\.[0-9]+)(?=\s|$)", output)
+        if sqlserver_version:
+            metrics["server_version"] = sqlserver_version.group(1)
+        sqlserver_cross_versions = re.search(r"DATA_TASK_SQLSERVER_CROSS_VERSION source=([1-9][0-9]*\.[0-9]+\.[0-9]+\.[0-9]+) target=([1-9][0-9]*\.[0-9]+\.[0-9]+\.[0-9]+)(?=\s|$)", output)
+        if sqlserver_cross_versions:
+            metrics["source_server_version"], metrics["target_server_version"] = sqlserver_cross_versions.groups()
         data = re.search(r"DATA_TASK_METRICS ([^\n]+)", output)
         if data:
             for key, value in re.findall(r"(\w+)=(\d+)", data.group(1)):
@@ -209,6 +215,9 @@ class Validation:
                 self.tests("postgres_atomicity", test_filter + "atomicity_tests::", env=environment, ignored=True)
                 self.tests("postgres_modes", "data_tasks::cross_type_tests::real_postgres_same_type_all_modes", env=environment, ignored=True)
                 self.tests("postgres_network_fault_and_query_budget", "data_tasks::acceptance_network_tests::", env=environment, ignored=True)
+            elif driver == "sqlserver":
+                # 双实例版本合约不能被单库入口的模块前缀误选中。
+                self.tests("sqlserver", test_filter + "native_tests::", env=environment, ignored=True)
             else:
                 self.tests("clickhouse_native_and_source" if driver == "clickhouse" else driver, test_filter, env=environment, ignored=True)
             if driver == "sqlserver":

@@ -30,6 +30,10 @@ use sha2::{Digest, Sha256};
 use std::{borrow::Cow, collections::BTreeMap, sync::atomic::Ordering, time::Duration};
 use tiberius::{Query, Row};
 const DB_ERROR: &str = "SQL Server 数据任务失败，请检查连接、隔离配置、权限及目标约束";
+#[cfg(test)]
+#[path = "sqlserver_version_tests.rs"]
+mod version_tests;
+
 fn db_error(error: tiberius::error::Error) -> String {
     match error.code() {
         Some(2601 | 2627 | 547 | 515) => {
@@ -64,6 +68,54 @@ fn integer(row: &Row, index: usize) -> Result<i32, String> {
     row.try_get::<i32, _>(index)
         .map_err(db_error)?
         .ok_or_else(|| DB_ERROR.into())
+}
+fn server_version_verified(major: i32, version: &str, level: &str, engine: i32) -> bool {
+    // Azure SQL / Edge 的版本编号不等同于 SQL Server，不能仅凭主版本放行。
+    if !matches!(engine, 2..=4)
+        || !(level == "RTM"
+            || level.strip_prefix("SP").is_some_and(|n| {
+                !n.is_empty()
+                    && n.bytes().all(|b| b.is_ascii_digit())
+                    && n.parse::<u32>().is_ok_and(|v| v > 0)
+            }))
+    {
+        return false;
+    }
+    let mut parts = version.split('.');
+    let mut numbers = [0u32; 4];
+    for number in &mut numbers {
+        let Some(part) = parts.next() else {
+            return false;
+        };
+        if part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()) {
+            return false;
+        }
+        let Ok(value) = part.parse::<u32>() else {
+            return false;
+        };
+        *number = value;
+    }
+    if parts.next().is_some() || numbers[0] as i64 != i64::from(major) || numbers[1] != 0 {
+        return false;
+    }
+    // 各系列首个 RTM；拒绝预发布构建以及尚未验收的系列。
+    let minimum = match major {
+        14 => [1000, 169],
+        15 => [2000, 5],
+        16 => [1000, 6],
+        17 => [1000, 7],
+        _ => return false,
+    };
+    [numbers[2], numbers[3]] >= minimum
+}
+fn column_metadata_sql(major: i32) -> String {
+    // 旧系列不存在账本目录列，必须分支生成 SQL，不能用 CASE 引用不存在的列。
+    let ledger = if major >= 16 {
+        "ISNULL(st.ledger_type,0)<>0 OR ISNULL(st.is_dropped_ledger_table,0)=1"
+    } else {
+        "1=0"
+    };
+    format!("SELECT t.name,t.type,CAST(t.is_ms_shipped AS int),c.name,ty.name,CAST(c.max_length AS int),CAST(c.precision AS int),CAST(c.scale AS int),CAST(c.is_nullable AS int),dc.definition,CAST(c.is_computed AS int),CAST(c.generated_always_type AS int),CAST(c.is_identity AS int),CAST(ISNULL(pk.key_ordinal,0) AS int),c.collation_name,CAST(ty.is_user_defined AS int),CONVERT(nvarchar(100),ic.seed_value),CONVERT(nvarchar(100),ic.increment_value),CAST(ISNULL(HAS_PERMS_BY_NAME(QUOTENAME(s.name)+N'.'+QUOTENAME(t.name),N'OBJECT',N'ALTER'),0) AS int),CAST(ISNULL(st.is_memory_optimized,0) AS int),CAST(ISNULL(st.temporal_type,0) AS int),CAST(CASE WHEN ISNULL(st.is_node,0)=1 OR ISNULL(st.is_edge,0)=1 OR {ledger} THEN 1 ELSE 0 END AS int) FROM sys.objects t LEFT JOIN sys.tables st ON st.object_id=t.object_id JOIN sys.schemas s ON s.schema_id=t.schema_id JOIN sys.columns c ON c.object_id=t.object_id JOIN sys.types ty ON ty.user_type_id=c.user_type_id LEFT JOIN sys.default_constraints dc ON dc.object_id=c.default_object_id LEFT JOIN sys.identity_columns ic ON ic.object_id=c.object_id AND ic.column_id=c.column_id LEFT JOIN (SELECT i.object_id,ic.column_id,ic.key_ordinal FROM sys.indexes i JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id WHERE i.is_primary_key=1) pk ON pk.object_id=c.object_id AND pk.column_id=c.column_id WHERE s.name=@P1 AND t.type IN ('U','V') ORDER BY t.name,c.column_id")
 }
 fn wire_type(declared: &str) -> Result<&'static str, String> {
     let t = declared.to_ascii_uppercase();
@@ -337,10 +389,11 @@ impl SqlServerSession {
         checked(&self.cancel)?;
         let schema = self.schema.clone();
         let config = self.config.clone();
-        let facts=self.connection()?.query("SELECT CAST(SERVERPROPERTY(N'ServerName') AS nvarchar(256)),DB_NAME(),CAST(DATABASEPROPERTYEX(DB_NAME(),N'Updateability') AS nvarchar(32)),CAST(d.snapshot_isolation_state AS int),CAST(ISNULL(IS_SRVROLEMEMBER(N'sysadmin'),0) AS int),CAST(ISNULL(IS_MEMBER(N'db_owner'),0) AS int),CAST(ISNULL(HAS_PERMS_BY_NAME(@P1,N'SCHEMA',N'VIEW DEFINITION'),0) AS int),CAST(ISNULL(HAS_PERMS_BY_NAME(@P1,N'SCHEMA',N'SELECT'),0) AS int),CAST(ISNULL(HAS_PERMS_BY_NAME(@P1,N'SCHEMA',N'INSERT'),0) AS int),CAST(ISNULL(HAS_PERMS_BY_NAME(@P1,N'SCHEMA',N'UPDATE'),0) AS int),CAST(ISNULL(HAS_PERMS_BY_NAME(@P1,N'SCHEMA',N'DELETE'),0) AS int),CAST(SERVERPROPERTY(N'ProductMajorVersion') AS int),CAST(ISNULL(HAS_PERMS_BY_NAME(DB_NAME(),N'DATABASE',N'VIEW DEFINITION'),0) AS int),CAST(CASE WHEN EXISTS(SELECT 1 FROM sys.database_permissions p JOIN sys.user_token u ON u.principal_id=p.grantee_principal_id WHERE p.state=N'D' AND p.class IN (0,1,3) AND p.permission_name IN (N'VIEW DEFINITION',N'VIEW SECURITY DEFINITION',N'VIEW PERFORMANCE DEFINITION',N'CONTROL')) THEN 1 ELSE 0 END AS int) FROM sys.databases d WHERE d.database_id=DB_ID()",&[&schema]).await.map_err(db_error)?.into_first_result().await.map_err(db_error)?;
+        let facts=self.connection()?.query("SELECT CAST(SERVERPROPERTY(N'ServerName') AS nvarchar(256)),DB_NAME(),CAST(DATABASEPROPERTYEX(DB_NAME(),N'Updateability') AS nvarchar(32)),CAST(d.snapshot_isolation_state AS int),CAST(ISNULL(IS_SRVROLEMEMBER(N'sysadmin'),0) AS int),CAST(ISNULL(IS_MEMBER(N'db_owner'),0) AS int),CAST(ISNULL(HAS_PERMS_BY_NAME(@P1,N'SCHEMA',N'VIEW DEFINITION'),0) AS int),CAST(ISNULL(HAS_PERMS_BY_NAME(@P1,N'SCHEMA',N'SELECT'),0) AS int),CAST(ISNULL(HAS_PERMS_BY_NAME(@P1,N'SCHEMA',N'INSERT'),0) AS int),CAST(ISNULL(HAS_PERMS_BY_NAME(@P1,N'SCHEMA',N'UPDATE'),0) AS int),CAST(ISNULL(HAS_PERMS_BY_NAME(@P1,N'SCHEMA',N'DELETE'),0) AS int),CAST(SERVERPROPERTY(N'ProductMajorVersion') AS int),CAST(ISNULL(HAS_PERMS_BY_NAME(DB_NAME(),N'DATABASE',N'VIEW DEFINITION'),0) AS int),CAST(CASE WHEN EXISTS(SELECT 1 FROM sys.database_permissions p JOIN sys.user_token u ON u.principal_id=p.grantee_principal_id WHERE p.state=N'D' AND p.class IN (0,1,3) AND p.permission_name IN (N'VIEW DEFINITION',N'VIEW SECURITY DEFINITION',N'VIEW PERFORMANCE DEFINITION',N'CONTROL')) THEN 1 ELSE 0 END AS int),CAST(SERVERPROPERTY(N'ProductVersion') AS nvarchar(128)),CAST(SERVERPROPERTY(N'ProductLevel') AS nvarchar(128)),CAST(SERVERPROPERTY(N'EngineEdition') AS int) FROM sys.databases d WHERE d.database_id=DB_ID()",&[&schema]).await.map_err(db_error)?.into_first_result().await.map_err(db_error)?;
         let f = facts.first().ok_or(DB_ERROR)?;
-        if integer(f, 11)? != 16 {
-            return Err("unsupported_capability: SQL Server 数据任务当前仅验收 2022 主版本".into());
+        let major = integer(f, 11)?;
+        if !server_version_verified(major, &text(f, 14)?, &text(f, 15)?, integer(f, 16)?) {
+            return Err("unsupported_capability: SQL Server 数据任务支持 2017、2019、2022、2025 正式版本，不支持预发布或其他数据库引擎".into());
         }
         let instance = text(f, 0)?;
         let database = text(f, 1)?;
@@ -357,7 +410,14 @@ impl SqlServerSession {
             metadata_visible && (owner || (integer(f, 6)? == 1 && integer(f, 7)? == 1));
         let write_permissions = metadata_visible
             && (owner || (integer(f, 8)? == 1 && integer(f, 9)? == 1 && integer(f, 10)? == 1));
-        let rows=self.connection()?.query("SELECT t.name,t.type,CAST(t.is_ms_shipped AS int),c.name,ty.name,CAST(c.max_length AS int),CAST(c.precision AS int),CAST(c.scale AS int),CAST(c.is_nullable AS int),dc.definition,CAST(c.is_computed AS int),CAST(c.generated_always_type AS int),CAST(c.is_identity AS int),CAST(ISNULL(pk.key_ordinal,0) AS int),c.collation_name,CAST(ty.is_user_defined AS int),CONVERT(nvarchar(100),ic.seed_value),CONVERT(nvarchar(100),ic.increment_value),CAST(ISNULL(HAS_PERMS_BY_NAME(QUOTENAME(s.name)+N'.'+QUOTENAME(t.name),N'OBJECT',N'ALTER'),0) AS int),CAST(ISNULL(st.is_memory_optimized,0) AS int),CAST(ISNULL(st.temporal_type,0) AS int) FROM sys.objects t LEFT JOIN sys.tables st ON st.object_id=t.object_id JOIN sys.schemas s ON s.schema_id=t.schema_id JOIN sys.columns c ON c.object_id=t.object_id JOIN sys.types ty ON ty.user_type_id=c.user_type_id LEFT JOIN sys.default_constraints dc ON dc.object_id=c.default_object_id LEFT JOIN sys.identity_columns ic ON ic.object_id=c.object_id AND ic.column_id=c.column_id LEFT JOIN (SELECT i.object_id,ic.column_id,ic.key_ordinal FROM sys.indexes i JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id WHERE i.is_primary_key=1) pk ON pk.object_id=c.object_id AND pk.column_id=c.column_id WHERE s.name=@P1 AND t.type IN ('U','V') ORDER BY t.name,c.column_id",&[&schema]).await.map_err(db_error)?.into_first_result().await.map_err(db_error)?;
+        let rows = self
+            .connection()?
+            .query(column_metadata_sql(major), &[&schema])
+            .await
+            .map_err(db_error)?
+            .into_first_result()
+            .await
+            .map_err(db_error)?;
         if rows.len() > 100000 {
             return Err("resource_limit: SQL Server schema 元数据超过预算".into());
         }
@@ -397,7 +457,8 @@ impl SqlServerSession {
             let physical = text(&row, 1)?.trim() == "U"
                 && integer(&row, 2)? == 0
                 && integer(&row, 19)? == 0
-                && integer(&row, 20)? == 0;
+                && integer(&row, 20)? == 0
+                && integer(&row, 21)? == 0;
             let table = tables.entry(name.clone()).or_insert(DataTable {
                 name,
                 create_sql: String::new(),
@@ -722,6 +783,65 @@ impl DataSession for SqlServerSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn special_table_catalog_flags_are_compatible_with_each_version() {
+        for major in [14, 15, 16, 17] {
+            let sql = column_metadata_sql(major);
+            assert!(sql.contains("st.is_node"));
+            assert!(sql.contains("st.is_edge"));
+            assert_eq!(sql.contains("st.ledger_type"), major >= 16);
+            assert_eq!(sql.contains("st.is_dropped_ledger_table"), major >= 16);
+        }
+    }
+    #[test]
+    fn released_sqlserver_versions_are_verified_against_server_facts() {
+        for (major, version) in [
+            (14, "14.0.1000.169"),
+            (15, "15.0.2000.5"),
+            (16, "16.0.1000.6"),
+            (17, "17.0.1000.7"),
+            (14, "14.0.3505.1"),
+            (17, "17.0.5015.4"),
+        ] {
+            for engine in [2, 3, 4] {
+                assert!(
+                    server_version_verified(major, version, "RTM", engine),
+                    "{version}"
+                );
+            }
+        }
+        assert!(server_version_verified(14, "14.0.4000.1", "SP1", 3));
+    }
+    #[test]
+    fn unknown_preview_mismatched_or_non_sqlserver_engines_are_rejected() {
+        for (major, version, level, engine) in [
+            (13, "13.0.7000.1", "RTM", 3),
+            (18, "18.0.1000.1", "RTM", 3),
+            (14, "14.0.1000.168", "RTM", 3),
+            (15, "15.0.2000.4", "RTM", 3),
+            (16, "16.0.1000.5", "RTM", 3),
+            (17, "17.0.1000.6", "RTM", 3),
+            (17, "17.0.1000.7", "CTP2.1", 3),
+            (17, "17.0.1000.7", "RC1", 3),
+            (16, "16.0.1000.6", "", 3),
+            (16, "16.0.1000.6", "SP", 3),
+            (16, "16.0.1000.6", "SP0", 3),
+            (16, "17.0.1000.7", "RTM", 3),
+            (16, "16.1.1000.6", "RTM", 3),
+            (16, "16.0.1000", "RTM", 3),
+            (16, "16.0.1000.6-preview", "RTM", 3),
+            (16, "16.0.1000.6.1", "RTM", 3),
+            (16, "16.0.1000.+6", "RTM", 3),
+            (16, "16.0.1000.6", "RTM", 5),
+            (16, "16.0.1000.6", "RTM", 8),
+            (16, "16.0.1000.6", "RTM", 9),
+        ] {
+            assert!(
+                !server_version_verified(major, version, level, engine),
+                "{major}/{version}/{level}/{engine}"
+            );
+        }
+    }
     use crate::db::data_tasks::value::DataValue;
     #[test]
     fn lossless_payload_preserves_bigint_decimal_binary_and_temporal_scale() {

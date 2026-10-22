@@ -21,6 +21,35 @@
 
 ## 自动证据
 
+### SQL Server 2017–2025 兼容（2026-10-22）
+
+数据同步与数据传输从仅 SQL Server 2022 扩展至 **2017、2019、2022、2025 正式版本系列**。根据[微软版本记录](https://learn.microsoft.com/troubleshoot/sql/general/determine-version-edition-update-level)，各系列下限分别为 14.0.1000.169、15.0.2000.5、16.0.1000.6、17.0.1000.7。同一条实例事实查询核对 `ProductMajorVersion`、`ProductVersion`、`ProductLevel` 和 `EngineEdition`，拒绝预发布、未知系列、事实不一致和 Azure SQL / Edge 等其他引擎。系列范围不代表每个补丁均已实测；2016 及更早版本不在本轮范围。
+
+按[官方目录列的版本范围](https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-tables-transact-sql?view=sql-server-ver17)，所有支持系列排除 graph node/edge，2022/2025 另外排除账本及已逻辑删除的账本表；2017/2019 的 SQL 文本不引用尚不存在的账本列。保留时态表、内存优化表、生成列、identity、外部外键、RLS 和目录权限预检；2025 原生 JSON/VECTOR 不随版本扩展开放。
+
+新增 `scripts/data-tasks/validate_sqlserver_versions.py`，以官方 2017/2019/2022 镜像为候选，2025 为参考。每版本执行五项单库合约，每个候选与参考另执行两个跨实例方向。测试创建随机独立数据库及 schema，核对物理实例和主版本不同，覆盖四模式、BIGINT 边界、DECIMAL(38,20)、二进制、七位时间精度与时区、REAL/FLOAT 位模式、中文/emoji/空值，及冻结源、漂移阻塞、后续批次冲突和最终核验失败回滚、identity 取消与再次执行。单库合约另将两端降为兼容级别 100，使用同步扩展事件计数检查表数量增加后目录查询仍固定七次。普通非持久化计算列由目标生成；`PERSISTED` 计算列的写入要求关闭 `NUMERIC_ROUNDABORT`，本轮保留原生精度保护，不扩展这类目标写入能力。
+
+验收器仅创建本次专属容器、绑定回环随机端口，清除继承的数据任务连接配置，并核对报告中的实际主版本与镜像系列一致。启动探活只读取日志和 TCP；SQL Server 2025 的 ready 日志可能早于恢复完成，必须同时看到 `Recovery is complete` 后才执行单次快照隔离初始化，不循环执行 SQL。报告保留实际构建号、镜像摘要、测试程序 SHA-256 和容器/匿名卷清理结果，不保留密码或连接 URL。
+
+```bash
+cargo test --manifest-path src-tauri/Cargo.toml --lib --no-run
+python3 scripts/data-tasks/validate_sqlserver_versions.py \
+  --binary <当前工作区构建的 db_connect_lib 测试程序> \
+  --no-pull \
+  --report artifacts/data-tasks/sqlserver-versions.json
+```
+
+最终矩阵 **10 passed / 0 failed / 0 not_run**：4 个版本各 5 项单库测试，加 6 个跨实例方向，共 **26 项真实测试通过**。全部使用当前工作区同一测试程序，SHA-256 为 `e83aebabf102c4d9d21ae1d8d77ad73cb3950cbd4f4542fb276dc75182cfca21`。测试环境为 macOS ARM64 上的 Docker `linux/amd64` 官方 Developer 容器；四个专属容器及四个匿名数据卷均已删除并核对。原始版本、镜像摘要、各用例与清理证据见[SQL Server 完整版本报告](data-task-sqlserver-versions-2026-10-22.json)。
+
+|系列镜像|实际服务端版本|单库合约|与 SQL Server 2025 双向跨版本合约|
+|---|---|---|---|
+|2017-latest|14.0.3560.2|5/5 passed|2/2 passed|
+|2019-latest|15.0.4500.2|5/5 passed|2/2 passed|
+|2022-latest|16.0.4305.5|5/5 passed|2/2 passed|
+|2025-latest|17.0.5015.4|5/5 passed|参考实例|
+
+Rust 全量回归 **908 passed / 0 failed / 111 ignored**，真实数据库用例按上述矩阵显式运行；Python 验收脚本全量 **82 passed**。新增门禁与目录分支单测先确认失败再修复，Rust 格式和差异空白检查通过。初始化时序、镜像标签与实际版本不一致的报告假阳性均有回归测试。
+
 ### PostgreSQL 10–18 兼容（2026-10-22）
 
 数据同步与数据传输的版本门禁从仅 17 扩展至 **10–18 正式版本系列**。同一条实例事实查询同时核对 `server_version_num` 与 `server_version`，接受原生版本号及 Debian、Ubuntu、Homebrew 正式构建标记，拒绝 beta、RC、devel、未知系列、无法识别的分支及数字与文本不一致的版本。门禁覆盖系列范围；真实验收只代表下表列出的补丁版本，不代表每个补丁均已实测。

@@ -80,7 +80,7 @@ MySQL 原生会话支持 **5.5（至少 5.5.8）、5.6（至少 5.6.10）、5.7�
 
 MariaDB 原生会话支持 **10.0–10.11（各系列首个 GA 起）、11.0–11.8、12.0–12.3（各系列至少 x.y.2 稳定版）**，兼容旧版及常见 Ubuntu/Debian 发行包、`-log` 后缀和 `5.5.5-` 兼容前缀。10.0/10.1 的 `PERSISTENT`、`VIRTUAL` 生成列参与既有生成列预检；12.x 的 `OFF/ON/NO_LOCK/NO_LOCK_NO_ADMIN` 只读状态均参与目标预检。开启全局 `wsrep_on` 的 Galera 目标不提供受保护写入，系统版本表与序列不能作为普通物理表。其他系列与预发布版本继续拒绝；各系列最低补丁与真实实例证据见[验收矩阵](docs/superpowers/manual-tests/2026-10-19-data-sync-and-transfer-matrix.md)，支持范围不代表每个补丁均已实测。
 
-SQL Server 数据任务要求数据库级 `VIEW DEFINITION`，并拒绝当前用户、成员角色或 public 的目录 `DENY`；只授予所选 schema 的可见权限不足以验证范围外外键与行级安全策略。
+SQL Server 数据任务支持 **2017、2019、2022、2025 正式版本系列**（分别从 14.0.1000.169、15.0.2000.5、16.0.1000.6、17.0.1000.7 起），核对完整构建号、发布阶段和引擎类型，拒绝预发布、未知系列及 Azure SQL / Edge 等其他引擎。图节点/边表、账本表、时态表及内存优化表不作为普通表处理，JSON、VECTOR 等新类型不会因版本扩展自动开放。支持范围不代表每个补丁均已实测，实际版本和双向跨实例结果见[验收矩阵](docs/superpowers/manual-tests/2026-10-19-data-sync-and-transfer-matrix.md)。仍要求数据库级 `VIEW DEFINITION`，并拒绝当前用户、成员角色或 public 的目录 `DENY`；只授予所选 schema 的可见权限不足以验证范围外外键与行级安全策略。
 
 **ClickHouse 目标写入当前阻塞**：分批按名 INSERT 存在目标对象替换窗口；单条流式 INSERT 加同查询 UUID/依赖检查，仍不能原子绑定预览时的物理表和物化视图依赖。真实并发 DDL 回归已复现这些边界，因此所有 ClickHouse 目标组合（包括 ClickHouse→ClickHouse）继续禁用，正式适配器写入口也直接拒绝。原生写入仅保留在测试构建，用于精度和 ACK 实验。ClickHouse 源→四类事务目标的追加已验收，源不保证跨表一致快照，事务目标保留整体提交/回滚保证。
 
