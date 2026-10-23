@@ -3,6 +3,7 @@ import {
   Alert,
   Button,
   Card,
+  Flex,
   Form,
   AutoComplete,
   Select,
@@ -346,8 +347,9 @@ export function DataTaskWizard({
                   </Button>
                 }
               >
-                <Space>
+                <Flex align="center" gap={8}>
                   <AutoComplete
+                    style={{ flex: 1, minWidth: 0 }}
                     options={capabilities?.source_tables.map((t) => ({
                       value: t.table,
                     }))}
@@ -360,6 +362,7 @@ export function DataTaskWizard({
                   />
                   <span>→</span>
                   <AutoComplete
+                    style={{ flex: 1, minWidth: 0 }}
                     options={capabilities?.target_tables.map((t) => ({
                       value: t.table,
                     }))}
@@ -370,13 +373,16 @@ export function DataTaskWizard({
                       updateMapping(index, { target_table: value })
                     }
                   />
-                </Space>
+                </Flex>
                 {mapping.columns.map((column, columnIndex) => (
-                  <Space
+                  <Flex
                     key={columnIndex}
-                    style={{ display: "flex", marginTop: 8 }}
+                    align="center"
+                    gap={8}
+                    style={{ marginTop: 8 }}
                   >
                     <AutoComplete
+                      style={{ flex: 1, minWidth: 0 }}
                       options={(
                         capabilities?.source_tables.find(
                           (t) => t.table === mapping.source_table
@@ -397,6 +403,7 @@ export function DataTaskWizard({
                     />
                     <span>→</span>
                     <AutoComplete
+                      style={{ flex: 1, minWidth: 0 }}
                       options={(
                         capabilities?.target_tables.find(
                           (t) => t.table === mapping.target_table
@@ -416,6 +423,7 @@ export function DataTaskWizard({
                       }
                     />
                     <Button
+                      style={{ flexShrink: 0 }}
                       onClick={() =>
                         updateMapping(index, {
                           columns: mapping.columns.filter(
@@ -426,7 +434,7 @@ export function DataTaskWizard({
                     >
                       移除
                     </Button>
-                  </Space>
+                  </Flex>
                 ))}
                 <Button
                   size="small"
