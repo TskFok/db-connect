@@ -1,0 +1,6 @@
+/Cargo.lock
+/target/
+
+# 公开测试 CA 夹具；仅放行这两个文件，保留项目的凭证忽略规则。
+!/test-fixtures/tls/ca.pem
+!/test-fixtures/tls/other-ca.pem

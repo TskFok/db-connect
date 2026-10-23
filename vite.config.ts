@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import "./scripts/security/patch-monaco-dompurify.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const appVersion = JSON.parse(

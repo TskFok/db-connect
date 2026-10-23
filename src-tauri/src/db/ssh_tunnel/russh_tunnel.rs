@@ -5,6 +5,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use russh::client::AuthResult;
 use russh::keys::{
     key::PrivateKeyWithHashAlg, load_secret_key, ssh_key::PublicKey, PublicKeyBase64,
+    PublicKeyOrCertificate,
 };
 use russh::{client, Disconnect};
 use std::collections::HashMap;
@@ -88,9 +89,9 @@ impl client::Handler for RusshClientHandler {
 
     async fn check_server_key(
         &mut self,
-        server_public_key: &PublicKey,
+        server_public_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
-        let fp = host_key_fingerprint_b64(server_public_key);
+        let fp = host_key_fingerprint_b64(&server_public_key.public_key());
         let host_id = format!("[{}]:{}", self.host, self.port);
         let known_hosts_path =
             get_known_hosts_path().map_err(|e| russh::Error::IO(std::io::Error::other(e)))?;
@@ -246,6 +247,25 @@ fn save_known_hosts(path: &Path, hosts: &HashMap<String, String>) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_rsa_private_key_authentication_remains_supported() {
+        // russh 0.64 将 RSA 支持拆为独立 feature；升级时不可静默丢失密钥认证能力。
+        let key = russh::keys::PrivateKey::random(
+            &mut russh::keys::key::safe_rng(),
+            russh::keys::Algorithm::Rsa { hash: None },
+        )
+        .expect("Windows SSH 必须继续支持 RSA 私钥");
+        let signature =
+            russh::keys::signature::Signer::try_sign(&key, b"db-connect SSH regression")
+                .expect("RSA 私钥必须能够签名认证请求");
+        russh::keys::signature::Verifier::verify(
+            key.public_key(),
+            b"db-connect SSH regression",
+            &signature,
+        )
+        .expect("RSA 认证签名必须可以校验");
+    }
 
     #[test]
     fn test_load_known_hosts_missing_file() {

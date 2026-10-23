@@ -1,5 +1,3 @@
 [advisories]
-ignore = [
-  # russh 0.60.3 still pulls rsa through internal-russh-forked-ssh-key; RustSec has no fixed upgrade yet.
-  "RUSTSEC-2023-0071",
-]
+# 保留 Windows SSH 的 RSA 密钥兼容性；RUSTSEC-2023-0071 尚无上游修复，必须由审计报告显式呈现。
+ignore = []
