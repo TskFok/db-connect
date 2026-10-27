@@ -22,6 +22,7 @@ export function FilterValueEditor({
   const [draftValue2, setDraftValue2] = useState("");
   const inputId = useId();
   const inputRef = useRef<TextAreaRef>(null);
+  const editButtonRef = useRef<HTMLButtonElement>(null);
   const needsTwoValues = TWO_VALUE_OPERATORS.includes(filter.operator);
   const preview = needsTwoValues
     ? `${filter.value || "起始值"} ~ ${filter.value2 || "结束值"}`
@@ -45,6 +46,7 @@ export function FilterValueEditor({
   return (
     <>
       <Button
+        ref={editButtonRef}
         size="small"
         icon={<EditOutlined />}
         aria-label="编辑筛选值"
@@ -72,6 +74,31 @@ export function FilterValueEditor({
         width={720}
         centered
         destroyOnHidden
+        // macOS 点击按钮不一定聚焦；关闭后显式回焦，保证外层快捷键继续生效。
+        focusTriggerAfterClose={false}
+        afterClose={() => editButtonRef.current?.focus({ preventScroll: true })}
+        modalRender={(modal) => (
+          <div
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) {
+                return;
+              }
+              // 值编辑是嵌套弹窗，确认时不能同时触发外层保存筛选。
+              event.stopPropagation();
+              event.preventDefault();
+              if (
+                event.nativeEvent.isComposing ||
+                event.keyCode === 229 ||
+                event.repeat
+              ) {
+                return;
+              }
+              confirmValue();
+            }}
+          >
+            {modal}
+          </div>
+        )}
         afterOpenChange={(visible) => {
           if (visible) inputRef.current?.focus({ cursor: "end" });
         }}

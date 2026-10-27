@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type Ref } from "react";
 import { Select, Button, Space, Checkbox } from "antd";
 import { FilterValueEditor } from "./FilterValueEditor";
 import { SearchOutlined, PlusOutlined, MinusCircleOutlined } from "@ant-design/icons";
@@ -30,6 +30,8 @@ interface WhereFilterBuilderProps {
   onClear?: () => void;
   /** 主按钮文案（默认：筛选）。用于在弹窗场景下显示“保存并应用”等。 */
   primaryButtonText?: string;
+  /** 供外层弹窗在打开完成后聚焦保存按钮 */
+  primaryButtonRef?: Ref<HTMLButtonElement>;
   /** 清空按钮文案（默认：清空） */
   clearButtonText?: string;
 }
@@ -85,6 +87,7 @@ export function WhereFilterBuilder({
   onFilter,
   onClear,
   primaryButtonText,
+  primaryButtonRef,
   clearButtonText,
 }: WhereFilterBuilderProps) {
   const [rows, setRows] = useState<FilterRow[]>(() =>
@@ -202,7 +205,24 @@ export function WhereFilterBuilder({
     );
 
   return (
-    <Space direction="vertical" size="small" wrap>
+    <Space
+      direction="vertical"
+      size="small"
+      wrap
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
+        event.stopPropagation();
+        event.preventDefault();
+        if (
+          event.nativeEvent.isComposing ||
+          event.keyCode === 229 ||
+          event.repeat
+        ) {
+          return;
+        }
+        handleSearch();
+      }}
+    >
       {rows.map((row) => (
         <FilterRowInput
           key={row.id}
@@ -226,6 +246,7 @@ export function WhereFilterBuilder({
         <Button
           type="primary"
           size="small"
+          ref={primaryButtonRef}
           icon={<SearchOutlined />}
           onClick={handleSearch}
         >

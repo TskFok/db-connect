@@ -600,6 +600,7 @@ export function TableData() {
 
   // 筛选弹窗（点击工具栏筛选图标打开；保存后应用筛选）
   const [filterModalOpen, setFilterModalOpen] = useState(false);
+  const filterApplyButtonRef = useRef<HTMLButtonElement>(null);
   /** 查看当前筛选对应查询 SQL（弹窗） */
   const [filterSqlPreviewOpen, setFilterSqlPreviewOpen] = useState(false);
 
@@ -2387,6 +2388,9 @@ export function TableData() {
       <Modal
         title="筛选"
         open={filterModalOpen}
+        afterOpenChange={(visible) => {
+          if (visible) filterApplyButtonRef.current?.focus();
+        }}
         onCancel={() => setFilterModalOpen(false)}
         footer={null}
         width={760}
@@ -2405,6 +2409,7 @@ export function TableData() {
           databaseType={currentDatabaseType}
           initialFilterRows={filterRows}
           primaryButtonText="保存并应用"
+          primaryButtonRef={filterApplyButtonRef}
           clearButtonText="清空筛选"
           onFilter={(clause, rows) => {
             handleFilter(clause, rows);

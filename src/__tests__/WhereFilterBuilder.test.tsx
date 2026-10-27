@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { render, screen, fireEvent, within, waitFor } from "@testing-library/react";
+import { createRef } from "react";
 import { Modal } from "antd";
 import { WhereFilterBuilder } from "../components/table/WhereFilterBuilder";
 import type { WhereFilterConfig } from "../utils/whereFilterUtils";
@@ -18,6 +19,142 @@ function editValue(value: string, rowIndex = 0) {
 }
 
 describe("WhereFilterBuilder", () => {
+  it.each([
+    ["Command + Enter", { metaKey: true }, false],
+    ["Ctrl + Enter", { ctrlKey: true }, false],
+    ["鼠标", { metaKey: true }, true],
+  ])("%s 确认筛选值后可从实际焦点快捷保存", async (_, modifier, clickConfirm) => {
+    const onFilter = vi.fn();
+    const primaryButtonRef = createRef<HTMLButtonElement>();
+    render(
+      <Modal
+        open
+        title="筛选"
+        footer={null}
+        afterOpenChange={(visible) => {
+          if (visible) primaryButtonRef.current?.focus();
+        }}
+      >
+        <WhereFilterBuilder
+          columns={columns}
+          initialFilterRows={[{ column: "name", operator: "=", value: "原值" }]}
+          primaryButtonText="保存并应用"
+          primaryButtonRef={primaryButtonRef}
+          onFilter={onFilter}
+        />
+      </Modal>
+    );
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /保存并应用/ })).toHaveFocus();
+    });
+
+    // 模拟 macOS WebKit：鼠标点击按钮不会自动将焦点放到按钮上。
+    primaryButtonRef.current?.blur();
+    const editButton = screen.getByRole("button", { name: "编辑筛选值" });
+    fireEvent.click(editButton);
+    const input = screen.getByRole("textbox", { name: "值" });
+    await waitFor(() => expect(input).toHaveFocus());
+    fireEvent.change(input, { target: { value: "已修改\n第二行" } });
+    if (clickConfirm) {
+      fireEvent.click(screen.getByRole("button", { name: "确 定" }));
+    } else {
+      expect(
+        fireEvent.keyDown(document.activeElement!, { key: "Enter", ...modifier })
+      ).toBe(false);
+    }
+
+    expect(
+      screen.queryByRole("dialog", { name: "编辑筛选值" })
+    ).not.toBeInTheDocument();
+    expect(onFilter).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "编辑筛选值" })).toHaveTextContent(
+      "已修改 第二行"
+    );
+
+    await waitFor(() => expect(editButton).toHaveFocus());
+    fireEvent.keyDown(document.activeElement!, {
+      key: "Enter",
+      ...modifier,
+    });
+    expect(onFilter).toHaveBeenCalledTimes(1);
+    expect(onFilter.mock.calls[0][1]).toEqual([
+      {
+        column: "name",
+        operator: "=",
+        value: "已修改\n第二行",
+        enabled: true,
+        group: "1",
+      },
+    ]);
+  });
+
+  it.each(["起始值", "结束值"])(
+    "在范围筛选的%s中按 Command + Enter 会同时确认两个值",
+    (inputName) => {
+      const onFilter = vi.fn();
+      render(
+        <WhereFilterBuilder
+          columns={columns}
+          initialFilterRows={[
+            { column: "id", operator: "BETWEEN", value: "1", value2: "9" },
+          ]}
+          onFilter={onFilter}
+        />
+      );
+      fireEvent.click(screen.getByRole("button", { name: "编辑筛选值" }));
+      fireEvent.change(screen.getByRole("textbox", { name: "起始值" }), {
+        target: { value: "10" },
+      });
+      fireEvent.change(screen.getByRole("textbox", { name: "结束值" }), {
+        target: { value: "99" },
+      });
+      fireEvent.keyDown(screen.getByRole("textbox", { name: inputName }), {
+        key: "Enter",
+        metaKey: true,
+      });
+      expect(
+        screen.queryByRole("dialog", { name: "编辑筛选值" })
+      ).not.toBeInTheDocument();
+      expect(onFilter).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByText("筛选"));
+      expect(onFilter.mock.calls[0][0]).toBe("`id` BETWEEN 10 AND 99");
+    }
+  );
+
+  it.each([
+    ["输入法组合输入", { isComposing: true }],
+    ["输入法兼容键码", { keyCode: 229 }],
+    ["长按自动重复", { repeat: true }],
+  ])("%s时 Command + Enter 不确认值或保存条件", (_, keyboardState) => {
+    const onFilter = vi.fn();
+    render(
+      <WhereFilterBuilder
+        columns={columns}
+        initialFilterRows={[{ column: "name", operator: "=", value: "原值" }]}
+        primaryButtonText="保存并应用"
+        onFilter={onFilter}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: "编辑筛选值" }));
+    const input = screen.getByRole("textbox", { name: "值" });
+    fireEvent.change(input, { target: { value: "草稿" } });
+    fireEvent.keyDown(input, {
+      key: "Enter",
+      metaKey: true,
+      ...keyboardState,
+    });
+    expect(screen.getByRole("dialog", { name: "编辑筛选值" })).toBeInTheDocument();
+    expect(onFilter).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "确 定" }));
+    fireEvent.keyDown(screen.getByRole("button", { name: /保存并应用/ }), {
+      key: "Enter",
+      metaKey: true,
+      ...keyboardState,
+    });
+    expect(onFilter).not.toHaveBeenCalled();
+  });
+
   it("弹窗确认后回填长文本，输入换行不会提前应用筛选", () => {
     const onFilter = vi.fn();
     render(
