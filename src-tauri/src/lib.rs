@@ -133,6 +133,15 @@ pub fn run() {
             .expect("完整应用验收 WebView 存储隔离失败，拒绝启动");
         context
     };
+    #[cfg(target_os = "macos")]
+    {
+        // WebKit 的单词复制会携带 smart-paste 标记，使粘贴自动补空格。
+        // 数据库输入需要保留原文；此偏好会被 WebKit 缓存，必须在创建 WebView 前关闭。
+        // https://github.com/WebKit/WebKit/blob/main/Source/WebKit/UIProcess/mac/TextCheckerMac.mm
+        use objc2_foundation::{NSString, NSUserDefaults};
+        NSUserDefaults::standardUserDefaults()
+            .setBool_forKey(false, &NSString::from_str("WebSmartInsertDeleteEnabled"));
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())

@@ -56,6 +56,9 @@ rusqlite = { version = "0.38", features = ["trace"] }
 [target.'cfg(target_vendor = "apple")'.dependencies]
 tiberius = { version = "0.12.3", default-features = false, features = ["tds73", "rustls"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString", "NSUserDefaults"] }
+
 [target.'cfg(not(target_vendor = "apple"))'.dependencies]
 tiberius = { version = "0.12.3", default-features = false, features = ["tds73", "native-tls"] }
 

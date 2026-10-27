@@ -1249,6 +1249,7 @@ dependencies = [
  "libc",
  "mysql_async",
  "native-tls",
+ "objc2-foundation",
  "pbkdf2 0.12.2",
  "postgres-native-tls",
  "rand_core 0.6.4",
