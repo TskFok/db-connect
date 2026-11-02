@@ -87,6 +87,15 @@ export interface SqlCompletionContext {
   excludedColumns: string[];
   operator?: "NOT" | "IS" | "IS NOT";
   followingToken?: string;
+  /** 明确语法前缀的候选优先于通用槽位候选。 */
+  keywordSuggestions?: string[];
+  statementStart?: boolean;
+  statementKind?: "select" | "update" | "insert" | "delete";
+  selectModifierAllowed?: boolean;
+  selectTopAllowed?: boolean;
+  /** 括号或尚未结束的 CASE 内不能续接查询子句。 */
+  queryContinuationAllowed?: boolean;
+  returningAllowed?: boolean;
   command?: {
     /** 当前语句开头已经输入的完整命令词，不含正在编辑的单词。 */
     words: string[];

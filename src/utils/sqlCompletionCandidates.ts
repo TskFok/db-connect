@@ -1,5 +1,6 @@
 import { quoteIdentifier, quoteSqlReference } from "./sqlCompletion";
 import { sqlCommandKeywords } from "./sqlCompletionCommands";
+import { getSqlStatementStartKeywords } from "./sqlCompletionStatementKeywords";
 import {
   getSqlMetadataIndexForNamespace,
   getSqlMetadataNamespaces,
@@ -89,25 +90,72 @@ function aliasesAllowed(context: SqlCompletionContext): boolean {
   return clause === "orderBy";
 }
 
+function joinKeywords(context: SqlCompletionContext): string[] {
+  return [
+    "JOIN",
+    "LEFT JOIN",
+    "RIGHT JOIN",
+    ...(context.dialect === "mysql" ? [] : ["FULL JOIN"]),
+    "INNER JOIN",
+    "CROSS JOIN",
+  ];
+}
+
+function queryContinuationKeywords(context: SqlCompletionContext): string[] {
+  if (
+    context.queryContinuationAllowed === false ||
+    (context.statementKind !== undefined && context.statementKind !== "select")
+  )
+    return [];
+  const { clause, dialect } = context;
+  const pagination = [
+    ...(dialect === "sqlserver" ? [] : ["LIMIT"]),
+    ...(["postgres", "clickhouse"].includes(dialect) ? ["OFFSET"] : []),
+  ];
+  const setOperations = ["UNION", "UNION ALL", "INTERSECT", "EXCEPT"];
+  if (["from", "on"].includes(clause))
+    return [
+      ...joinKeywords(context),
+      "WHERE",
+      "GROUP BY",
+      "HAVING",
+      "ORDER BY",
+      ...pagination,
+      ...setOperations,
+    ];
+  if (clause === "select")
+    return [
+      "FROM",
+      "WHERE",
+      "GROUP BY",
+      "HAVING",
+      "ORDER BY",
+      ...pagination,
+      ...setOperations,
+    ];
+  if (clause === "where")
+    return ["GROUP BY", "HAVING", "ORDER BY", ...pagination, ...setOperations];
+  if (clause === "groupBy")
+    return ["HAVING", "ORDER BY", ...pagination, ...setOperations];
+  if (clause === "having") return ["ORDER BY", ...pagination, ...setOperations];
+  return [];
+}
+
 function keywordsFor(context: SqlCompletionContext): string[] {
+  if (context.keywordSuggestions !== undefined)
+    return context.keywordSuggestions;
   const { slot, clause, dialect } = context;
+  const returning = context.returningAllowed ? ["RETURNING"] : [];
   if (context.command?.words.length) return sqlCommandKeywords(context);
   if (slot === "continuation") {
     if (clause === "update") return ["AS", "SET"];
     if (clause === "insertInto") return ["VALUES", "SELECT"];
-    if (clause === "join") return ["AS", "ON", "USING"];
+    if (clause === "join")
+      return ["AS", "ON", ...(dialect === "sqlserver" ? [] : ["USING"])];
     if (clause === "from" || clause === "delete") {
-      return [
-        "AS",
-        "WHERE",
-        "JOIN",
-        "LEFT JOIN",
-        "INNER JOIN",
-        "CROSS JOIN",
-        "GROUP BY",
-        "ORDER BY",
-        ...(dialect === "sqlserver" ? [] : ["LIMIT"]),
-      ];
+      return context.statementKind && context.statementKind !== "select"
+        ? ["AS", "WHERE", ...returning]
+        : ["AS", ...queryContinuationKeywords(context)];
     }
     return ["WHERE", "GROUP BY", "HAVING", "ORDER BY"];
   }
@@ -122,24 +170,33 @@ function keywordsFor(context: SqlCompletionContext): string[] {
     if (context.operator === "IS" || context.operator === "IS NOT")
       return dialect === "sqlserver" ? ["NULL"] : ["NULL", "TRUE", "FALSE"];
     if (clause === "unknown")
-      return [
-        ...new Set([
-          "SELECT",
-          "INSERT INTO",
-          "UPDATE",
-          "DELETE FROM",
-          ...sqlCommandKeywords(context),
-        ]),
-      ];
-    if (clause === "set") return ["=", "WHERE"];
-    if (clause === "groupBy") return ["HAVING", "ORDER BY"];
+      return context.statementStart === false
+        ? []
+        : [
+            ...new Set([
+              ...getSqlStatementStartKeywords(dialect),
+              ...sqlCommandKeywords(context),
+            ]),
+          ];
+    if (clause === "set")
+      return context.returningAllowed
+        ? ["WHERE", ...returning]
+        : ["=", "WHERE"];
+    if (clause === "groupBy") return queryContinuationKeywords(context);
     if (clause === "orderBy")
-      return [
-        "ASC",
-        "DESC",
-        ...(dialect === "sqlserver" ? ["OFFSET"] : ["LIMIT", "OFFSET"]),
-      ];
-    if (clause === "select") return ["AS", "FROM"];
+      return context.queryContinuationAllowed === false
+        ? []
+        : [
+            "ASC",
+            "DESC",
+            ...(dialect === "sqlserver" ? ["OFFSET"] : ["LIMIT", "OFFSET"]),
+          ];
+    if (clause === "select")
+      return context.queryContinuationAllowed === false ||
+        (context.statementKind !== undefined &&
+          context.statementKind !== "select")
+        ? []
+        : ["AS", ...queryContinuationKeywords(context)];
     return [
       "=",
       "<>",
@@ -156,11 +213,17 @@ function keywordsFor(context: SqlCompletionContext): string[] {
       "AND",
       "OR",
       ...(dialect === "postgres" ? ["ILIKE"] : []),
+      ...queryContinuationKeywords(context),
+      ...returning,
     ];
   }
-  return clause === "select"
-    ? [...EXPRESSION_KEYWORDS, "DISTINCT"]
-    : EXPRESSION_KEYWORDS;
+  return [
+    ...EXPRESSION_KEYWORDS,
+    ...(clause === "select" && context.selectModifierAllowed
+      ? ["DISTINCT", "ALL"]
+      : []),
+    ...(context.selectTopAllowed ? ["TOP"] : []),
+  ];
 }
 
 /** 先限定当前语法槽位和查询块，再进行名称匹配与稳定排序。 */

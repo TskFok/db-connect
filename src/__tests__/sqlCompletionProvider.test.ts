@@ -168,6 +168,228 @@ describe("模型绑定 SQL provider", () => {
   });
 });
 
+describe("provider 常用关键词上下文补全", () => {
+  it.each<[SqlDialect, string, string, string]>([
+    ["mysql", "cre|ate TABLE users", "CREATE", "CREATE TABLE users"],
+    ["mysql", "CREATE TA|", "TABLE", "CREATE TABLE"],
+    ["postgres", "WITH RE|", "RECURSIVE", "WITH RECURSIVE"],
+    ["sqlite", "PR|", "PRAGMA", "PRAGMA"],
+    ["sqlserver", "SET SHOWPLAN_X|", "SHOWPLAN_XML", "SET SHOWPLAN_XML"],
+    ["clickhouse", "OPT|", "OPTIMIZE TABLE", "OPTIMIZE TABLE"],
+    [
+      "mysql",
+      "SELECT * FROM users GROUP B|",
+      "BY",
+      "SELECT * FROM users GROUP BY",
+    ],
+    [
+      "postgres",
+      "SELECT * FROM users LEFT J|",
+      "JOIN",
+      "SELECT * FROM users LEFT JOIN",
+    ],
+    ["mysql", "SELECT CASE W|", "WHEN", "SELECT CASE WHEN"],
+    [
+      "mysql",
+      "SELECT CASE WHEN id=1 TH| FROM users",
+      "THEN",
+      "SELECT CASE WHEN id=1 THEN FROM users",
+    ],
+    [
+      "mysql",
+      "SELECT CASE WHEN id=1 AN| FROM users",
+      "AND",
+      "SELECT CASE WHEN id=1 AND FROM users",
+    ],
+    [
+      "mysql",
+      "SELECT CASE WHEN id=1 THEN 2 EL| FROM users",
+      "ELSE",
+      "SELECT CASE WHEN id=1 THEN 2 ELSE FROM users",
+    ],
+    [
+      "mysql",
+      "SELECT CASE WHEN id=1 THEN 2 ELSE 3 EN| FROM users",
+      "END",
+      "SELECT CASE WHEN id=1 THEN 2 ELSE 3 END FROM users",
+    ],
+    [
+      "mysql",
+      "SELECT * FROM users LIMIT 10 OF|",
+      "OFFSET",
+      "SELECT * FROM users LIMIT 10 OFFSET",
+    ],
+    [
+      "sqlserver",
+      "SELECT * FROM users ORDER BY name OFFSET 10 RO|",
+      "ROWS",
+      "SELECT * FROM users ORDER BY name OFFSET 10 ROWS",
+    ],
+    [
+      "postgres",
+      "SELECT * FROM users UNION SE|",
+      "SELECT",
+      "SELECT * FROM users UNION SELECT",
+    ],
+    ["mysql", "SELECT * FR|", "FROM", "SELECT * FROM"],
+    [
+      "postgres",
+      "SELECT * FROM users LEFT OU|TER JOIN orders",
+      "OUTER",
+      "SELECT * FROM users LEFT OUTER JOIN orders",
+    ],
+    [
+      "postgres",
+      "CREATE TABLE sample (id IN|)",
+      "INT",
+      "CREATE TABLE sample (id INT)",
+    ],
+    [
+      "mysql",
+      "CREATE TABLE sample (id INT PRI|)",
+      "PRIMARY KEY",
+      "CREATE TABLE sample (id INT PRIMARY KEY)",
+    ],
+    ["mysql", "ALTER TABLE users MO|", "MODIFY", "ALTER TABLE users MODIFY"],
+    [
+      "sqlserver",
+      "SELECT DISTINCT TO| FROM users",
+      "TOP",
+      "SELECT DISTINCT TOP FROM users",
+    ],
+  ])("%s 接受候选只替换当前单词：%s", (dialect, marked, label, expected) => {
+    const sql = marked.replace("|", "");
+    const s = setup(sql, marked.indexOf("|"), dialect);
+    const item = s
+      .run()
+      .suggestions.find((candidate) => candidate.label === label);
+    s.disposable.dispose();
+    expect(item).toBeDefined();
+    const range = item!.range as Monaco.IRange;
+    const start = s.model.getOffsetAt({
+      lineNumber: range.startLineNumber,
+      column: range.startColumn,
+    });
+    const end = s.model.getOffsetAt({
+      lineNumber: range.endLineNumber,
+      column: range.endColumn,
+    });
+    expect(sql.slice(0, start) + item!.insertText + sql.slice(end)).toBe(
+      expected
+    );
+  });
+
+  it.each([
+    "EXPLAIN SELECT na| FROM users",
+    "CREATE VIEW names AS SELECT na| FROM users",
+    "WITH names AS (SELECT name FROM users) SELECT na| FROM names",
+    "SELECT CASE WHEN name = '' THEN na| ELSE '' END FROM users",
+  ])("语句前缀后保留查询字段补全：%s", (marked) => {
+    const sql = marked.replace("|", "");
+    const s = setup(sql, marked.indexOf("|"), "postgres");
+    expect(s.run().suggestions.some((item) => item.filterText === "name")).toBe(
+      true
+    );
+    s.disposable.dispose();
+  });
+
+  it.each([
+    "SELECT TOP 10 na| FROM users",
+    "SELECT DISTINCT TOP (10) na| FROM users",
+  ])("SQL Server TOP 数量后仍补全投影字段：%s", (marked) => {
+    const sql = marked.replace("|", "");
+    const s = setup(sql, marked.indexOf("|"), "sqlserver");
+    expect(s.run().suggestions.some((item) => item.filterText === "name")).toBe(
+      true
+    );
+    s.disposable.dispose();
+  });
+
+  it.each([
+    "SELECT * FROM users WHERE name BETWEEN 1 |",
+    "DELETE FROM users WHERE name BETWEEN 1 |",
+  ])("BETWEEN 范围未完成前不补后续子句：%s", (marked) => {
+    const sql = marked.replace("|", "");
+    const s = setup(sql, marked.indexOf("|"), "postgres");
+    const labels = s.run().suggestions.map((item) => item.label);
+    expect(labels).toContain("AND");
+    expect(labels).not.toContain("GROUP BY");
+    expect(labels).not.toContain("RETURNING");
+    s.disposable.dispose();
+  });
+
+  it("EXISTS 尚未输入子查询时不提供语句续接", () => {
+    const s = setup("DELETE FROM users WHERE EXISTS ", undefined, "postgres");
+    expect(s.run().suggestions.some((item) => item.label === "RETURNING")).toBe(
+      false
+    );
+    s.disposable.dispose();
+  });
+
+  it.each([
+    "SELECT 'CREATE TA|",
+    "/* CREATE TA| */",
+    'SELECT "CREATE TA|" FROM users',
+    "SELECT name AS cr| FROM users",
+    "SELECT * FROM users WHERE name = cr|",
+    "unknown cr|",
+  ])("非语句起始位置不泄漏 DDL 候选：%s", (marked) => {
+    const sql = marked.replace("|", "");
+    const s = setup(sql, marked.indexOf("|"), "postgres");
+    expect(
+      s
+        .run()
+        .suggestions.some((item) =>
+          /^(CREATE|ALTER|DROP|TABLE)( |$)/.test(String(item.label))
+        )
+    ).toBe(false);
+    s.disposable.dispose();
+  });
+});
+
+describe("provider EXPLAIN 关键词补全", () => {
+  it.each<SqlDialect>(["mysql", "postgres", "sqlite", "clickhouse"])(
+    "%s 在语句起始补全 EXPLAIN 并正确替换前缀",
+    (dialect) => {
+      for (const [marked, expected] of [
+        ["|", "EXPLAIN"],
+        ["ex|", "EXPLAIN"],
+        ["EXP|", "EXPLAIN"],
+        ["SELECT 1; ex|plain SELECT 2", "SELECT 1; EXPLAIN SELECT 2"],
+      ]) {
+        const sql = marked.replace("|", "");
+        const s = setup(sql, marked.indexOf("|"), dialect);
+        const item = s.run().suggestions.find((i) => i.label === "EXPLAIN");
+        s.disposable.dispose();
+        expect(item).toBeDefined();
+        const range = item!.range as Monaco.IRange;
+        const start = s.model.getOffsetAt({
+          lineNumber: range.startLineNumber,
+          column: range.startColumn,
+        });
+        const end = s.model.getOffsetAt({
+          lineNumber: range.endLineNumber,
+          column: range.endColumn,
+        });
+        expect(sql.slice(0, start) + item!.insertText + sql.slice(end)).toBe(
+          expected
+        );
+      }
+    }
+  );
+
+  it.each<[SqlDialect, string]>([
+    ["sqlserver", "ex"],
+    ["mysql", "SELECT ex"],
+    ["mysql", "SELECT 'ex"],
+    ["mysql", "-- ex"],
+  ])("%s 的不适用位置不提示 EXPLAIN：%s", (dialect, sql) => {
+    const s = setup(sql, sql.length, dialect);
+    expect(s.run().suggestions.some((i) => i.label === "EXPLAIN")).toBe(false);
+    s.disposable.dispose();
+  });
+});
+
 describe("provider MySQL SHOW 命令补全", () => {
   function suggest(marked: string, dialect: SqlDialect = "mysql") {
     const sql = marked.replace("|", "");
@@ -474,8 +696,12 @@ describe("provider MySQL 常用命令和函数补全", () => {
     (dialect) => {
       for (const [marked, forbidden] of [
         ["SET |", "PERSIST"],
-        ["CHE|", "CHECK TABLE"],
-        ["OPT|", "OPTIMIZE TABLE"],
+        ...(dialect === "clickhouse"
+          ? []
+          : [
+              ["CHE|", "CHECK TABLE"],
+              ["OPT|", "OPTIMIZE TABLE"],
+            ]),
         ["SELECT VER|", "VERSION()"],
         ["SELECT DATA|", "DATABASE()"],
       ]) {

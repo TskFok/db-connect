@@ -1,5 +1,7 @@
 import type { SqlDialect } from "./sqlCompletion";
 import { isSqlCommandStart, sqlCommandSlot } from "./sqlCompletionCommands";
+import { getSqlStatementPrefixKeywords } from "./sqlCompletionStatementKeywords";
+import { getSqlQueryPrefixKeywords } from "./sqlCompletionKeywordContext";
 import type {
   QueryScope,
   RelationSymbol,
@@ -367,9 +369,8 @@ export function analyzeSqlCompletionTokens(input: {
     if (editable.quoted && !isClosedSqlIdentifier(editable))
       context.confidence = "partial";
   }
-  context.followingToken = tokens.find(
-    (token) => token.start >= context.edit.end
-  )?.text;
+  const following = tokens.find((token) => token.start >= context.edit.end);
+  context.followingToken = following?.text;
   let q = editable
     ? tokens.indexOf(editable) - 1
     : tokens.findIndex((t) => t.start >= offset) - 1;
@@ -382,6 +383,17 @@ export function analyzeSqlCompletionTokens(input: {
   const before = active.tokens.filter(
     (t) => t.end <= (editable?.start ?? offset)
   );
+  if (active === root && !editable?.quoted && !context.qualifierParts.length) {
+    const keywords = getSqlStatementPrefixKeywords(
+      before,
+      dialect,
+      following?.kind === "keyword" || following?.kind === "identifier"
+    );
+    if (keywords !== undefined) {
+      context.keywordSuggestions = keywords;
+      return context;
+    }
+  }
   const managementCommand =
     dialect === "mysql" &&
     !before[0]?.quoted &&
@@ -403,6 +415,48 @@ export function analyzeSqlCompletionTokens(input: {
     }
   }
   const topBefore = before.filter((t) => depths.get(t) === active.depth);
+  context.statementStart =
+    active === root && before.length === 0 && !editable?.quoted;
+  const statementWord = topBefore.find((token) =>
+    ["SELECT", "INSERT", "UPDATE", "DELETE"].includes(word(token))
+  );
+  context.statementKind = statementWord
+    ? (word(
+        statementWord
+      ).toLowerCase() as SqlCompletionContext["statementKind"])
+    : undefined;
+  let expressionDepth = 0;
+  let caseDepth = 0;
+  for (const token of before) {
+    if (token.text === "(") expressionDepth++;
+    else if (token.text === ")") expressionDepth--;
+    else if (word(token) === "CASE") caseDepth++;
+    else if (word(token) === "END") caseDepth = Math.max(0, caseDepth - 1);
+  }
+  context.queryContinuationAllowed = expressionDepth === 0 && caseDepth === 0;
+  if (
+    context.statementKind &&
+    !editable?.quoted &&
+    !context.qualifierParts.length
+  ) {
+    const keywords = getSqlQueryPrefixKeywords(before, dialect);
+    if (keywords !== undefined) {
+      // 光标右侧已存在 JOIN/SELECT 等后缀时仅替换当前单词。
+      context.keywordSuggestions = [
+        ...new Set(
+          keywords.map((keyword) => {
+            const parts = keyword.split(" ");
+            return following &&
+              !following.quoted &&
+              parts[1] === following.text.toUpperCase()
+              ? parts[0]
+              : keyword;
+          })
+        ),
+      ];
+      return context;
+    }
+  }
   let clauseIndex = -1;
   for (let i = 0; i < topBefore.length; i++) {
     const current = word(topBefore[i]);
@@ -423,6 +477,11 @@ export function analyzeSqlCompletionTokens(input: {
     )
       clause = current.toLowerCase() as SqlClause;
     if (current === "INTO") clause = "insertInto";
+    if (
+      current === "RETURNING" &&
+      (dialect === "postgres" || dialect === "sqlite")
+    )
+      clause = "select";
     if (current === "GROUP" && word(topBefore[i + 1]) === "BY") {
       clause = "groupBy";
       i++;
@@ -436,6 +495,19 @@ export function analyzeSqlCompletionTokens(input: {
       clauseIndex = i;
     }
   }
+  context.selectModifierAllowed =
+    context.clause === "select" &&
+    word(topBefore[clauseIndex]) === "SELECT" &&
+    before[before.length - 1] === topBefore[clauseIndex];
+  const projectionPrefix = before.filter(
+    (token) => token.start > (topBefore[clauseIndex]?.start ?? offset)
+  );
+  context.selectTopAllowed =
+    dialect === "sqlserver" &&
+    word(topBefore[clauseIndex]) === "SELECT" &&
+    (projectionPrefix.length === 0 ||
+      (projectionPrefix.length === 1 &&
+        ["ALL", "DISTINCT"].includes(word(projectionPrefix[0]))));
   const activeDeclarations = declarations.get(active)!;
   const insert = activeDeclarations.find(
     (d) =>
@@ -482,6 +554,10 @@ export function analyzeSqlCompletionTokens(input: {
       context.slot = "continuation";
     if (word(topBefore[topBefore.length - 1]) === "AS")
       context.slot = "continuation";
+    context.returningAllowed =
+      (dialect === "postgres" || dialect === "sqlite") &&
+      context.statementKind === "delete" &&
+      context.slot === "continuation";
     return context;
   }
   if (context.clause === "set") {
@@ -504,6 +580,11 @@ export function analyzeSqlCompletionTokens(input: {
       : current.length && !context.qualifierParts.length
         ? "keyword"
         : "columnList";
+    context.returningAllowed =
+      (dialect === "postgres" || dialect === "sqlite") &&
+      rhs &&
+      context.slot === "keyword" &&
+      context.queryContinuationAllowed;
     if (context.slot === "columnList") {
       const setTokens = active.tokens.filter(
         (t) => t.start > set.end && depths.get(t) === active.depth
@@ -567,15 +648,45 @@ export function analyzeSqlCompletionTokens(input: {
     context.operator = operatorContinuation(
       before.filter((t) => t.start >= clauseStart)
     );
+    const expressionTokens = before.filter((t) => t.start >= clauseStart);
+    // TOP 修饰的是投影列表，数量后仍应补字段。
+    if (dialect === "sqlserver" && word(topBefore[clauseIndex]) === "SELECT") {
+      let top = ["ALL", "DISTINCT"].includes(word(expressionTokens[0])) ? 1 : 0;
+      if (word(expressionTokens[top]) === "TOP") {
+        if (expressionTokens[top + 1]?.kind === "number") top += 2;
+        else if (expressionTokens[top + 1]?.text === "(") {
+          const end = matching.get(expressionTokens[top + 1].start);
+          const close = expressionTokens.findIndex(
+            (token) => token.start === end
+          );
+          top = close >= 0 ? close + 1 : 0;
+        } else top = 0;
+        if (top) expressionTokens.splice(0, top);
+      }
+    }
     context.slot = context.qualifierParts.length
       ? context.clause === "on"
         ? "joinCondition"
         : "column"
       : expressionSlot(
-          before.filter((t) => t.start >= clauseStart),
+          expressionTokens,
           context.clause === "on" ? "joinCondition" : "column"
         );
+    if (
+      context.clause === "select" &&
+      expressionTokens[expressionTokens.length - 1]?.text === "*" &&
+      (expressionTokens.length === 1 ||
+        expressionTokens[expressionTokens.length - 2]?.text === ".")
+    )
+      context.slot = "keyword";
   }
+  context.returningAllowed =
+    (dialect === "postgres" || dialect === "sqlite") &&
+    context.statementKind !== undefined &&
+    context.statementKind !== "select" &&
+    ["where", "values"].includes(context.clause) &&
+    context.slot === "keyword" &&
+    context.queryContinuationAllowed;
   // Set operations need branch-aware output binding beyond this first implementation.
   if (
     active.tokens.some((t) =>
@@ -675,6 +786,7 @@ function expressionSlot(
       "LIKE",
       "ILIKE",
       "BETWEEN",
+      "EXISTS",
       "IS",
     ].includes(word(last))
   )
