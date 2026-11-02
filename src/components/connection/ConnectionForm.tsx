@@ -586,7 +586,18 @@ export function ConnectionForm() {
           {testResult && (
             <Alert
               type={testResult.success ? "success" : "error"}
-              message={testResult.message}
+              message={
+                <div
+                  style={{
+                    whiteSpace: "pre-wrap",
+                    overflowWrap: "anywhere",
+                    maxHeight: "min(240px, 30vh)",
+                    overflowY: "auto",
+                  }}
+                >
+                  {testResult.message}
+                </div>
+              }
               showIcon
               closable
               onClose={() => setTestResult(null)}

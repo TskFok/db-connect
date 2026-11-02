@@ -31,6 +31,13 @@ const CONNECTION_LOST_PATTERNS: RegExp[] = [
   /获取连接失败/,
 ];
 
+const SSH_SETUP_ERROR_PREFIXES = [
+  "SSH 进程已退出，本地转发未就绪",
+  "等待 SSH 本地端口转发超时",
+  "检查 SSH 进程状态失败",
+  "启动 ssh 失败",
+];
+
 /**
  * 判断错误消息是否表示"连接已死、需要客户端重建"。
  * 接受任意 unknown，内部转 string 后做正则匹配，便于直接处理 invoke 抛出的字符串错误。
@@ -40,5 +47,9 @@ export function isConnectionLostError(err: unknown): boolean {
   const msg = typeof err === "string" ? err : (err as { message?: unknown })?.message;
   const text = typeof msg === "string" && msg.length > 0 ? msg : String(err);
   if (!text) return false;
+  // 新建隧道的 stderr 也可能含 Connection refused/reset，不能据此清理另一活跃会话。
+  if (SSH_SETUP_ERROR_PREFIXES.some((prefix) => text.startsWith(prefix))) {
+    return false;
+  }
   return CONNECTION_LOST_PATTERNS.some((p) => p.test(text));
 }

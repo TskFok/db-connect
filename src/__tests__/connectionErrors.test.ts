@@ -2,6 +2,16 @@ import { describe, it, expect } from "vitest";
 import { isConnectionLostError } from "../utils/connectionErrors";
 
 describe("isConnectionLostError", () => {
+  it.each([
+    "SSH 进程已退出，本地转发未就绪 (退出码: 255)\n\nOpenSSH 错误详情:\nssh: connect to host jump.example.com port 22: Connection refused",
+    "等待 SSH 本地端口转发超时\n\nOpenSSH 错误详情:\nConnection reset by peer",
+    "检查 SSH 进程状态失败: Input/output error\n\nOpenSSH 错误详情:\nConnection closed by remote host",
+    "启动 ssh 失败: Input/output error（请确认系统已安装 OpenSSH 客户端，且 /usr/bin/ssh 可用）",
+  ])("SSH 建连阶段失败不会被当成活跃会话断开：%s", (error) => {
+    expect(isConnectionLostError(error)).toBe(false);
+    expect(isConnectionLostError(new Error(error))).toBe(false);
+  });
+
   it("命中 Connection refused (os error 61) 模式", () => {
     expect(
       isConnectionLostError(

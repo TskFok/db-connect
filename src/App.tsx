@@ -167,7 +167,25 @@ function AppInner() {
   // 让用户可以直接点击连接重新建立，而不必关闭页面再来。
   useEffect(() => {
     if (!error) return;
-    messageApi.error(error);
+    messageApi.error({
+      content: (
+        <div
+          style={{
+            display: "inline-block",
+            verticalAlign: "top",
+            textAlign: "left",
+            whiteSpace: "pre-wrap",
+            overflowWrap: "anywhere",
+            maxWidth: "min(720px, calc(100vw - 80px))",
+            maxHeight: "min(360px, 50vh)",
+            overflowY: "auto",
+          }}
+        >
+          {error}
+        </div>
+      ),
+      duration: 8,
+    });
     if (isConnectionLostError(error)) {
       const { activeConnId, forceCleanupConnection } =
         useConnectionStore.getState();

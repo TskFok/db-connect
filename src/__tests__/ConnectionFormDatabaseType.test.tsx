@@ -764,4 +764,36 @@ describe("ConnectionForm database type defaults", () => {
     expect(actions).toContainElement(saveAndConnectButton);
     expect(scrollArea).not.toContainElement(saveAndConnectButton);
   });
+
+  it("测试失败时完整保留多行详情并限制长输出的显示区域", async () => {
+    const errorDetails =
+      "SSH 主机密钥与缓存不一致\nHost key verification failed.\n" +
+      "SHA256:" +
+      "a".repeat(200);
+    mockApi.testConnection.mockRejectedValueOnce(errorDetails);
+    useConnectionStore.setState({
+      editingConnection: {
+        id: "ssh-error",
+        name: "SSH 错误详情",
+        host: "db.internal",
+        port: 3306,
+        username: "root",
+      },
+    });
+    render(<ConnectionForm />);
+
+    fireEvent.click(screen.getByRole("button", { name: /测试连接/ }));
+
+    const details = await screen.findByText(errorDetails, {
+      normalizer: (value) => value,
+    });
+    expect(details).toHaveStyle({
+      whiteSpace: "pre-wrap",
+      overflowWrap: "anywhere",
+      overflowY: "auto",
+    });
+    expect(details.style.maxHeight).not.toBe("");
+    expect(details.style.maxHeight).not.toBe("none");
+    expect(screen.getByRole("button", { name: /保存并连接/ })).toBeVisible();
+  });
 });

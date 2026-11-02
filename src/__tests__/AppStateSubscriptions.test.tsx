@@ -1,5 +1,11 @@
 import { Profiler } from "react";
-import { act, cleanup, fireEvent, render } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 import { useConnectionStore } from "../stores/connectionStore";
@@ -69,6 +75,7 @@ async function mountApp() {
 describe("App 根订阅和侧栏拖动", () => {
   beforeEach(() => {
     vi.mocked(api.listSavedConnections).mockResolvedValue([]);
+    vi.mocked(api.forceDisconnect).mockReset();
     useConnectionStore.setState({
       activeConnection: null,
       activeConnId: null,
@@ -86,6 +93,7 @@ describe("App 根订阅和侧栏拖动", () => {
   });
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -138,6 +146,107 @@ describe("App 根订阅和侧栏拖动", () => {
     expect(container.querySelector(".global-loading-bar")).toBeNull();
     expect(document.body.textContent).toContain("测试连接失败");
     expect(useConnectionStore.getState().error).toBeNull();
+  });
+
+  it("连接错误完整展示多行详情、限制提示尺寸并保留足够阅读时间", async () => {
+    await mountApp();
+    vi.useFakeTimers();
+    const error =
+      "SSH 主机密钥不匹配\nHost key verification failed.\nSHA256:" +
+      "a".repeat(16_384);
+
+    act(() => useConnectionStore.setState({ error }));
+
+    const details = screen.getByText(error, { normalizer: (value) => value });
+    expect(details).toHaveStyle({
+      whiteSpace: "pre-wrap",
+      overflowWrap: "anywhere",
+      overflowY: "auto",
+    });
+    expect(details.style.maxHeight).not.toBe("");
+    expect(details.style.maxHeight).not.toBe("none");
+    expect(details.style.maxWidth).not.toBe("");
+    expect(details.style.maxWidth).not.toBe("none");
+    expect(useConnectionStore.getState().error).toBeNull();
+
+    await act(async () => vi.advanceTimersByTime(5_000));
+    expect(details).toBeInTheDocument();
+    await act(async () => vi.advanceTimersByTime(4_000));
+    expect(details).not.toBeInTheDocument();
+  });
+
+  it.each(["Connection refused", "Connection reset by peer"])(
+    "连接 B 的 SSH 建连失败（%s）时保留活跃连接 A",
+    async (detail) => {
+      const connectionA = {
+        connId: "conn-a",
+        config: {
+          name: "连接 A",
+          host: "database-a.internal",
+          port: 3306,
+          username: "root",
+        },
+      };
+      useConnectionStore.setState({
+        activeConnections: { "conn-a": connectionA },
+        activeConnId: "conn-a",
+        activeConnection: connectionA,
+      });
+      const error =
+        "SSH 进程已退出，本地转发未就绪 (退出码: 255)\n\nOpenSSH 错误详情:\n" +
+        detail;
+      vi.mocked(api.connect).mockRejectedValueOnce(error);
+      await mountApp();
+
+      await act(async () => {
+        await useConnectionStore.getState().connect({
+          name: "连接 B",
+          host: "database-b.internal",
+          port: 3306,
+          username: "root",
+          ssh: { host: "jump-b.example.com", port: 22, username: "deploy" },
+        });
+      });
+
+      expect(useConnectionStore.getState().activeConnId).toBe("conn-a");
+      expect(useConnectionStore.getState().activeConnections["conn-a"]).toEqual(
+        connectionA
+      );
+      expect(api.forceDisconnect).not.toHaveBeenCalled();
+      expect(
+        screen.getByText(error, { normalizer: (value) => value })
+      ).toBeInTheDocument();
+    }
+  );
+
+  it("活跃会话真正断开时仍清理当前连接", async () => {
+    const connection = {
+      connId: "conn-dead",
+      config: {
+        name: "已断开的连接",
+        host: "database.internal",
+        port: 3306,
+        username: "root",
+      },
+    };
+    useConnectionStore.setState({
+      activeConnections: { "conn-dead": connection },
+      activeConnId: "conn-dead",
+      activeConnection: connection,
+    });
+    vi.mocked(api.forceDisconnect).mockResolvedValue(undefined);
+    await mountApp();
+
+    await act(async () => {
+      useConnectionStore.setState({
+        error: "获取连接失败: Connection reset by peer (os error 54)",
+      });
+    });
+
+    expect(api.forceDisconnect).toHaveBeenCalledExactlyOnceWith("conn-dead");
+    expect(useConnectionStore.getState().activeConnId).toBeNull();
+    expect(useConnectionStore.getState().activeConnection).toBeNull();
+    expect(useConnectionStore.getState().activeConnections).toEqual({});
   });
 
   it("100 次同帧移动预览不提交 App，松手只写一次真实 persist", async () => {

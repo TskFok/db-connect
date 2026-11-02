@@ -174,6 +174,7 @@ pub fn run() {
             commands::data_tasks::list_data_tasks,
             commands::data_tasks::discard_data_task_preview,
             connection::test_connection,
+            connection::clear_ssh_known_host,
             connection::connect,
             connection::disconnect,
             connection::ping_connection,

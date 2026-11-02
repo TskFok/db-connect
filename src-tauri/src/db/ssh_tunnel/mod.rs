@@ -1,5 +1,11 @@
 //! SSH 隧道：**Windows** 使用 russh；**macOS / Linux** 使用系统 OpenSSH（`ssh`）。
 
+mod known_hosts;
+pub use known_hosts::clear_known_host;
+
+// 首次握手可能写入主机密钥，与缓存清理共用锁，避免同进程覆盖其他连接的新记录。
+pub(super) static KNOWN_HOSTS_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[cfg(target_os = "windows")]
 mod russh_tunnel;
 #[cfg(target_os = "windows")]

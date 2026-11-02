@@ -606,6 +606,12 @@ fn move_connection_to_group_in_storage(
     Ok(())
 }
 
+/// 清除当前 SSH 服务器在本应用中保存的主机密钥，不接触用户私钥或系统 known_hosts。
+#[tauri::command]
+pub async fn clear_ssh_known_host(host: String, port: u16) -> Result<bool, String> {
+    crate::db::ssh_tunnel::clear_known_host(host, port).await
+}
+
 /// 测试数据库连接
 #[tauri::command]
 pub async fn test_connection(config: ConnectionConfig) -> Result<TestResult, String> {

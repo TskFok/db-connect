@@ -91,6 +91,7 @@ impl client::Handler for RusshClientHandler {
         &mut self,
         server_public_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
+        let _known_hosts_guard = super::KNOWN_HOSTS_LOCK.lock().await;
         let fp = host_key_fingerprint_b64(&server_public_key.public_key());
         let host_id = format!("[{}]:{}", self.host, self.port);
         let known_hosts_path =
