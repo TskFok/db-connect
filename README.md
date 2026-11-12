@@ -217,7 +217,7 @@ MySQL / MariaDB、PostgreSQL、SQL Server 支持查看和管理外键；SQLite �
 ## 开发环境要求
 
 - **Node.js**：20.x（>= 20.19.0）或 >= 22.12.0，与当前 Vite 8 依赖要求一致（CI 使用 Node 22）
-- **Rust**：>= 1.88（keyring 4.1 要求；Windows 端使用 russh 0.60.3）
+- **Rust**：>= 1.89（rusqlite 0.41 的安全版本要求；Windows 端使用 russh 0.64.1）
 - **macOS**：Xcode Command Line Tools；SSH 隧道使用系统自带的 `ssh`（OpenSSH）
 - **Linux**：WebKitGTK 等与 Tauri 相关的构建依赖（可参考仓库 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) 中 `apt-get` 列表）；SSH 隧道使用系统自带的 `ssh`（OpenSSH，通常已预装或 `openssh-client` 提供）
 - **Windows**：按 Tauri 文档安装 **Microsoft C++ Build Tools**、WebView2 等；SSH 隧道由内置 russh 提供，无需安装额外客户端

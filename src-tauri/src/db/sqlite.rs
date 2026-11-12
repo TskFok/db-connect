@@ -125,11 +125,7 @@ fn run_sql_on_conn(
     let column_count = stmt.column_count();
 
     if column_count > 0 {
-        let columns = stmt
-            .column_names()
-            .iter()
-            .map(|name| (*name).to_string())
-            .collect::<Vec<_>>();
+        let columns = stmt.column_names().map(str::to_string).collect::<Vec<_>>();
         let mut budget = ResultBudget::default();
         budget.add_columns(&columns)?;
         let mut query = stmt.query([]).map_err(|e| format!("执行查询失败: {}", e))?;
@@ -1852,11 +1848,7 @@ fn select_json_rows(
     let mut stmt = conn
         .prepare(sql)
         .map_err(|e| format!("查询完整行数据失败: {}", e))?;
-    let columns = stmt
-        .column_names()
-        .iter()
-        .map(|name| (*name).to_string())
-        .collect::<Vec<_>>();
+    let columns = stmt.column_names().map(str::to_string).collect::<Vec<_>>();
     let mut budget = ResultBudget::default();
     budget.add_columns(&columns)?;
     let col_count = stmt.column_count();

@@ -593,7 +593,6 @@ mod tests {
         let pid = child.id().unwrap();
         let stderr = wait_for_local_forward(port, &mut child, 60)
             .await
-            .ok()
             .expect("本地监听已就绪");
         let reader = stderr.reader.as_ref().unwrap().abort_handle();
         let tunnel = SshTunnel {

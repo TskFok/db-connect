@@ -645,7 +645,7 @@ fn execute_sqlite(
         }
         sqlite::open(&target_path, true, cancel.clone())
     })();
-    let conn = match preflight {
+    let mut conn = match preflight {
         Ok(conn) => conn,
         Err(message) => {
             let e = error(message);

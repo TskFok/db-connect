@@ -41,11 +41,12 @@ impl Drop for Directory {
     }
 }
 fn actual_query_budget(tables: usize) {
-    let conn = Connection::open_in_memory().unwrap();
+    let mut conn = Connection::open_in_memory().unwrap();
     let ddl=(0..tables).map(|i|format!("CREATE TABLE t{i}(id INTEGER PRIMARY KEY,v TEXT);INSERT INTO t{i} VALUES(1,'数据');")).collect::<String>();
     conn.execute_batch(&ddl).unwrap();
     SELECTS.with(|s| s.borrow_mut().clear());
-    conn.trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(trace));
+    conn.trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(trace))
+        .unwrap();
     let metadata = sqlite::load_metadata(&conn).unwrap();
     assert_eq!(metadata.tables.len(), tables);
     assert_eq!(

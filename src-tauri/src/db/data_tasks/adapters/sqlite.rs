@@ -43,7 +43,7 @@ pub fn open(
     } else {
         OpenFlags::SQLITE_OPEN_READ_ONLY
     };
-    let conn = Connection::open_with_flags(path, flags).map_err(db_error)?;
+    let mut conn = Connection::open_with_flags(path, flags).map_err(db_error)?;
     conn.busy_timeout(Duration::from_secs(10))
         .map_err(db_error)?;
     conn.progress_handler(1000, Some(move || cancel.load(Ordering::Acquire)))

@@ -27,7 +27,7 @@ deadpool-postgres = "0.14.1"
 tokio-postgres = "0.7.18"
 postgres-native-tls = "0.5.3"
 deadpool-sqlite = { version = "0.13", features = ["rt_tokio_1"] }
-rusqlite = { version = "0.38", features = ["bundled", "hooks"] }
+rusqlite = { version = "0.41.1", features = ["bundled", "hooks"] }
 bb8 = "0.9"
 bb8-tiberius = { version = "0.16.0", default-features = false, features = ["with-tokio", "tds73"] }
 clickhouse_rs = { package = "clickhouse", version = "0.15", default-features = false, features = ["rustls-tls", "lz4"] }
@@ -50,7 +50,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 
 [dev-dependencies]
 tauri = { version = "=2.11.6", features = ["test"] }
-rusqlite = { version = "0.38", features = ["trace"] }
+rusqlite = { version = "0.41.1", features = ["trace"] }
 
 # Apple Security Framework 无法协商 SQL Server 的 TLS；上游建议 Apple 使用 rustls。
 [target.'cfg(target_vendor = "apple")'.dependencies]
@@ -73,3 +73,5 @@ mysql_async = { path = "vendor/mysql_async" }
 glib = { path = "vendor/glib" }
 # 保留 SQL Server 信任配置语义，将 TLS 依赖迁移到已修复的 rustls 0.23。
 tiberius = { path = "vendor/tiberius" }
+# 保留连接池实现，仅适配包含 SQLite WAL 内存泄露修复的 rusqlite。
+deadpool-sqlite = { path = "vendor/deadpool-sqlite" }
